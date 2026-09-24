@@ -1,0 +1,11 @@
+id = "herdr-crossroads"
+name = "Herdr Crossroads"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+platforms = ["linux"]
+
+[[panes]]
+id = "crossroads"
+title = "Crossroads"
+placement = "popup"
+command = ["./target/release/herdr-crossroads"]
