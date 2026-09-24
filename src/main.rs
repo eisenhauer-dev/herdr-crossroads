@@ -1,6 +1,10 @@
 use serde_json::Value;
 use std::io::{self, IsTerminal, Read, Write};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 fn field<'a>(item: &'a Value, name: &str) -> io::Result<&'a str> {
     item.get(name).and_then(Value::as_str).ok_or_else(|| {
@@ -232,12 +236,12 @@ impl Ui {
             .or_else(|| visible.first().copied())
     }
 
-    fn key(&mut self, key: Key) {
+    fn key(&mut self, key: Key) -> Option<String> {
         if self.mode == Mode::Help {
             if matches!(key, Key::Esc | Key::Char('?') | Key::Char('q')) {
                 self.mode = Mode::Select;
             }
-            return;
+            return None;
         }
         if self.mode == Mode::Search {
             match key {
@@ -248,13 +252,19 @@ impl Ui {
                 Key::Char(c) if !c.is_control() => self.query.push(c),
                 _ => {}
             }
-            return;
+            return None;
         }
         let visible = self.visible();
         match key {
             Key::Char('/') => self.mode = Mode::Search,
             Key::Char('?') => self.mode = Mode::Help,
             Key::Char('q') | Key::Esc => self.closed = true,
+            Key::Enter => {
+                if let Some(i) = self.selected_index(&visible) {
+                    self.closed = true;
+                    return Some(self.rows[i].id.clone());
+                }
+            }
             Key::Char('r') => self.query.clear(),
             Key::Down | Key::Char('j') | Key::Up | Key::Char('k') => {
                 if let Some(at) = self
@@ -294,6 +304,7 @@ impl Ui {
             }
             _ => {}
         }
+        None
     }
 
     fn frame(&self) -> String {
@@ -315,7 +326,7 @@ impl Ui {
             out.push_str(&format!("Search: {}\n", self.query));
         } else {
             out.push_str(&format!(
-                "Select (/: search, ?: help, q/Esc: close)  Filter: {}\n",
+                "Select (Enter: focus, /: search, ?: help, q/Esc: close)  Filter: {}\n",
                 self.query
             ));
         }
@@ -355,7 +366,7 @@ impl Ui {
             format!("Search: {}", self.query)
         } else {
             format!(
-                "Select (/: search, ?: help, q/Esc: close)  Filter: {}",
+                "Select (Enter: focus, /: search, ?: help, q/Esc: close)  Filter: {}",
                 self.query
             )
         };
@@ -515,6 +526,86 @@ fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
     out.flush()
 }
 
+#[cfg(unix)]
+fn focus(pane_id: &str) -> io::Result<()> {
+    let path = std::env::var_os("HERDR_SOCKET_PATH")
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HERDR_SOCKET_PATH is missing"))?;
+    let mut stream = UnixStream::connect(path)?;
+    serde_json::to_writer(
+        &mut stream,
+        &serde_json::json!({"id":"crossroads-focus","method":"pane.focus","params":{"pane_id":pane_id}}),
+    )?;
+    stream.write_all(b"\n")?;
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let mut reply = Vec::new();
+    loop {
+        if reply.len() >= 16 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pane.focus reply too long",
+            ));
+        }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "pane.focus reply timed out"))?;
+        stream.set_read_timeout(Some(remaining))?;
+        let mut byte = [0];
+        let n = stream.read(&mut byte).map_err(|error| {
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) {
+                io::Error::new(io::ErrorKind::TimedOut, "pane.focus reply timed out")
+            } else {
+                error
+            }
+        })?;
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "pane.focus reply timed out",
+            ));
+        }
+        if n == 0 {
+            break;
+        }
+        reply.push(byte[0]);
+        if byte[0] == b'\n' {
+            break;
+        }
+    }
+    let response: Value = serde_json::from_slice(&reply).map_err(io::Error::other)?;
+    if response["id"] != "crossroads-focus"
+        || response["error"].is_object()
+        || response["result"]["type"] != "pane_info"
+        || response["result"]["pane"]["pane_id"] != pane_id
+        || response["result"]["pane"]["focused"] != true
+    {
+        return Err(io::Error::other(format!("pane.focus failed: {response}")));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn focus(_pane_id: &str) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "pane focus requires a Unix socket",
+    ))
+}
+
+fn handle_key(ui: &mut Ui, key: Key, terminal: bool) -> io::Result<()> {
+    if let Some(id) = ui.key(key) {
+        focus(&id)?;
+    }
+    if !ui.closed {
+        draw(ui, terminal)?;
+    }
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let executable = std::env::var_os("HERDR_BIN_PATH")
         .filter(|path| !path.is_empty())
@@ -543,8 +634,7 @@ fn main() -> io::Result<()> {
         let n = input.read(&mut byte)?;
         if n == 0 {
             if let Some(key) = keys.flush() {
-                ui.key(key);
-                draw(&ui, terminal.0.is_some())?;
+                handle_key(&mut ui, key, terminal.0.is_some())?;
             }
             if terminal.0.is_none() || ui.closed {
                 break;
@@ -553,16 +643,14 @@ fn main() -> io::Result<()> {
         }
         if keys.escape == 1 && byte[0] != b'[' {
             if let Some(key) = keys.flush() {
-                ui.key(key);
-                draw(&ui, terminal.0.is_some())?;
+                handle_key(&mut ui, key, terminal.0.is_some())?;
             }
             if ui.closed {
                 break;
             }
         }
         if let Some(key) = keys.feed(byte[0]) {
-            ui.key(key);
-            draw(&ui, terminal.0.is_some())?;
+            handle_key(&mut ui, key, terminal.0.is_some())?;
             if ui.closed {
                 break;
             }
