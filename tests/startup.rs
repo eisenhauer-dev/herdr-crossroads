@@ -1,23 +1,70 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+#[cfg(unix)]
+fn fake_herdr() -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let path = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1 $2\" >> \"$CROSSROADS_TEST_LOG\"\n[ \"$1 $2\" = 'api snapshot' ] || exit 9\ncat '{}'\n",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    path
+}
+
 #[test]
 fn starts_with_eof_and_exits_successfully() {
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
     let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "65")
         .stdin(Stdio::null())
         .output()
         .expect("start the crossroads executable");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
 
     assert!(output.status.success(), "status: {}", output.status);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "Herdr Crossroads\nPress Enter to close.\n"
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("p-a") && text.contains("p-b") && text.contains("p-other"),
+        "{text}"
+    );
+    assert!(!text.contains("p-self"), "{text}");
+    assert!(
+        text.find("p-b") < text.find("p-a") && text.find("p-a") < text.find("p-other"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Claude") && text.contains("working"),
+        "{text}"
     );
 }
 
 #[test]
 fn closes_after_enter() {
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
     let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "65")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -29,10 +76,21 @@ fn closes_after_enter() {
         .write_all(b"\n")
         .expect("send Enter");
     let output = child.wait_with_output().expect("wait for crossroads");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
 
     assert!(output.status.success(), "status: {}", output.status);
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "Herdr Crossroads\nPress Enter to close.\n"
-    );
+    assert!(String::from_utf8_lossy(&output.stdout).ends_with("Press Enter to close.\n"));
+}
+
+#[test]
+fn missing_cli_reports_error_without_rendering_a_table() {
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", "/nonexistent/herdr-crossroads-test")
+        .stdin(Stdio::null())
+        .output()
+        .expect("start the crossroads executable");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
 }
