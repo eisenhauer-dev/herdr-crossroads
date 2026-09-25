@@ -98,7 +98,7 @@ def assert_selected_background(raw, width, height):
     border = [x for x, char in enumerate(lines[1]) if char == "─"]
     assert border == list(range(2, width - 2)), (width, border)
     if height > 6:
-        assert border == [x for x, char in enumerate(lines[height - (2 if width >= 138 else 3)]) if char == "─"], lines
+        assert border == [x for x, char in enumerate(lines[height - (2 if width >= 110 else 3)]) if char == "─"], lines
     painted = [x for x, enabled in enumerate(backgrounds[selected[0]]) if enabled]
     assert painted == border, (width, selected, painted, border)
     assert all(not any(row) for at, row in enumerate(backgrounds) if at != selected[0]), backgrounds
@@ -157,7 +157,7 @@ def main(binary):
             assert any(line.startswith("  > ") and "codex" in line for line in lines), lines
             os.write(master, b"\x1b[Z")
             lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
-            for width, height, has_rule in ((162, 36, True), (135, 36, False), (162, 7, False)):
+            for width, height, has_rule in ((162, 36, True), (109, 36, False), (110, 36, True), (162, 7, False)):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 if height < 15:
                     raw = frame(master, NOTICE_END)
@@ -167,26 +167,31 @@ def main(binary):
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, height)
                 assert (lines[3] == "  " + "┄" * (width - 4)) == has_rule, (width, height, lines[3])
-                assert ("Status" in lines[2]) == (width >= 138), (width, height, lines[2])
+                assert ("Status" in lines[2]) == (width >= 110), (width, height, lines[2])
             assert any(line.startswith("  > ") and "Claude" in line for line in lines), lines
-            for width in (150, 139, 138):
+            for width in (150, 139, 138, 121, 120, 111, 110):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
                 assert_selected_background(frame(master, b"  Search: "), width, 15)
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
                 assert "Status" in lines[2] and lines[3].startswith("  ┄") and "Claude" in lines[4], lines
                 assert lines[14] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys", lines
-            for width in (137, 138):
+            for width in (109, 110):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
                 lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
-                assert ("Status" in lines[2]) == (width == 138), lines
-                assert lines[14] == ("  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys" if width == 138 else "  Enter: focus · Esc/q: exit · ?: keys"), lines
+                assert ("Status" in lines[2]) == (width == 110), lines
+                assert lines[14] == ("  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys" if width == 110 else "  Enter: focus · Esc/q: exit · ?: keys"), lines
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
             raw = frame(master, b"  Search: ")
             assert_selected_background(raw, 80, 15)
             os.write(master, b"/codex\n")
             raw = frame(master, b"Search: codex")
             assert "codex" in "\n".join(screen(raw, 80, 15)[0]), raw
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
+            lines = assert_selected_background(frame(master, b"  Search: codex"), 110, 15)
+            assert "Status" in lines[2] and lines[3].startswith("  ┄"), lines
+            assert any(line.startswith("  > ") and "codex" in line and "idle" in line for line in lines), lines
+            assert lines[14] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys", lines
             for width, height in ((79, 15), (80, 14), (78, 14), (67, 12)):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 raw = frame(master, NOTICE_END)

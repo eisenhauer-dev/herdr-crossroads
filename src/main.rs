@@ -623,7 +623,7 @@ impl Ui {
         } else {
             let table_limit = limit.saturating_sub(3);
             let inner = table_limit.saturating_sub(4);
-            let roomy = inner >= 130;
+            let roomy = inner >= 102;
             let table_margin = "  ";
             let short = ansi && height <= 6;
             let header_rule = roomy && !short && height >= 8 && !visible.is_empty();
@@ -688,8 +688,30 @@ impl Ui {
             }
             let full = inner >= 30 && !visible.is_empty();
             let context = inner >= 18 && !visible.is_empty();
+            let expanded = if (72..102).contains(&inner) {
+                let mut widths = [26, 16, 28];
+                // Assign each additional cell to the column furthest behind its target share.
+                for step in 1..=inner - 72 {
+                    let weights = [21, 19, 17];
+                    let next = (0..3)
+                        .max_by_key(|&i| {
+                            (
+                                step as isize * weights[i]
+                                    - (widths[i] - [26, 16, 28][i]) as isize * 57,
+                                -(i as isize),
+                            )
+                        })
+                        .unwrap();
+                    widths[next] += 1;
+                }
+                Some(widths)
+            } else {
+                None
+            };
             let workspace_width = if roomy {
                 inner * 60 / 141
+            } else if let Some(widths) = expanded {
+                widths[0]
             } else if inner >= 30 {
                 if inner >= 52 {
                     (inner * 27 / 52).clamp(5, if inner == 52 { 27 } else { 26 })
@@ -701,6 +723,8 @@ impl Ui {
             };
             let tab_width = if roomy {
                 inner * 38 / 141
+            } else if let Some(widths) = expanded {
+                widths[1]
             } else {
                 if inner >= 52 {
                     (inner * 12 / 52).clamp(5, 22)
@@ -712,6 +736,8 @@ impl Ui {
             let separate_status = roomy && full;
             let name_width = if separate_status {
                 inner.saturating_sub(workspace_width + tab_width + status_width + 3)
+            } else if let Some(widths) = expanded {
+                widths[2]
             } else if context {
                 inner.saturating_sub(workspace_width + tab_width + 2)
             } else {
@@ -937,12 +963,12 @@ impl Ui {
             "Esc/q/?: back"
         } else if self.mode == Mode::Search {
             "Enter/Esc: select  Backspace: erase"
-        } else if width >= 138 {
+        } else if width >= 110 {
             "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
         } else {
             "Enter: focus · Esc/q: exit"
         };
-        let compact_select = self.mode == Mode::Select && width < 138;
+        let compact_select = self.mode == Mode::Select && width < 110;
         if ansi {
             let body_height = height.saturating_sub(if compact_select { 2 } else { 1 });
             lines.truncate(body_height);
@@ -2029,6 +2055,118 @@ mod tests {
     }
 
     #[test]
+    fn compact_popup_columns_grow_stepwise_without_losing_selection_or_status() {
+        let mut state = ui();
+        state.popup_size = Some((80, 15));
+        let mut previous = [0; 3];
+        for width in 80..=109 {
+            let frame = state.terminal_frame(width, 15);
+            let header = frame.split("\r\n").nth(2).unwrap();
+            let positions =
+                ["Workspace", "Tab", "Agent/Pane Name"].map(|label| header.find(label).unwrap());
+            let widths = [
+                positions[1] - positions[0] - 1,
+                positions[2] - positions[1] - 1,
+                width - 8 - (positions[2] - positions[0] - 2) - 2,
+            ];
+            assert_eq!(widths.iter().sum::<usize>(), width - 10, "{width}: {frame}");
+            assert!(
+                widths
+                    .iter()
+                    .zip(previous)
+                    .all(|(now, before)| *now >= before),
+                "{width}: {widths:?} < {previous:?}"
+            );
+            if let Some(expected) = [(80, [26, 16, 28]), (104, [35, 24, 35]), (109, [37, 25, 37])]
+                .into_iter()
+                .find_map(|(at, expected)| (at == width).then_some(expected))
+            {
+                assert_eq!(widths, expected, "{frame}");
+            }
+            assert!(!header.contains("Status"), "{frame}");
+            assert!(
+                frame.lines().any(|line| selected_prefix(line)
+                    && line.contains("Claude")
+                    && line.contains("working")),
+                "{frame}"
+            );
+            previous = widths;
+        }
+        let roomy = state.terminal_frame(110, 15);
+        assert!(roomy.lines().nth(2).unwrap().contains("Status"), "{roomy}");
+        assert!(
+            roomy.lines().nth(2).unwrap().contains("Agent/Pane Name"),
+            "{roomy}"
+        );
+        assert!(state
+            .terminal_frame(79, 15)
+            .contains("Crossroads needs minimum content size"));
+
+        let selected = state.rows.iter_mut().find(|row| row.id == "p-b").unwrap();
+        selected.workspace = "W".repeat(60);
+        selected.tab = "T".repeat(60);
+        selected.agent = "A".repeat(60);
+        selected.status.clear();
+        for (width, widths) in [(80, [26, 16, 28]), (104, [35, 24, 35]), (109, [37, 25, 37])] {
+            let frame = state.terminal_frame(width, 15);
+            let line = frame.lines().find(|line| selected_prefix(line)).unwrap();
+            for (letter, cell_width) in [('W', widths[0]), ('T', widths[1]), ('A', widths[2])] {
+                assert!(
+                    line.contains(&format!("{}…", letter.to_string().repeat(cell_width - 2))),
+                    "{width}: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn popup_switches_all_roomy_chrome_at_110_columns() {
+        let mut state = ui();
+        state.popup_size = Some((80, 15));
+        for width in [109, 110, 111] {
+            let frame = state.terminal_frame(width, 20);
+            let lines: Vec<_> = frame.split("\r\n").collect();
+            let roomy = width >= 110;
+            assert_eq!(lines.len(), 20, "{width}: {frame}");
+            assert_eq!(lines[2].contains("Status"), roomy, "{width}: {frame}");
+            assert_eq!(
+                lines[3].starts_with("  \x1b[2m\u{2504}"),
+                roomy,
+                "{width}: {frame}"
+            );
+            assert!(lines[2].contains("Agent/Pane Name"), "{width}: {frame}");
+            assert!(
+                lines.iter().any(|line| selected_prefix(line)
+                    && line.contains("Claude")
+                    && line.contains("working")),
+                "{width}: {frame}"
+            );
+            assert_eq!(
+                lines[19].contains("j/k: \u{2195}pane"),
+                roomy,
+                "{width}: {frame}"
+            );
+            if !roomy {
+                assert!(lines[18].contains("j/k: \u{2195}pane"), "{width}: {frame}");
+            }
+            assert_eq!(state.key(Key::Enter).as_deref(), Some("p-b"));
+        }
+        state.query = "codex".into();
+        let filtered = state.terminal_frame(110, 20);
+        assert!(
+            filtered.lines().nth(2).unwrap().contains("Status"),
+            "{filtered}"
+        );
+        assert!(
+            filtered.lines().any(|line| selected_prefix(line)
+                && line.contains("codex")
+                && line.contains("idle")),
+            "{filtered}"
+        );
+        assert_eq!(state.key(Key::Enter).as_deref(), Some("p-other"));
+    }
+
+    #[test]
     fn sixty_columns_allocate_workspace_tab_and_minimal_inline_agent_status() {
         let state = ui();
         let frame = state.terminal_frame(60, 15);
@@ -2094,7 +2232,7 @@ mod tests {
             "{frame}"
         );
         assert!(!state
-            .terminal_frame(135, 36)
+            .terminal_frame(109, 36)
             .split("\r\n")
             .nth(3)
             .unwrap()
@@ -2170,12 +2308,12 @@ mod tests {
     #[test]
     fn select_footer_uses_dot_groups_without_right_padding() {
         use ratatui::buffer::CellWidth;
-        for width in [60, 76, 137, 138, 139, 150] {
+        for width in [60, 76, 109, 110, 111, 119, 120, 121, 137, 138, 139, 150] {
             for height in [5, 15] {
                 let frame = ui().terminal_frame(width, height);
                 let lines: Vec<_> = frame.split("\r\n").collect();
                 let last = lines[height - 1];
-                let expected = if width >= 138 {
+                let expected = if width >= 110 {
                     "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
                 } else {
                     assert_eq!(
@@ -2261,11 +2399,11 @@ mod tests {
     #[test]
     fn compact_and_roomy_footers_show_navigation_with_final_help_group() {
         use ratatui::buffer::CellWidth;
-        for width in [60, 76, 137, 138, 139, 150] {
+        for width in [60, 76, 109, 110, 111, 119, 120, 121, 137, 138, 139, 150] {
             let state = ui();
             let frame = state.terminal_frame(width, 15);
             let footer = frame.split("\r\n").last().unwrap();
-            let navigation = if width >= 138 {
+            let navigation = if width >= 110 {
                 "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
             } else {
                 assert_eq!(
@@ -2277,14 +2415,14 @@ mod tests {
             };
             assert_eq!(
                 footer.matches('·').count(),
-                if width >= 138 { 5 } else { 2 },
+                if width >= 110 { 5 } else { 2 },
                 "{frame}"
             );
             assert!(!footer.contains('|'), "{frame}");
             assert!(footer.starts_with(&format!("  {navigation}")), "{frame}");
             assert_eq!(
                 footer.matches('↕').count(),
-                usize::from(width >= 138) * 3,
+                usize::from(width >= 110) * 3,
                 "{frame}"
             );
             assert!(!footer.contains('↑') && !footer.contains('↓'), "{frame}");
@@ -2335,7 +2473,11 @@ mod tests {
     #[test]
     fn roomy_columns_allocate_workspace_tab_name_and_status_without_overflow() {
         use ratatui::buffer::CellWidth;
-        for (width, expected) in [(150, [4, 65, 104, 134]), (139, [4, 60, 96, 123])] {
+        for (width, expected) in [
+            (110, [4, 48, 76, 94]),
+            (139, [4, 60, 96, 123]),
+            (150, [4, 65, 104, 134]),
+        ] {
             let state = ui();
             let frame = state.terminal_frame(width, 15);
             let lines: Vec<_> = frame.split("\r\n").collect();
@@ -2348,6 +2490,7 @@ mod tests {
                 .replace("\x1b[0m", "");
             assert!(selected.cell_width() as usize <= width - 1, "{frame}");
             assert!(selected[expected[2]..].contains("Claude"), "{frame}");
+            assert!(selected[expected[3]..].contains("working"), "{frame}");
         }
     }
 
@@ -2435,6 +2578,10 @@ mod tests {
             (60, 15),
             (76, 15),
             (40, 15),
+            (109, 15),
+            (110, 15),
+            (119, 15),
+            (120, 15),
             (137, 15),
             (138, 15),
             (139, 15),
@@ -2459,7 +2606,7 @@ mod tests {
             assert!(!border.is_empty(), "{frame}");
             assert_eq!(border, (2..width - 2).collect::<Vec<_>>(), "{frame}");
             if height > 6 {
-                let bottom: Vec<_> = lines[height - if width >= 138 { 2 } else { 3 }]
+                let bottom: Vec<_> = lines[height - if width >= 110 { 2 } else { 3 }]
                     .chars()
                     .enumerate()
                     .filter_map(|(x, c)| (c == '─').then_some(x))
@@ -2568,7 +2715,7 @@ mod tests {
         ] {
             let mut state = ui();
             state.rows[0].status = status.into();
-            for width in [60, 150] {
+            for width in [60, 110, 150] {
                 let frame = state.terminal_frame(width, 15);
                 assert!(
                     frame.contains(&format!("\x1b[38;2;{rgb}m{status}\x1b[39m")),
@@ -3436,7 +3583,7 @@ mod tests {
     #[test]
     fn compact_layouts_keep_visible_context_and_inline_status() {
         let mut state = ui();
-        for width in [76, 120] {
+        for width in [76, 109] {
             let frame = state.terminal_frame(width, 20);
             assert!(
                 frame.contains("Workspace")
@@ -3511,13 +3658,13 @@ mod tests {
 
     #[test]
     fn table_block_uses_nearly_full_width_without_moving_chrome() {
-        for width in [40, 86, 96, 137, 138, 140] {
+        for width in [40, 86, 96, 109, 110, 119, 120, 137, 138, 140] {
             let state = ui();
             let frame = state.terminal_frame(width, 16);
             let lines: Vec<_> = frame.split("\r\n").collect();
             assert_eq!(lines[0], "  Search: / to search");
             assert!(
-                lines[15].starts_with(if width >= 138 {
+                lines[15].starts_with(if width >= 110 {
                     "  j/k: ↕pane"
                 } else {
                     "  Enter: focus"
@@ -3528,7 +3675,7 @@ mod tests {
             assert!(frame.lines().any(|line| line.contains("Claude")), "{frame}");
             assert_eq!(lines[1].chars().count(), width - 2, "{frame}");
             assert!(
-                lines[if width >= 138 { 14 } else { 13 }].starts_with("  ─"),
+                lines[if width >= 110 { 14 } else { 13 }].starts_with("  ─"),
                 "{frame}"
             );
         }
@@ -3540,12 +3687,12 @@ mod tests {
         for _ in 0..5 {
             state.key(Key::Down);
         }
-        for width in [86, 137, 138, 140] {
+        for width in [86, 109, 110, 119, 120, 137, 138, 140] {
             let frame = state.terminal_frame(width, 5);
             let lines: Vec<_> = frame.split("\r\n").collect();
             assert_eq!(lines.len(), 5, "{frame}");
             assert!(
-                lines[4].starts_with(if width >= 138 {
+                lines[4].starts_with(if width >= 110 {
                     "  j/k: ↕pane"
                 } else {
                     "  Enter: focus"
@@ -3568,7 +3715,7 @@ mod tests {
     fn long_names_clip_within_wide_table_without_losing_status() {
         let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
         snapshot["result"]["snapshot"]["agents"][0]["display_agent"] = Value::from("A".repeat(200));
-        for width in [86, 140] {
+        for width in [86, 110, 140] {
             let state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), width).unwrap());
             let frame = state.terminal_frame(width, 8);
             let line = frame
@@ -3602,7 +3749,7 @@ mod tests {
         }
         let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 160).unwrap());
         state.selected = Some("p-extra-11".into());
-        let frame = state.terminal_frame(120, 5);
+        let frame = state.terminal_frame(109, 5);
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(lines.len(), 5, "{frame}");
         assert!(lines[1].starts_with("  ─"), "{frame}");
@@ -3614,7 +3761,7 @@ mod tests {
         );
         assert_eq!(state.selected.as_deref(), Some("p-extra-11"));
         state.selected = Some("p-second-tab".into());
-        let other = state.terminal_frame(120, 5);
+        let other = state.terminal_frame(109, 5);
         assert!(
             other
                 .lines()
@@ -3663,7 +3810,14 @@ mod tests {
                 let frame = state.terminal_frame(width, height);
                 let lines: Vec<_> = frame.split("\r\n").collect();
                 assert_eq!(lines.len(), height, "{frame}");
-                assert!(lines[height - 1].starts_with("  Enter: focus"), "{frame}");
+                assert!(
+                    lines[height - 1].starts_with(if width >= 110 {
+                        "  j/k: ↕pane"
+                    } else {
+                        "  Enter: focus"
+                    }),
+                    "{frame}"
+                );
                 assert!(
                     lines.iter().all(|line| without_status_ansi(line)
                         .replace("\x1b[48;5;236m", "")
@@ -3931,8 +4085,16 @@ mod tests {
         state.query = "Needle".into();
         let frame = state.terminal_frame(120, 20);
         assert!(
-            frame.contains("Claude (Hidden Needle)") && frame.contains("working"),
+            frame.contains("Claude (Hidden Nee…")
+                && frame.contains("working")
+                && frame.lines().nth(2).unwrap().contains("Status"),
             "{frame}"
+        );
+        let compact_boundary = state.terminal_frame(109, 20);
+        assert!(
+            compact_boundary.contains("Claude (Hidden Needle)")
+                && compact_boundary.contains("working"),
+            "{compact_boundary}"
         );
         let compact = state.terminal_frame(76, 20);
         assert!(
