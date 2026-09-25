@@ -2,6 +2,7 @@
 import json
 import os
 import pty
+import re
 import select
 import subprocess
 import sys
@@ -69,7 +70,9 @@ def main(binary):
                 frame = read_frame(master, b"Backspace: erase")
                 elapsed_ms = (time.monotonic() - start) * 1000
                 assert f"Search: {query}" in frame, frame[-300:]
-                observed = sum(name in frame for name in ("x first", "xy middle", "xyz last"))
+                assert "\x1b[4m" in frame, frame[-300:]
+                plain = re.sub(r"\x1b\[[0-9;]*m", "", frame)
+                observed = sum(name in plain for name in ("x first", "xy middle", "xyz last"))
                 assert all(f"p-{suffix}" not in frame for suffix in ("x", "xy", "xyz")), frame[-300:]
                 print(f"1000 rows: key={key}, matches={observed}, keypress-to-view={elapsed_ms:.2f} ms", flush=True)
                 assert observed == count, f"query {query}: expected {count} rows, got {observed}"
