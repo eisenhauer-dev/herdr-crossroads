@@ -78,11 +78,12 @@ fn clipped(s: &str, limit: usize) -> String {
         return ".".repeat(limit);
     }
     let mut result = String::new();
-    for c in s.chars() {
-        if columns(&result) + if c.is_ascii() { 1 } else { 2 } > limit - 2 {
+    let source = Span::raw(s);
+    for grapheme in source.styled_graphemes(Style::default()) {
+        if columns(&result) + columns(grapheme.symbol) > limit - 2 {
             break;
         }
-        result.push(c);
+        result.push_str(grapheme.symbol);
     }
     result.push('…');
     result
@@ -385,6 +386,66 @@ fn matches_field(field: &str, query: &str) -> bool {
         .all(|c| chars.any(|next| next == c))
 }
 
+fn match_positions(field: &str, query: &str) -> Vec<usize> {
+    if query.is_empty() || !matches_field(field, query) {
+        return Vec::new();
+    }
+    let lowered = field.to_lowercase();
+    let query = query.to_lowercase();
+    let mut wanted = query.chars().peekable();
+    let mut positions = Vec::new();
+    let mut source = field
+        .chars()
+        .enumerate()
+        .flat_map(|(index, c)| std::iter::repeat_n(index, c.to_lowercase().count()));
+    for lower in lowered.chars() {
+        let index = source.next().unwrap();
+        if wanted.peek() == Some(&lower) {
+            wanted.next();
+            if positions.last() != Some(&index) {
+                positions.push(index);
+            }
+        }
+        if wanted.peek().is_none() {
+            break;
+        }
+    }
+    positions
+}
+
+fn marked(text: &str, limit: usize, positions: &[usize], accent: bool) -> Line<'static> {
+    let clipped = clipped(text, limit);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut index = 0;
+    let graphemes = Span::raw(clipped.clone());
+    let last = graphemes
+        .styled_graphemes(Style::default())
+        .count()
+        .saturating_sub(1);
+    for (at, grapheme) in graphemes.styled_graphemes(Style::default()).enumerate() {
+        let count = grapheme.symbol.chars().count();
+        let matched = !(clipped != text && at == last && grapheme.symbol == "…")
+            && (index..index + count).any(|position| positions.contains(&position));
+        let style = if matched {
+            let style = Style::default().add_modifier(Modifier::UNDERLINED);
+            if accent {
+                style.fg(Color::Rgb(180, 190, 254))
+            } else {
+                style
+            }
+        } else {
+            Style::default()
+        };
+        if let Some(span) = spans.last_mut().filter(|span| span.style == style) {
+            span.content.to_mut().push_str(grapheme.symbol);
+        } else {
+            spans.push(Span::styled(grapheme.symbol.to_owned(), style));
+        }
+        index += count;
+    }
+    Line::from(spans)
+}
+
 #[derive(PartialEq, Eq, Debug)]
 enum Mode {
     Select,
@@ -626,7 +687,7 @@ impl Ui {
             let roomy = inner >= 102;
             let table_margin = "  ";
             let short = ansi && height <= 6;
-            let header_rule = roomy && !short && height >= 8 && !visible.is_empty();
+            let header_rule = roomy && !short && height >= 8;
             let footer_rows = if self.mode == Mode::Select && !roomy {
                 2
             } else {
@@ -686,8 +747,8 @@ impl Ui {
                 }
                 shown.push(visible[at]);
             }
-            let full = inner >= 30 && !visible.is_empty();
-            let context = inner >= 18 && !visible.is_empty();
+            let full = inner >= 30 && (!visible.is_empty() || width >= 80);
+            let context = inner >= 18 && (!visible.is_empty() || width >= 80);
             let expanded = if (72..102).contains(&inner) {
                 let mut widths = [26, 16, 28];
                 // Assign each additional cell to the column furthest behind its target share.
@@ -791,8 +852,30 @@ impl Ui {
                 };
                 let mut cells = Vec::new();
                 if context {
-                    cells.push(Line::raw(clipped(workspace, workspace_width)));
-                    cells.push(Line::raw(clipped(tab, tab_width)));
+                    cells.push(marked(
+                        workspace,
+                        workspace_width,
+                        &match_positions(workspace, &self.query),
+                        true,
+                    ));
+                    cells.push(marked(
+                        tab,
+                        tab_width,
+                        &match_positions(tab, &self.query),
+                        true,
+                    ));
+                }
+                let mut name_positions = if row.agent.is_empty() {
+                    match_positions(&row.pane, &self.query)
+                } else {
+                    match_positions(&row.agent, &self.query)
+                };
+                if name != row.agent && !row.agent.is_empty() {
+                    name_positions.extend(
+                        match_positions(&row.pane, &self.query)
+                            .into_iter()
+                            .map(|index| row.agent.chars().count() + 2 + index),
+                    );
                 }
                 let inline = full
                     && !separate_status
@@ -808,10 +891,10 @@ impl Ui {
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| ".".to_owned())
                     } else {
-                        clipped(&name, prefix_width)
+                        name.clone()
                     };
-                    cells.push(Line::from(vec![
-                        Span::raw(prefix),
+                    let mut spans = marked(&prefix, prefix_width, &name_positions, true).spans;
+                    spans.extend([
                         Span::raw(" "),
                         Span::styled("|", Style::default().add_modifier(Modifier::DIM)),
                         Span::raw(" "),
@@ -819,9 +902,10 @@ impl Ui {
                             row.status.clone(),
                             Style::default().fg(self.status_colors.for_status(&row.status)),
                         ),
-                    ]));
+                    ]);
+                    cells.push(Line::from(spans));
                 } else {
-                    cells.push(Line::raw(clipped(&name, name_width)));
+                    cells.push(marked(&name, name_width, &name_positions, true));
                 }
                 if separate_status {
                     cells.push(Line::from(Span::styled(
@@ -902,6 +986,7 @@ impl Ui {
                     let mut x = 0;
                     let mut foreground = None;
                     let mut dim = false;
+                    let mut underlined = false;
                     let last = (0..area.width).rfind(|&x| buffer[(x, y)].symbol() != " ");
                     while x < area.width {
                         let cell = &buffer[(x, y)];
@@ -921,6 +1006,10 @@ impl Ui {
                             dim = !dim;
                             content.push_str(if dim { "\x1b[2m" } else { "\x1b[22m" });
                         }
+                        if ansi && cell.modifier.contains(Modifier::UNDERLINED) != underlined {
+                            underlined = !underlined;
+                            content.push_str(if underlined { "\x1b[4m" } else { "\x1b[24m" });
+                        }
                         content.push_str(cell.symbol());
                         x += cell.cell_width().max(1);
                     }
@@ -929,6 +1018,9 @@ impl Ui {
                     }
                     if ansi && dim {
                         content.push_str("\x1b[22m");
+                    }
+                    if ansi && underlined {
+                        content.push_str("\x1b[24m");
                     }
                     if selected_line {
                         content.push_str(&" ".repeat(table_limit.saturating_sub(x as usize)));
@@ -1869,6 +1961,270 @@ mod tests {
         Ui::new(rows(SNAPSHOT, Some("p-self"), 160).unwrap())
     }
 
+    fn without_match_marks(frame: &str) -> String {
+        without_name_accent(frame)
+            .replace("\x1b[4m", "")
+            .replace("\x1b[24m", "")
+    }
+
+    fn without_name_accent(frame: &str) -> String {
+        frame
+            .replace("\x1b[38;2;180;190;254m", "")
+            .replace("\x1b[39m\x1b[24m", "\x1b[24m")
+    }
+
+    #[test]
+    fn marked_distinguishes_generated_from_source_ellipsis() {
+        let generated = marked("abcde", 4, &[2], true);
+        assert_eq!(
+            generated
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "ab…"
+        );
+        assert!(generated
+            .spans
+            .iter()
+            .all(|span| !span.style.add_modifier.contains(Modifier::UNDERLINED)));
+
+        let source = marked("ab…", 4, &[2], true);
+        assert!(source
+            .spans
+            .iter()
+            .any(|span| span.content == "…"
+                && span.style.add_modifier.contains(Modifier::UNDERLINED)));
+    }
+
+    #[test]
+    fn inline_status_does_not_mark_generated_ellipsis_but_marks_real_ellipsis() {
+        let mut state = ui();
+        state.rows.truncate(1);
+        state.rows[0].agent = "abcccccccccccccccc".into();
+        state.query = "abcccccccccccccccc".into();
+        let generated = state.terminal_frame(76, 15);
+        assert!(!generated.contains("…\x1b[39m\x1b[24m"), "{generated}");
+
+        state.rows[0].agent = "ab…".into();
+        state.query = "…".into();
+        let source = state.terminal_frame(76, 15);
+        assert!(source.contains("\x1b[4m…\x1b[39m\x1b[24m"), "{source}");
+    }
+
+    #[test]
+    fn marked_keeps_combining_and_joined_graphemes_in_single_spans() {
+        for glyph in ["e\u{301}", "👩\u{200d}💻"] {
+            for positions in [&[][..], &[0][..], &[1][..]] {
+                let line = marked(glyph, 20, positions, true);
+                assert_eq!(line.spans.len(), 1, "{glyph:?}: {line:?}");
+                assert_eq!(line.spans[0].content, glyph);
+                assert_eq!(
+                    line.spans[0]
+                        .style
+                        .add_modifier
+                        .contains(Modifier::UNDERLINED),
+                    !positions.is_empty()
+                );
+            }
+            assert_eq!(clipped(&format!("{glyph}abc"), 4), "…");
+        }
+    }
+
+    #[test]
+    fn empty_search_keeps_width_dependent_headers_and_columns() {
+        let mut state = ui();
+        for width in [80, 109, 110, 150] {
+            state.query = "Claude".into();
+            let populated = state.terminal_frame(width, 15);
+            state.query = "no-such-pane-or-workspace".into();
+            let empty = state.terminal_frame(width, 15);
+            let headers = |frame: &str| frame.split("\r\n").nth(2).unwrap().trim_start().to_owned();
+            assert_eq!(
+                headers(&empty),
+                headers(&populated),
+                "width={width}: {empty}"
+            );
+            assert!(empty.contains("No matching panes"), "{empty}");
+            for label in ["Workspace", "Tab", "Agent/Pane Name"] {
+                assert!(headers(&empty).contains(label), "width={width}: {empty}");
+            }
+            assert_eq!(headers(&empty).contains("Status"), width >= 110, "{empty}");
+        }
+    }
+
+    #[test]
+    fn search_name_glyphs_have_accent_foreground_and_underline_with_status_intact() {
+        let mut state = ui();
+        state.query = "Claude".into();
+        for width in [80, 150] {
+            let frame = state.terminal_frame(width, 15);
+            let selected = frame.lines().find(|line| selected_prefix(line)).unwrap();
+            assert!(
+                selected.contains("\x1b[38;2;180;190;254m\x1b[4mClaude\x1b[39m\x1b[24m")
+                    || selected.contains("\x1b[38;2;180;190;254m\x1b[4mC\x1b[39m\x1b[24m"),
+                "width={width}: {selected}"
+            );
+            assert!(selected.contains("\x1b[48;5;236m"), "{selected}");
+            assert!(
+                selected.contains("\x1b[38;2;249;226;175mworking\x1b[39m"),
+                "{selected}"
+            );
+            assert!(selected.ends_with("\x1b[0m"), "{selected}");
+        }
+        state.query = "Same".into();
+        for width in [80, 150] {
+            let frame = state.terminal_frame(width, 15);
+            let unselected = frame
+                .lines()
+                .find(|line| {
+                    !selected_prefix(line)
+                        && line.contains("\x1b[38;2;180;190;254m\x1b[4mSame\x1b[39m\x1b[24m")
+                })
+                .unwrap();
+            assert!(!unselected.contains("\x1b[48;5;236m"), "{frame}");
+        }
+    }
+
+    #[test]
+    fn search_workspace_and_tab_glyphs_have_accent_and_underline_in_both_layouts() {
+        let mut state = ui();
+        state
+            .rows
+            .retain(|row| row.id == "p-other" || row.id == "p-b");
+        state.selected = Some("p-b".into());
+        state.query = "Same".into();
+        let marked_same = "\x1b[38;2;180;190;254m\x1b[4mSame\x1b[39m\x1b[24m";
+        for width in [76, 160] {
+            let frame = state.terminal_frame(width, 15);
+            for (name, selected) in [("codex", false), ("Claude", true)] {
+                let line = frame.lines().find(|line| line.contains(name)).unwrap();
+                assert_eq!(selected_prefix(line), selected, "width={width}: {line}");
+                let context = line.split(name).next().unwrap();
+                assert_eq!(
+                    context.matches(marked_same).count(),
+                    2,
+                    "width={width}: {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn search_marks_leftmost_matches_in_each_displayed_field_without_marking_status() {
+        let mut state = ui();
+        state.rows.truncate(1);
+        state.rows[0].workspace = "aAardvark".into();
+        state.rows[0].tab = "aA tab".into();
+        state.rows[0].agent = "aA agent".into();
+        state.rows[0].pane = "aA pane".into();
+        state.query = "aa".into();
+        for width in [76, 160] {
+            let frame = state.terminal_frame(width, 16);
+            let plain_accent = without_name_accent(&frame);
+            let line = plain_accent
+                .lines()
+                .find(|line| line.contains("ardvark"))
+                .unwrap();
+            assert!(line.contains("\x1b[4maA\x1b[24mardvark"), "{frame}");
+            assert!(line.contains("\x1b[4maA\x1b[24m tab"), "{frame}");
+            assert!(line.contains("\x1b[4maA\x1b[24m agent"), "{frame}");
+            assert!(line.contains("(\x1b[4maA\x1b[24m"), "{frame}");
+            if width == 160 {
+                assert!(line.contains("\x1b[4maA\x1b[24m pane"), "{frame}");
+            }
+            assert!(!line.contains("\x1b[4mworking"), "{frame}");
+            assert!(line.contains("\x1b[48;5;236m"), "{frame}");
+        }
+        state.query.clear();
+        assert!(!state.terminal_frame(76, 16).contains("\x1b[4m"));
+    }
+
+    #[test]
+    fn search_marks_only_visible_matching_fields_and_clipped_glyphs() {
+        let mut state = ui();
+        state.rows.truncate(2);
+        state.rows[0].workspace = "Wéé-long-workspace".into();
+        state.rows[0].tab = "unmatched".into();
+        state.rows[0].agent = "éé-long-agent".into();
+        state.rows[0].pane = "not displayed".into();
+        state.rows[1].workspace = "hidden".into();
+        state.rows[1].tab = "hidden".into();
+        state.rows[1].pane = "hidden".into();
+        state.rows[1].agent = "hidden".into();
+        state.query = "éé".into();
+        assert_eq!(state.visible(), [0]);
+        let frame = state.terminal_frame(40, 12);
+        assert!(
+            frame.contains("\x1b[38;2;180;190;254m\x1b[4méé\x1b[39m\x1b[24m"),
+            "{frame}"
+        );
+        assert!(
+            !frame.contains("hidden") && !frame.contains("\x1b[4munmatched"),
+            "{frame}"
+        );
+        let narrow = state.terminal_frame(29, 12);
+        assert!(!narrow.contains("workspace"), "{narrow}");
+        assert_eq!(narrow.matches("\x1b[4m").count(), 2, "{narrow}");
+        assert!(
+            narrow.contains("\x1b[38;2;180;190;254m\x1b[4mé\x1b[39m\x1b[24m…"),
+            "{narrow}"
+        );
+        assert_eq!(state.key(Key::Enter).as_deref(), Some("p-b"));
+    }
+
+    #[test]
+    fn search_marks_greedy_subsequence_not_later_occurrences() {
+        let mut state = ui();
+        state.rows.truncate(1);
+        state.rows[0].workspace = "aabXx".into();
+        state.rows[0].tab = "no match".into();
+        state.rows[0].agent.clear();
+        state.rows[0].pane = "aabXx".into();
+        state.query = "ax".into();
+        let frame = state.terminal_frame(120, 12);
+        assert_eq!(
+            without_name_accent(&frame)
+                .matches("\x1b[4ma\x1b[24mab\x1b[4mX\x1b[24mx")
+                .count(),
+            2,
+            "{frame}"
+        );
+        assert!(!frame.contains("\x1b[4mx"), "{frame}");
+    }
+
+    #[test]
+    fn search_marks_scrolled_selected_rows_but_not_hidden_pane_or_offscreen_rows() {
+        let mut state = ui();
+        state.query = "Same".into();
+        let first = state.terminal_frame(120, 8);
+        assert!(
+            without_name_accent(&first).contains("\x1b[4mSame\x1b[24m"),
+            "{first}"
+        );
+        assert!(!first.contains("An extremely long pane"), "{first}");
+        state.selected = Some("p-a".into());
+        let scrolled = state.terminal_frame(120, 8);
+        assert!(
+            without_name_accent(&scrolled).contains("\x1b[4mSame\x1b[24m"),
+            "{scrolled}"
+        );
+        assert!(without_name_accent(&scrolled).lines().any(|line| line.contains("\x1b[48;5;236m")
+            && line.contains("\x1b[4mSame\x1b[24m")), "{scrolled}");
+
+        state.rows[0].workspace = "Workshop".into();
+        state.query = "Workshop".into();
+        let context = state.terminal_frame(120, 16);
+        assert!(
+            without_name_accent(&context).contains("\x1b[4mWorkshop\x1b[24m"),
+            "{context}"
+        );
+        assert!(
+            context.contains("Claude") && !context.contains("(Same)"),
+            "{context}"
+        );
+    }
+
     #[test]
     fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state() {
         let mut state = ui();
@@ -2365,7 +2721,7 @@ mod tests {
         state.query = "no matching pane".into();
         let empty = state.terminal_frame(150, 12);
         assert!(
-            empty.contains("No matching panes") && !empty.contains('┄'),
+            empty.contains("No matching panes") && empty.contains('┄'),
             "{empty}"
         );
 
@@ -2555,7 +2911,8 @@ mod tests {
         state.query = "Claude".into();
         let filtered = state.terminal_frame(60, 15);
         assert_eq!(filtered.lines().next().unwrap(), "  Search: Claude");
-        assert!(filtered.contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking"));
+        assert!(without_match_marks(&filtered)
+            .contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking"));
         let wide = state.terminal_frame(150, 15);
         assert!(wide.lines().nth(2).unwrap().contains("Status"), "{wide}");
         let wide_selected = wide
@@ -3033,7 +3390,8 @@ mod tests {
         );
         state.query = "pane".into();
         let filtered = state.terminal_frame(60, 15);
-        let lines: Vec<_> = filtered.split("\r\n").collect();
+        let plain_filtered = without_match_marks(&filtered);
+        let lines: Vec<_> = plain_filtered.split("\r\n").collect();
         let first = lines
             .iter()
             .position(|line| line.contains("pane 1"))
@@ -3125,7 +3483,8 @@ mod tests {
         );
         state.query = "pane".into();
         let filtered = state.terminal_frame(150, 20);
-        let lines: Vec<_> = filtered.split("\r\n").collect();
+        let plain_filtered = without_match_marks(&filtered);
+        let lines: Vec<_> = plain_filtered.split("\r\n").collect();
         let first = lines
             .iter()
             .position(|line| line.contains("pane 1"))
@@ -4084,21 +4443,22 @@ mod tests {
         let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 160).unwrap());
         state.query = "Needle".into();
         let frame = state.terminal_frame(120, 20);
+        let plain = without_match_marks(&frame);
         assert!(
-            frame.contains("Claude (Hidden Nee…")
+            plain.contains("Claude (Hidden Nee…")
                 && frame.contains("working")
                 && frame.lines().nth(2).unwrap().contains("Status"),
             "{frame}"
         );
         let compact_boundary = state.terminal_frame(109, 20);
         assert!(
-            compact_boundary.contains("Claude (Hidden Needle)")
+            without_match_marks(&compact_boundary).contains("Claude (Hidden Needle)")
                 && compact_boundary.contains("working"),
             "{compact_boundary}"
         );
         let compact = state.terminal_frame(76, 20);
         assert!(
-            compact.contains("Claude (Hidde… \x1b[2m|\x1b[22m "),
+            without_match_marks(&compact).contains("Claude (Hidde… \x1b[2m|\x1b[22m "),
             "{compact}"
         );
         let tiny = state.terminal_frame(16, 5);
@@ -4109,6 +4469,8 @@ mod tests {
                 .replace("\x1b[0m", "")
                 .replace("\x1b[2m", "")
                 .replace("\x1b[22m", "")
+                .replace("\x1b[4m", "")
+                .replace("\x1b[24m", "")
                 .chars()
                 .count()
                 <= 15),
