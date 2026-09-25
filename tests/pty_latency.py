@@ -41,7 +41,8 @@ def main(binary):
         directory = Path(directory)
         (directory / "snapshot.json").write_text(json.dumps(snapshot))
         fake = directory / "fake-herdr"
-        fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$1 $2\" >> \"$CROSSROADS_TEST_LOG\"\n"
+        fake.write_text("#!/bin/sh\nif [ \"$1 $2\" = 'worktree list' ]; then echo '{\"result\":{\"type\":\"worktree_list\",\"worktrees\":[]}}'; exit; fi\n"
+                        "printf '%s\\n' \"$1 $2\" >> \"$CROSSROADS_TEST_LOG\"\n"
                         "[ \"$1 $2\" = 'api snapshot' ] || exit 9\n"
                         "cat \"$CROSSROADS_TEST_SNAPSHOT\"\n")
         fake.chmod(0o700)
@@ -55,24 +56,26 @@ def main(binary):
             child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             os.close(slave)
             slave = -1
-            initial = read_frame(master, b"Filter: ")
-            assert " | Workspace / Tab / " in initial, initial[-300:]
+            initial = read_frame(master, " · ?: keys".encode())
+            assert "Workspace" in initial and "Tab" in initial and "filler" in initial and "p-0000" not in initial, initial[-300:]
             for key, count in (("x", 3), ("y", 2), ("z", 1)):
                 if key == "x":
                     os.write(master, b"/")
-                    read_frame(master, b"Search: ")
+                    read_frame(master, b"Backspace: erase")
                 start = time.monotonic()
                 os.write(master, key.encode())
                 query = {"x": "x", "y": "xy", "z": "xyz"}[key]
-                frame = read_frame(master, f"Search: {query}".encode())
+                frame = read_frame(master, b"Backspace: erase")
                 elapsed_ms = (time.monotonic() - start) * 1000
-                observed = frame.count(" | Workspace / Tab / ")
+                assert f"Search: {query}" in frame, frame[-300:]
+                observed = sum(name in frame for name in ("x first", "xy middle", "xyz last"))
+                assert all(f"p-{suffix}" not in frame for suffix in ("x", "xy", "xyz")), frame[-300:]
                 print(f"1000 rows: key={key}, matches={observed}, keypress-to-view={elapsed_ms:.2f} ms", flush=True)
                 assert observed == count, f"query {query}: expected {count} rows, got {observed}"
                 assert elapsed_ms <= 100, f"query {query}: {elapsed_ms:.2f} ms > 100 ms"
             os.write(master, b"\x1b")
             # Raw terminal Esc is resolved after the 100ms input timeout.
-            read_frame(master, b"Filter: xyz")
+            read_frame(master, " · ?: keys".encode())
             os.write(master, b"\x1b")
             assert child.wait(timeout=3) == 0, "Esc in Select did not close"
             assert (directory / "calls.log").read_text() == "api snapshot\n"
