@@ -105,6 +105,18 @@ def assert_selected_background(raw, width, height):
     return lines
 
 
+NOTICE_END = b"  Press Enter/Esc/q to close."
+
+
+def notice_lines(width, height):
+    return [
+        "  Crossroads needs minimum content size 80x15.",
+        f"  Your content size is: {width}x{height}.",
+        "  Set larger size in herdr plugin manifest.",
+        "  Press Enter/Esc/q to close.",
+    ]
+
+
 def main(binary):
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)
@@ -113,23 +125,23 @@ def main(binary):
         fake.write_text(f"#!/bin/sh\ncat '{fixture}'\n")
         fake.chmod(0o700)
         master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 76, 0, 0))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
         env = dict(os.environ, HERDR_BIN_PATH=str(fake), HERDR_PANE_ID="p-self")
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)
         env.pop("HERDR_SOCKET_PATH", None)
         child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
         os.close(slave)
         try:
-            raw = frame(master, b"Filter: ")
+            raw = frame(master, b"  Search: ")
             assert "\x1b[?25l" in raw and "\x1b[?25h" not in raw, raw[-100:]
-            _, wraps, cursor = screen(raw, 76, 15, track_cursor=True)
+            _, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
             assert wraps == 0 and cursor[0] is False, cursor
-            lines = assert_selected_background(raw, 76, 15)
+            lines = assert_selected_background(raw, 80, 15)
             selected_raw = next(line for line in raw.splitlines() if line.startswith("  \x1b[48;5;236m> "))
             assert "Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[39m" in selected_raw, raw
             assert selected_raw.endswith("\x1b[0m"), selected_raw
             assert "codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m" in raw, raw
-            assert lines[0] == "Filter: / to search" and not any("Herdr Crossroads" in line for line in lines), lines
+            assert lines[0] == "  Search: / to search" and not any("Herdr Crossroads" in line for line in lines), lines
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[12].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
             assert sum("┄" in line for line in lines) == 1, lines
@@ -138,89 +150,62 @@ def main(binary):
             assert any("Same" in line and "Claude" in line and "working" in line for line in lines), lines
             assert any("Same" in line and "Claude" not in line and "working" not in line for line in lines[3:8]), lines
             assert not any(pane_id in "\n".join(lines) for pane_id in ("p-b", "p-a", "p-other")), lines
-            assert any("Filter:" in line for line in lines), lines
-            assert lines[13] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "Enter: focus · Esc/q: exit · ?: keys", lines
+            assert not any("Filter:" in line for line in lines), lines
+            assert lines[13] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "  Enter: focus · Esc/q: exit · ?: keys", lines
             os.write(master, b"\t")
-            lines = assert_selected_background(frame(master, b"Filter: "), 76, 15)
+            lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
             assert any(line.startswith("  > ") and "codex" in line for line in lines), lines
             os.write(master, b"\x1b[Z")
-            lines = assert_selected_background(frame(master, b"Filter: "), 76, 15)
+            lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
+            for width, height, has_rule in ((162, 36, True), (135, 36, False), (162, 7, False)):
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                if height < 15:
+                    raw = frame(master, NOTICE_END)
+                    assert [line for line in screen(raw, width, height)[0] if line] == notice_lines(width, height), raw
+                    continue
+                assert_selected_background(frame(master, b"  Search: "), width, height)
+                os.write(master, b"r")
+                lines = assert_selected_background(frame(master, b"  Search: "), width, height)
+                assert (lines[3] == "  " + "┄" * (width - 4)) == has_rule, (width, height, lines[3])
+                assert ("Status" in lines[2]) == (width >= 138), (width, height, lines[2])
             assert any(line.startswith("  > ") and "Claude" in line for line in lines), lines
             for width in (150, 139, 138):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
+                assert_selected_background(frame(master, b"  Search: "), width, 15)
                 os.write(master, b"r")
-                lines = assert_selected_background(frame(master, b"Filter: "), width, 15)
+                lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
                 assert "Status" in lines[2] and lines[3].startswith("  ┄") and "Claude" in lines[4], lines
-                assert lines[14] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys", lines
-            for width in (137, 60, 40):
+                assert lines[14] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys", lines
+            for width in (137, 138):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
-                os.write(master, b"r")
-                lines = assert_selected_background(frame(master, b"Filter: "), width, 15)
-                assert lines[3].startswith("  > "), lines
-                assert lines[8].startswith("  ┄"), lines
-                if width == 137:
-                    assert "Status" not in lines[2] and lines[13] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "Enter: focus · Esc/q: exit · ?: keys", lines
-                if width == 60:
-                    assert lines[13] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "Enter: focus · Esc/q: exit · ?: keys", lines
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 60, 0, 0))
-            os.write(master, b"jjjjj")
-            lines = assert_selected_background(frame(master, b"Filter: "), 60, 5)
-            assert any("Same" in line and "codex" in line and "idle" in line for line in lines), lines
-            assert lines[1].startswith("  ─") and lines[2].startswith("  > ") and not any("┄" in line or "▏" in line for line in lines), lines
-            assert lines[3] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[4] == "Enter: focus · Esc/q: exit · ?: keys", lines
-            os.write(master, b"/?")
-            raw = frame(master, b"Search: ?")
-            lines, wraps, cursor = screen(raw, width=60, height=5, track_cursor=True)
-            assert wraps == 0, lines
-            assert lines[0] == "Search: ?" and "No matching panes" in "\n".join(lines) and lines[4].startswith("Enter/Esc: select"), lines
-            assert cursor == (True, 9, 0), cursor
-            assert not any("Herdr Crossroads" in line for line in lines), lines
-            os.write(master, "界".encode())
-            raw = frame(master, "Search: ?界".encode())
-            lines, wraps, cursor = screen(raw, width=60, height=5, track_cursor=True)
-            assert wraps == 0 and lines[0] == "Search: ?界" and cursor == (True, 11, 0), (lines, cursor)
-            os.write(master, b"\x7f")
-            raw = frame(master, b"Search: ?")
-            _, wraps, cursor = screen(raw, width=60, height=5, track_cursor=True)
-            assert wraps == 0 and cursor == (True, 9, 0), cursor
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 20, 0, 0))
-            os.write(master, b"a" * 40)
-            raw = frame(master, b"\x1b[?25h")
-            lines, wraps, cursor = screen(raw, width=20, height=5, track_cursor=True)
-            assert wraps == 0 and lines[0].startswith("Search: ?") and lines[0].endswith("…") and cursor == (True, len(lines[0]), 0), (lines, cursor)
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 9, 0, 0))
-            os.write(master, "界".encode())
-            raw = frame(master, b"\x1b[?25h")
-            lines, wraps, cursor = screen(raw, width=9, height=5, track_cursor=True)
-            assert wraps == 0 and lines[0].endswith("…") and cursor == (True, len(lines[0]), 0) and cursor[1] < 9, (lines, cursor)
-            os.write(master, b"\x1b")
-            raw = frame(master, b"\x1b[?25l")
-            _, wraps, cursor = screen(raw, width=9, height=5, track_cursor=True)
-            assert wraps == 0 and cursor[0] is False and "\x1b[?25l" in raw, cursor
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 60, 0, 0))
-            os.write(master, b"?")
-            raw = frame(master, b"Esc/q/?: back")
-            lines, wraps, cursor = screen(raw, width=60, height=5, track_cursor=True)
-            assert wraps == 0 and lines[0].startswith("Filter:") and lines[4] == "Esc/q/?: back", lines
-            assert cursor[0] is False, cursor
-            assert not any("Herdr Crossroads" in line for line in lines), lines
-            os.write(master, b"\x1b")
-            raw = frame(master, b"Filter: ")
-            assert screen(raw, width=60, height=5, track_cursor=True)[2][0] is False
-            os.write(master, b"/")
-            raw = frame(master, b"Backspace: erase")
-            lines, wraps, cursor = screen(raw, width=60, height=5, track_cursor=True)
-            assert wraps == 0 and cursor == (True, len(lines[0]) + 1, 0), (lines, cursor)
-            os.write(master, b"\n")
-            raw = frame(master, b"Filter: ")
-            assert screen(raw, width=60, height=5, track_cursor=True)[2][0] is False
-            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 140, 0, 0))
-            os.write(master, b"r")
-            lines, wraps = screen(frame(master, b"Filter: "), width=140, height=5)
-            assert wraps == 0, lines
-            assert lines[1].startswith("  ─") and lines[2].startswith("  > ") and not any("┄" in line or "▏" in line for line in lines), lines
-            assert any("Same" in line and "codex" in line and "idle" in line for line in lines), lines
-            assert lines[4] == "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys", lines
+                lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
+                assert ("Status" in lines[2]) == (width == 138), lines
+                assert lines[14] == ("  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys" if width == 138 else "  Enter: focus · Esc/q: exit · ?: keys"), lines
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
+            raw = frame(master, b"  Search: ")
+            assert_selected_background(raw, 80, 15)
+            os.write(master, b"/codex\n")
+            raw = frame(master, b"Search: codex")
+            assert "codex" in "\n".join(screen(raw, 80, 15)[0]), raw
+            for width, height in ((79, 15), (80, 14), (78, 14), (67, 12)):
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                raw = frame(master, NOTICE_END)
+                lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                assert wraps == 0 and cursor[0] is False, (lines, wraps, cursor)
+                assert [line for line in lines if line] == notice_lines(width, height), lines
+                assert not any("Search:" in line or "Claude" in line or "focus" in line or "─" in line for line in lines), lines
+                for key in (b"/", b"?", b"j"):
+                    os.write(master, key)
+                    raw = frame(master, NOTICE_END)
+                    assert [line for line in screen(raw, width, height)[0] if line] == notice_lines(width, height), raw
+                    assert child.poll() is None, key
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
+            raw = frame(master, b"Search: codex")
+            lines = assert_selected_background(raw, 80, 15)
+            assert lines[0] == "  Search: codex" and any(line.startswith("  > ") and "codex" in line for line in lines), lines
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
+            raw = frame(master, NOTICE_END)
+            assert [line for line in screen(raw, 79, 15)[0] if line] == notice_lines(79, 15)
             os.write(master, b"q")
             raw = frame(master, b"\x1b[?25h")
             assert raw.endswith("\x1b[?25h"), raw[-100:]
@@ -231,18 +216,19 @@ def main(binary):
                 child.wait()
             os.close(master)
 
-        for key, expected_status in ((b"\x1b", 0), (b"\n", 1)):
+        for key in (b"\n", b"\x1b", b"q"):
             master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 5, 60, 0, 0))
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
             saved = termios.tcgetattr(slave)
             child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             try:
-                initial = frame(master, b"?: keys")
+                initial = frame(master, NOTICE_END)
                 assert "\x1b[?25l" in initial, initial[-100:]
+                assert [line for line in screen(initial, 79, 15)[0] if line] == notice_lines(79, 15)
                 os.write(master, key)
                 restored = frame(master, b"\x1b[?25h")
                 assert "\x1b[?25h" in restored, restored[-100:]
-                assert (child.wait(timeout=3) == 0) == (expected_status == 0), key
+                assert child.wait(timeout=3) == 0, key
                 assert termios.tcgetattr(slave) == saved, key
             finally:
                 if child.poll() is None:

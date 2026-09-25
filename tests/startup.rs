@@ -2,6 +2,863 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 #[cfg(unix)]
+#[test]
+fn no_socket_variable_keeps_one_snapshot_and_never_lists_panes_on_retry() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    for socket_value in [None, Some("")] {
+        let base = std::path::Path::new("/tmp/opencode").join(format!(
+            "crossroads-no-env-{}-{}",
+            std::process::id(),
+            if socket_value.is_some() {
+                "empty"
+            } else {
+                "absent"
+            }
+        ));
+        std::fs::create_dir(&base).unwrap();
+        let fake = base.join("herdr");
+        let log = base.join("calls");
+        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then exit 9; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"));
+        command
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env("HERDR_PANE_ID", "p-self")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        if let Some(value) = socket_value {
+            command.env("HERDR_SOCKET_PATH", value);
+        } else {
+            command.env_remove("HERDR_SOCKET_PATH");
+        }
+        let mut child = command.spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !log.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(log.exists(), "snapshot did not start");
+        // Keep stdin open beyond the 500ms retry interval.
+        std::thread::sleep(Duration::from_millis(700));
+        child.stdin.take().unwrap().write_all(b"q").unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Claude | working"));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "api snapshot\nworktree list --workspace w1\nworktree list --workspace w2\n"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn live_status_burst_coalesces_frames_and_keeps_quit_responsive() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    use std::time::{Duration, Instant};
+    let base = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-burst-{}", std::process::id()));
+    std::fs::create_dir(&base).unwrap();
+    let listener = UnixListener::bind(base.join("socket")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let fake = base.join("herdr");
+    std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("HERDR_SOCKET_PATH", base.join("socket"))
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "65")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(error) => panic!("subscription not opened: {error}"),
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut request = String::new();
+    BufReader::new(&stream).read_line(&mut request).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&request).unwrap()["method"],
+        "events.subscribe"
+    );
+    stream
+        .write_all(
+            b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+        )
+        .unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap()
+        .contains("Claude | working")
+    {}
+    let mut burst = String::new();
+    for index in 0..256 {
+        let status = if index == 255 {
+            "done"
+        } else if index % 2 == 0 {
+            "idle"
+        } else {
+            "blocked"
+        };
+        burst.push_str(&format!("{{\"event\":\"pane.agent_status_changed\",\"data\":{{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"{status}\"}}}}\n"));
+    }
+    stream.write_all(burst.as_bytes()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut frames = 0;
+    let mut got_done = false;
+    while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        if line.contains("Claude | ") {
+            frames += 1;
+            if line.contains("Claude | done") {
+                got_done = true;
+                break;
+            }
+        }
+    }
+    let started_quit = Instant::now();
+    child.stdin.take().unwrap().write_all(b"q").unwrap();
+    let quit_deadline = Instant::now() + Duration::from_secs(2);
+    while child.try_wait().unwrap().is_none() && Instant::now() < quit_deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let exited = child.try_wait().unwrap().is_some();
+    if !exited {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    reader.join().unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(got_done, "last event not rendered");
+    assert!(
+        frames <= 16,
+        "burst rendered {frames} frames instead of batched redraws"
+    );
+    assert!(
+        exited && output.status.success() && started_quit.elapsed() < Duration::from_secs(2),
+        "q blocked behind burst"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let base = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-live-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&base).unwrap();
+    let socket = base.join("api.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let fake = base.join("herdr");
+    let log = base.join("calls");
+    std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-self\"}},{{\"pane_id\":\"p-a\"}},{{\"pane_id\":\"p-other\"}},{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then sleep 0.15; cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_SOCKET_PATH", &socket)
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "150")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let (mut stream, _) = loop {
+        match listener.accept() {
+            Ok(pair) => break pair,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(error) => {
+                child.kill().unwrap();
+                let _ = child.wait();
+                std::fs::remove_dir_all(&base).unwrap();
+                panic!("expected status subscription after pane list: {error}");
+            }
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut line = String::new();
+    BufReader::new(&stream).read_line(&mut line).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(request["method"], "events.subscribe");
+    assert_eq!(
+        request["params"]["subscriptions"].as_array().unwrap().len(),
+        4
+    );
+    assert!(request["params"]["subscriptions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == &serde_json::json!({"type":"pane.agent_status_changed","pane_id":"p-b"})));
+    stream
+        .write_all(
+            format!(
+                "{{\"id\":{},\"result\":{{\"type\":\"subscription_started\"}}}}\n",
+                request["id"]
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+    stream.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"done\"}}\n").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    stream.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-other\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"closed-id\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    child.stdin.take().unwrap().write_all(b"q").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.lines()
+            .any(|l| l.contains("Claude") && l.contains("done")),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| l.contains("Claude") && l.contains("blocked")),
+        "{text}"
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|l| l.contains("codex") && l.contains("blocked")),
+        "{text}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .take(2)
+            .collect::<Vec<_>>(),
+        ["pane list", "api snapshot"]
+    );
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    use std::time::{Duration, Instant};
+    for buffered_status in [None, Some("idle"), Some("retry")] {
+        let base = std::path::Path::new("/tmp/opencode").join(format!(
+            "crossroads-resync-{}-{}",
+            std::process::id(),
+            buffered_status.unwrap_or("snapshot")
+        ));
+        std::fs::create_dir(&base).unwrap();
+        let listener = UnixListener::bind(base.join("socket")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let fake = base.join("herdr");
+        let log = base.join("calls");
+        let mut replacement: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/topology.json")).unwrap();
+        replacement["result"]["snapshot"]["agents"][0]["agent_status"] = "done".into();
+        std::fs::write(base.join("replacement.json"), replacement.to_string()).unwrap();
+        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/second-started\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n    if [ \"$CROSSROADS_RETRY\" = '1' ] && [ ! -f \"$CROSSROADS_BASE/failed\" ]; then touch \"$CROSSROADS_BASE/failed\"; echo invalid; exit; fi\n    cat \"$CROSSROADS_BASE/replacement.json\"\n  else\n    touch \"$CROSSROADS_BASE/first\"\n    cat '{}'\n  fi\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env("CROSSROADS_BASE", &base)
+            .env(
+                "CROSSROADS_RETRY",
+                if buffered_status == Some("retry") {
+                    "1"
+                } else {
+                    "0"
+                },
+            )
+            .env("HERDR_SOCKET_PATH", base.join("socket"))
+            .env("HERDR_PANE_ID", "p-self")
+            .env("COLUMNS", "65")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let (lines_tx, lines_rx) = std::sync::mpsc::channel();
+        let stdout = child.stdout.take().unwrap();
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if lines_tx.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut output_lines = Vec::new();
+        let mut until_line = |needle: &str| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                let line = lines_rx
+                    .recv_timeout(remaining)
+                    .expect("expected rendered status before deadline");
+                let found = line.contains(needle);
+                output_lines.push(line);
+                if found {
+                    break;
+                }
+            }
+        };
+        let accept = |listener: &UnixListener| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(error) => panic!("subscription not re-established: {error}"),
+                }
+            }
+        };
+        let mut first = accept(&listener);
+        let mut line = String::new();
+        BufReader::new(&first).read_line(&mut line).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["method"],
+            "events.subscribe"
+        );
+        first
+            .write_all(
+                b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+            )
+            .unwrap();
+        first.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
+        until_line("Claude | blocked");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !base.join("first").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            base.join("first").exists(),
+            "initial snapshot did not start"
+        );
+        drop(first);
+        let mut second = accept(&listener);
+        line.clear();
+        BufReader::new(&second).read_line(&mut line).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()["params"]["subscriptions"][0]
+                ["pane_id"],
+            "p-b"
+        );
+        second
+            .write_all(
+                b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !base.join("second-started").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !base.join("second-started").exists() {
+            child.kill().unwrap();
+            let _ = child.wait();
+            panic!("reconnect snapshot did not start");
+        }
+        if let Some(status) = buffered_status.filter(|status| *status != "retry") {
+            second.write_all(format!("{{\"event\":\"pane.agent_status_changed\",\"data\":{{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"{status}\"}}}}\n").as_bytes()).unwrap();
+        }
+        std::fs::write(base.join("release"), "").unwrap();
+        let mut retry_connection = None;
+        if buffered_status == Some("retry") {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !base.join("failed").exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                base.join("failed").exists(),
+                "first reconnect snapshot did not fail"
+            );
+            second.shutdown(std::net::Shutdown::Both).unwrap();
+            let mut third = accept(&listener);
+            line.clear();
+            BufReader::new(&third).read_line(&mut line).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&line).unwrap()["method"],
+                "events.subscribe"
+            );
+            third.write_all(b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n").unwrap();
+            retry_connection = Some(third);
+        }
+        let mut expected = buffered_status
+            .filter(|status| *status != "retry")
+            .unwrap_or("done");
+        until_line(&format!("Claude | {expected}"));
+        if buffered_status == Some("idle") {
+            second.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"done\"}}\n").unwrap();
+            until_line("Claude | done");
+            expected = "done";
+        }
+        drop(retry_connection);
+        child.stdin.take().unwrap().write_all(b"q").unwrap();
+        let output = child.wait_with_output().unwrap();
+        reader.join().unwrap();
+        assert!(output.status.success());
+        let last_agent = output_lines
+            .iter()
+            .filter(|line| line.contains("Claude | "))
+            .last()
+            .unwrap();
+        assert!(
+            last_agent.contains(&format!("Claude | {expected}")),
+            "{output_lines:?}"
+        );
+        assert!(
+            output_lines
+                .iter()
+                .any(|line| line.contains("Claude | blocked")),
+            "{output_lines:?}"
+        );
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.starts_with("pane list\napi snapshot\n"), "{calls}");
+        let expected_calls = if buffered_status == Some("retry") {
+            3
+        } else {
+            2
+        };
+        assert_eq!(
+            calls.matches("pane list\n").count(),
+            expected_calls,
+            "{calls}"
+        );
+        assert_eq!(
+            calls.matches("api snapshot\n").count(),
+            expected_calls,
+            "{calls}"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn reconnect_installs_snapshot_while_status_sender_is_still_active() {
+    use std::io::{BufRead, BufReader};
+    use std::net::Shutdown;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let base = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-active-reconnect-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&base).unwrap();
+    let listener = UnixListener::bind(base.join("socket")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut replacement: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/topology.json")).unwrap();
+    replacement["result"]["snapshot"]["workspaces"][1]["label"] = "Fresh topology".into();
+    std::fs::write(base.join("replacement.json"), replacement.to_string()).unwrap();
+    let fake = base.join("herdr");
+    std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/held\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n    cat \"$CROSSROADS_BASE/replacement.json\"\n  else\n    touch \"$CROSSROADS_BASE/first\"\n    cat '{}'\n  fi\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_BASE", &base)
+        .env("HERDR_SOCKET_PATH", base.join("socket"))
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "150")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (tx, rx) = std::sync::mpsc::sync_channel(256);
+    let stdout = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line.unwrap()).is_err() {
+                break;
+            }
+        }
+    });
+    let accept = || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut request = String::new();
+                    BufReader::new(&stream).read_line(&mut request).unwrap();
+                    assert_eq!(
+                        serde_json::from_str::<serde_json::Value>(&request).unwrap()["method"],
+                        "events.subscribe"
+                    );
+                    stream.write_all(b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n").unwrap();
+                    break stream;
+                }
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("subscription not opened: {error}"),
+            }
+        }
+    };
+    let first = accept();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !base.join("first").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(base.join("first").exists());
+    drop(first);
+    let second = accept();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !base.join("held").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(base.join("held").exists());
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let sent = Arc::new(AtomicUsize::new(0));
+    let sending = stop.clone();
+    let count = sent.clone();
+    let mut writer_stream = second.try_clone().unwrap();
+    let writer = std::thread::spawn(move || {
+        let event = b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"idle\"}}\n";
+        while !sending.load(Ordering::Relaxed) {
+            if writer_stream.write_all(event).is_err() {
+                break;
+            }
+            count.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while sent.load(Ordering::Relaxed) < 1100 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let prefilled = sent.load(Ordering::Relaxed);
+    std::fs::write(base.join("release"), "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut installed = false;
+    while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        if line.contains("Fresh topology") {
+            installed = true;
+            break;
+        }
+    }
+    let still_sending = sent.load(Ordering::Relaxed) > prefilled && !writer.is_finished();
+    stop.store(true, Ordering::Relaxed);
+    let _ = second.shutdown(Shutdown::Both);
+    writer.join().unwrap();
+    child.stdin.take().unwrap().write_all(b"q").unwrap();
+    let quit_deadline = Instant::now() + Duration::from_secs(3);
+    while rx
+        .recv_timeout(quit_deadline.saturating_duration_since(Instant::now()))
+        .is_ok()
+    {}
+    if child.try_wait().unwrap().is_none() {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    reader.join().unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(
+        prefilled >= 1100,
+        "did not queue more than a batch: {prefilled}"
+    );
+    assert!(installed && still_sending, "snapshot was not installed during active status traffic: installed={installed}, still_sending={still_sending}");
+    assert!(output.status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn blocked_reconnect_snapshot_does_not_block_quit() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+    use std::time::{Duration, Instant};
+    struct ReleaseOnDrop(std::path::PathBuf);
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, "");
+        }
+    }
+    let base = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-reconnect-quit-{}", std::process::id()));
+    std::fs::create_dir(&base).unwrap();
+    let release_on_drop = ReleaseOnDrop(base.join("release"));
+    let listener = UnixListener::bind(base.join("socket")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let fake = base.join("herdr");
+    std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/held\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n  else touch \"$CROSSROADS_BASE/first\"; fi\n  cat '{}'\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_BASE", &base)
+        .env("HERDR_SOCKET_PATH", base.join("socket"))
+        .env("HERDR_PANE_ID", "p-self")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let accept = || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(error) => panic!("expected subscription: {error}"),
+            }
+        }
+    };
+    let mut first = accept();
+    let mut request = String::new();
+    BufReader::new(&first).read_line(&mut request).unwrap();
+    first
+        .write_all(
+            b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !base.join("first").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(base.join("first").exists());
+    drop(first);
+    let mut second = accept();
+    request.clear();
+    BufReader::new(&second).read_line(&mut request).unwrap();
+    second
+        .write_all(
+            b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !base.join("held").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Always unblock the fake CLI before waiting for the child, even when the assertion fails.
+    let held = base.join("held").exists();
+    child.stdin.as_mut().unwrap().write_all(b"q").unwrap();
+    let deadline = Instant::now() + Duration::from_millis(350);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::write(base.join("release"), "").unwrap();
+    if !exited {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    drop(release_on_drop);
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(held, "reconnect snapshot did not reach the held command");
+    assert!(exited, "q was blocked by reconnect snapshot");
+    assert!(output.status.success());
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn full_reconnect_listen_queue_does_not_block_quit() {
+    use std::io::{BufRead, BufReader};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::time::{Duration, Instant};
+
+    unsafe extern "C" {
+        fn listen(fd: std::ffi::c_int, backlog: std::ffi::c_int) -> std::ffi::c_int;
+    }
+    let base = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-full-queue-{}", std::process::id()));
+    std::fs::create_dir(&base).unwrap();
+    let socket = base.join("socket");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let fake = base.join("herdr");
+    let log = base.join("calls");
+    std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_SOCKET_PATH", &socket)
+        .env("HERDR_PANE_ID", "p-self")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut first = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => {
+                child.kill().unwrap();
+                let _ = child.wait();
+                panic!("initial subscription not opened: {error}");
+            }
+        }
+    };
+    first
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut request = String::new();
+    BufReader::new(&first).read_line(&mut request).unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&request).unwrap()["method"],
+        "events.subscribe"
+    );
+    first
+        .write_all(
+            b"{\"id\":\"crossroads-status\",\"result\":{\"type\":\"subscription_started\"}}\n",
+        )
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("api snapshot\n")
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(std::fs::read_to_string(&log)
+        .unwrap()
+        .contains("api snapshot\n"));
+    // Queue one connection before shrinking the backlog to zero; keep it unaccepted.
+    let _queued = UnixStream::connect(&socket).unwrap();
+    // SAFETY: the listener owns a valid listening socket and remains alive here.
+    assert_eq!(unsafe { listen(listener.as_raw_fd(), 0) }, 0);
+    drop(first);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while std::fs::read_to_string(&log)
+        .unwrap()
+        .matches("pane list\n")
+        .count()
+        < 2
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let retried = std::fs::read_to_string(&log)
+        .unwrap()
+        .matches("pane list\n")
+        .count()
+        >= 2;
+    std::thread::sleep(Duration::from_millis(60));
+    let no_second_snapshot = std::fs::read_to_string(&log)
+        .unwrap()
+        .matches("api snapshot\n")
+        .count()
+        == 1;
+    child.stdin.take().unwrap().write_all(b"q").unwrap();
+    let deadline = Instant::now() + Duration::from_millis(350);
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let exited = child.try_wait().unwrap().is_some();
+    if !exited {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(
+        retried && no_second_snapshot,
+        "reconnect did not reach a full queue"
+    );
+    assert!(
+        exited && output.status.success(),
+        "q waited for full reconnect queue"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn valid_pane_preflight_without_socket_uses_single_snapshot_and_exits() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-no-socket-{}", std::process::id()));
+    std::fs::create_dir(&base).unwrap();
+    let fake = base.join("herdr");
+    let log = base.join("calls");
+    std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_SOCKET_PATH", base.join("missing.sock"))
+        .env("HERDR_PANE_ID", "p-self")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Claude | working"));
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "pane list\napi snapshot\nworktree list --workspace w1\nworktree list --workspace w2\n"
+    );
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[cfg(unix)]
 fn no_focus_case(input: &[u8]) -> (std::process::Output, Option<serde_json::Value>) {
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixListener;
@@ -48,7 +905,10 @@ fn no_focus_case(input: &[u8]) -> (std::process::Output, Option<serde_json::Valu
         }
     };
     let output = child.wait_with_output().unwrap();
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "pane list\napi snapshot\n"
+    );
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
     std::fs::remove_file(socket).unwrap();
@@ -111,7 +971,10 @@ fn focus_case(input: &[u8], reply: &str) -> (std::process::Output, serde_json::V
         std::thread::sleep(Duration::from_millis(10));
     };
     let output = child.wait_with_output().unwrap();
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "pane list\napi snapshot\n"
+    );
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
     std::fs::remove_file(socket).unwrap();
@@ -230,7 +1093,10 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
         child.kill().unwrap();
     }
     let output = child.wait_with_output().unwrap();
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "pane list\napi snapshot\n"
+    );
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
     std::fs::remove_file(socket).unwrap();
@@ -295,7 +1161,10 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
         std::thread::sleep(Duration::from_millis(10));
     };
     let output = child.wait_with_output().unwrap();
-    assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "pane list\napi snapshot\n"
+    );
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
     std::fs::remove_file(socket).unwrap();
@@ -441,6 +1310,7 @@ fn starts_with_eof_and_exits_successfully() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
     let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_PANE_ID", "p-self")
@@ -496,6 +1366,7 @@ exit 9
 "#, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_PANE_ID", "p-self")
@@ -542,6 +1413,7 @@ fn failed_or_invalid_worktree_lookup_falls_back_to_plain_workspace_names() {
         std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\n{response}\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+            .env_remove("HERDR_SOCKET_PATH")
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
             .env("HERDR_PANE_ID", "p-self")
@@ -574,6 +1446,7 @@ fn closes_after_q_in_select() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
     let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_PANE_ID", "p-self")
@@ -598,7 +1471,7 @@ fn closes_after_q_in_select() {
         .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).lines().last(),
-        Some("Enter: focus · Esc/q: exit · ?: keys")
+        Some("  Enter: focus · Esc/q: exit · ?: keys")
     );
 }
 
@@ -607,6 +1480,7 @@ fn search_updates_on_each_character_and_returns_to_selection() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
     let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_PANE_ID", "p-self")
@@ -638,6 +1512,7 @@ fn esc_in_select_closes_on_piped_input_eof() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
     let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_PANE_ID", "p-self")
@@ -657,7 +1532,7 @@ fn esc_in_select_closes_on_piped_input_eof() {
         .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).lines().last(),
-        Some("Enter: focus · Esc/q: exit · ?: keys")
+        Some("  Enter: focus · Esc/q: exit · ?: keys")
     );
 }
 

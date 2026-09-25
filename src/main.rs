@@ -10,9 +10,24 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Read, Write};
 #[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use std::os::{
+    fd::{AsRawFd, FromRawFd, OwnedFd},
+    unix::ffi::OsStrExt,
+};
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::sync::mpsc::{self, Receiver, SyncSender};
+#[cfg(unix)]
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
+use std::thread;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
@@ -77,6 +92,7 @@ struct Row {
     id: String,
     workspace_id: String,
     workspace: String,
+    linked_worktree: bool,
     tab: String,
     pane: String,
     agent: String,
@@ -243,6 +259,7 @@ fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io::Result<Vec
                 id: id.to_owned(),
                 workspace_id: workspace_id.to_owned(),
                 workspace: workspace_name,
+                linked_worktree: false,
                 tab: tab_name,
                 pane: pane_name,
                 agent: clean(agent_name),
@@ -259,7 +276,7 @@ fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io::Result<Vec
     Ok(rows.into_iter().map(|(_, row)| row).collect())
 }
 
-fn annotate_worktrees(rows: &mut Vec<Row>, executable: &std::ffi::OsStr) {
+fn annotate_worktrees(rows: &mut Vec<Row>, executable: &std::ffi::OsStr, bounded: bool) {
     let workspace_ids: Vec<String> = rows.iter().map(|row| row.workspace_id.clone()).collect();
     let mut covered = HashSet::new();
     let mut annotated = HashSet::new();
@@ -268,10 +285,11 @@ fn annotate_worktrees(rows: &mut Vec<Row>, executable: &std::ffi::OsStr) {
         if !covered.insert(workspace_id.clone()) {
             continue;
         }
-        let Ok(output) = Command::new(executable)
-            .args(["worktree", "list", "--workspace", workspace_id])
-            .output()
-        else {
+        let Ok(output) = cli_output(
+            executable,
+            &["worktree", "list", "--workspace", workspace_id],
+            bounded,
+        ) else {
             continue;
         };
         if !output.status.success() {
@@ -301,6 +319,7 @@ fn annotate_worktrees(rows: &mut Vec<Row>, executable: &std::ffi::OsStr) {
                 links.push((open_id.to_owned(), source.to_owned()));
             }
             for row in rows.iter_mut().filter(|row| row.workspace_id == open_id) {
+                row.linked_worktree = true;
                 row.workspace = match entry["branch"].as_str().filter(|branch| !branch.is_empty()) {
                     Some(branch) => format!("↳ {} ({})", row.workspace, clean(branch)),
                     None => format!("↳ {}", row.workspace),
@@ -381,6 +400,7 @@ struct Ui {
     mode: Mode,
     closed: bool,
     width: usize,
+    popup_size: Option<(usize, usize)>,
     viewport_start: Cell<usize>,
     last_selected_at: Cell<Option<usize>>,
 }
@@ -396,9 +416,37 @@ impl Ui {
             mode: Mode::Select,
             closed: false,
             width: 160,
+            popup_size: None,
             viewport_start: Cell::new(0),
             last_selected_at: Cell::new(None),
         }
+    }
+
+    #[cfg(unix)]
+    fn status_event(&mut self, event: &Value) -> bool {
+        if event["event"] != "pane.agent_status_changed" {
+            return false;
+        }
+        let data = &event["data"];
+        let (Some(id), Some(workspace_id), Some(status)) = (
+            data["pane_id"].as_str(),
+            data["workspace_id"].as_str(),
+            data["agent_status"].as_str(),
+        ) else {
+            return false;
+        };
+        if !matches!(status, "working" | "blocked" | "done" | "idle" | "unknown") {
+            return false;
+        }
+        let Some(row) = self
+            .rows
+            .iter_mut()
+            .find(|row| row.id == id && row.workspace_id == workspace_id && !row.agent.is_empty())
+        else {
+            return false;
+        };
+        row.status = clean(status);
+        true
     }
 
     fn visible(&self) -> Vec<usize> {
@@ -423,6 +471,15 @@ impl Ui {
     }
 
     fn key(&mut self, key: Key) -> Option<String> {
+        if self
+            .popup_size
+            .is_some_and(|(width, height)| width < 80 || height < 15)
+        {
+            if matches!(key, Key::Enter | Key::Esc | Key::Char('q')) {
+                self.closed = true;
+            }
+            return None;
+        }
         if self.mode == Mode::Help {
             if matches!(key, Key::Esc | Key::Char('?') | Key::Char('q')) {
                 self.mode = Mode::Select;
@@ -525,22 +582,35 @@ impl Ui {
     }
 
     fn terminal_frame(&self, width: usize, height: usize) -> String {
+        if self.popup_size.is_some() && (width < 80 || height < 15) {
+            return [
+                "  Crossroads needs minimum content size 80x15.".to_owned(),
+                format!("  Your content size is: {width}x{height}."),
+                "  Set larger size in herdr plugin manifest.".to_owned(),
+                "  Press Enter/Esc/q to close.".to_owned(),
+            ]
+            .into_iter()
+            .take(height)
+            .map(|line| clipped(&line, width.saturating_sub(1)))
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        }
         self.layout(width, height, true).join("\r\n")
     }
 
     fn layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
         let limit = width.saturating_sub(1);
+        let table_text_limit = width.saturating_sub(4);
+        let aligned = |text: &str| format!("  {}", clipped(text, table_text_limit));
         let visible = self.visible();
         let selected = self.selected_index(&visible);
         let mut lines = Vec::new();
-        let filter = if self.mode == Mode::Select && self.query.is_empty() {
-            "Filter: / to search".to_owned()
-        } else if self.mode == Mode::Search {
-            format!("Search: {}", self.query)
+        let search = if self.mode == Mode::Select && self.query.is_empty() {
+            "Search: / to search".to_owned()
         } else {
-            format!("Filter: {}", self.query)
+            format!("Search: {}", self.query)
         };
-        lines.push(clipped(&filter, limit));
+        lines.push(aligned(&search));
         if self.mode == Mode::Help {
             lines.push(clipped(
                 "j/k: pane  h/l: tab  Tab/Shift+Tab: workspace",
@@ -621,14 +691,22 @@ impl Ui {
             let workspace_width = if roomy {
                 inner * 60 / 141
             } else if inner >= 30 {
-                (inner / 3).clamp(5, 24)
+                if inner >= 52 {
+                    (inner * 27 / 52).clamp(5, if inner == 52 { 27 } else { 26 })
+                } else {
+                    (inner / 3).clamp(5, 24)
+                }
             } else {
                 (inner / 5).clamp(5, 22)
             };
             let tab_width = if roomy {
                 inner * 38 / 141
             } else {
-                (inner / 5).clamp(5, 22)
+                if inner >= 52 {
+                    (inner * 12 / 52).clamp(5, 22)
+                } else {
+                    (inner / 5).clamp(5, 22)
+                }
             };
             let status_width = (inner / 6).clamp(6, 12);
             let separate_status = roomy && full;
@@ -642,14 +720,17 @@ impl Ui {
             let mut table_rows = Vec::new();
             let mut separator_rows = Vec::new();
             if header_rule {
-                separator_rows.push(2);
+                separator_rows.push((2, false));
                 table_rows.push(TableRow::new(vec![""; 4]));
             }
             for (position, &i) in shown.iter().enumerate() {
                 let row = &self.rows[i];
                 let previous = position.checked_sub(1).map(|at| &self.rows[shown[at]]);
                 if previous.is_some_and(|prev| prev.workspace_id != row.workspace_id) {
-                    separator_rows.push(table_rows.len() + if short { 1 } else { 2 });
+                    separator_rows.push((
+                        table_rows.len() + if short { 1 } else { 2 },
+                        row.linked_worktree,
+                    ));
                     table_rows.push(TableRow::new(vec![
                         "";
                         if separate_status {
@@ -691,9 +772,18 @@ impl Ui {
                     && !separate_status
                     && !row.agent.is_empty()
                     && !row.status.is_empty()
-                    && name_width >= columns(&row.status) + 9;
+                    && name_width >= columns(&row.status) + if inner >= 52 { 4 } else { 9 };
                 if inline {
-                    let prefix = clipped(&name, name_width - columns(&row.status) - 3);
+                    let prefix_width = name_width - columns(&row.status) - 3;
+                    let prefix = if prefix_width == 1 {
+                        name.chars()
+                            .next()
+                            .filter(char::is_ascii)
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| ".".to_owned())
+                    } else {
+                        clipped(&name, prefix_width)
+                    };
                     cells.push(Line::from(vec![
                         Span::raw(prefix),
                         Span::raw(" "),
@@ -817,12 +907,17 @@ impl Ui {
                     if selected_line {
                         content.push_str(&" ".repeat(table_limit.saturating_sub(x as usize)));
                     }
-                    let content = if separator_rows.contains(&(y as usize)) {
-                        let rule = "┄".repeat(table_limit);
+                    let inset = separator_rows
+                        .iter()
+                        .find_map(|(at, inset)| (*at == y as usize).then_some(*inset));
+                    let content = if let Some(inset) = inset {
+                        let rule =
+                            "┄".repeat(table_limit.saturating_sub(if inset { 4 } else { 0 }));
+                        let margin = if inset { "      " } else { table_margin };
                         if ansi {
-                            format!("{table_margin}\x1b[2m{rule}\x1b[22m")
+                            format!("{margin}\x1b[2m{rule}\x1b[22m")
                         } else {
-                            format!("{table_margin}{rule}")
+                            format!("{margin}{rule}")
                         }
                     } else {
                         format!("{table_margin}{content}")
@@ -856,14 +951,11 @@ impl Ui {
         if !ansi || height > 0 {
             if self.mode == Mode::Select {
                 if compact_select && (!ansi || height > 1) {
-                    lines.push(clipped(
-                        "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace",
-                        limit,
-                    ));
+                    lines.push(aligned("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
                 }
-                lines.push(clipped(&format!("{footer} · ?: keys"), limit));
+                lines.push(aligned(&format!("{footer} · ?: keys")));
             } else {
-                lines.push(clipped(footer, limit));
+                lines.push(aligned(footer));
             }
         }
         lines
@@ -1020,10 +1112,10 @@ impl Drop for Terminal {
 fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
     let mut out = io::stdout().lock();
     if terminal {
-        let (height, width) = terminal_size();
+        let (width, height) = ui.popup_size.expect("interactive terminal size");
         let frame = ui.terminal_frame(width, height);
         write!(out, "\x1b[H\x1b[J{frame}")?;
-        if ui.mode == Mode::Search {
+        if ui.mode == Mode::Search && width >= 80 && height >= 15 {
             let x = frame.split("\r\n").next().unwrap_or("").cell_width() as usize;
             write!(
                 out,
@@ -1119,15 +1211,381 @@ fn handle_key(ui: &mut Ui, key: Key, terminal: bool) -> io::Result<()> {
     Ok(())
 }
 
-fn main() -> io::Result<()> {
-    let config_dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").filter(|dir| !dir.is_empty());
-    let status_colors = StatusColors::load(config_dir.as_deref().map(Path::new))?;
-    let executable = std::env::var_os("HERDR_BIN_PATH")
+#[cfg(unix)]
+enum StatusMessage {
+    Event(Value),
+    Disconnected,
+}
+
+#[cfg(unix)]
+thread_local! {
+    static RECONNECT_CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(unix)]
+struct ReconnectAttempt {
+    rx: Receiver<io::Result<(StatusSubscription, Vec<Row>)>>,
+    cancel: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl Drop for ReconnectAttempt {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+struct StatusSubscription {
+    rx: Receiver<StatusMessage>,
+    socket: UnixStream,
+}
+
+#[cfg(unix)]
+impl Drop for StatusSubscription {
+    fn drop(&mut self) {
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
+}
+
+// Reconnect CLI output goes to a file rather than a pipe: a stuck child (or a child
+// retaining stdout after its parent exits) cannot keep a pipe reader thread alive.
+fn cli_output(
+    executable: &std::ffi::OsStr,
+    args: &[&str],
+    bounded: bool,
+) -> io::Result<std::process::Output> {
+    if !bounded {
+        return Command::new(executable).args(args).output();
+    }
+    #[cfg(unix)]
+    {
+        let cancel = RECONNECT_CANCEL.with(|flag| flag.borrow().clone());
+        if cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "reconnect cancelled",
+            ));
+        }
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let temp_dir = Path::new("/tmp/opencode");
+        let dir = if temp_dir.is_dir() {
+            temp_dir.to_path_buf()
+        } else {
+            std::env::temp_dir()
+        };
+        let path = dir.join(format!(
+            "crossroads-cli-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        let result = (|| {
+            let mut child = Command::new(executable)
+                .args(args)
+                .stdout(Stdio::from(file))
+                .stderr(Stdio::null())
+                .spawn()?;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let status = loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(error);
+                    }
+                }
+                if cancel
+                    .as_ref()
+                    .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "reconnect cancelled",
+                    ));
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "reconnect CLI timed out",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(20));
+            };
+            if std::fs::metadata(&path)?.len() > 16 * 1024 * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "reconnect CLI output too large",
+                ));
+            }
+            Ok(std::process::Output {
+                status,
+                stdout: std::fs::read(&path)?,
+                stderr: Vec::new(),
+            })
+        })();
+        let _ = std::fs::remove_file(path);
+        result
+    }
+    #[cfg(not(unix))]
+    unreachable!("bounded CLI is only used by Unix reconnects")
+}
+
+#[cfg(unix)]
+fn socket_line(stream: &mut UnixStream, deadline: Option<Instant>) -> io::Result<Value> {
+    let mut bytes = Vec::new();
+    let mut byte = [0];
+    let cancel = RECONNECT_CANCEL.with(|flag| flag.borrow().clone());
+    loop {
+        if cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "reconnect cancelled",
+            ));
+        }
+        if let Some(deadline) = deadline {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|duration| !duration.is_zero())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::TimedOut, "subscription ack timed out")
+                })?;
+            stream.set_read_timeout(Some(if cancel.is_some() {
+                remaining.min(Duration::from_millis(20))
+            } else {
+                remaining
+            }))?;
+        }
+        if bytes.len() >= 64 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "event line too long",
+            ));
+        }
+        let read = match stream.read(&mut byte) {
+            Err(error)
+                if cancel.is_some()
+                    && matches!(
+                        error.kind(),
+                        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                    ) =>
+            {
+                continue
+            }
+            result => result?,
+        };
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "event socket closed",
+            ));
+        }
+        if byte[0] == b'\n' {
+            return serde_json::from_slice(&bytes).map_err(io::Error::other);
+        }
+        bytes.push(byte[0]);
+    }
+}
+
+#[cfg(unix)]
+fn pane_ids(executable: &std::ffi::OsStr, bounded: bool) -> io::Result<Vec<String>> {
+    let output = cli_output(executable, &["pane", "list"], bounded)?;
+    if !output.status.success() {
+        return Err(io::Error::other("herdr pane list failed"));
+    }
+    let data: Value = serde_json::from_slice(&output.stdout).map_err(io::Error::other)?;
+    if data["result"]["type"] != "pane_list" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "not a pane list",
+        ));
+    }
+    let panes = entries(&data["result"], "panes")?;
+    let mut ids = Vec::new();
+    for pane in panes {
+        let id = field(pane, "pane_id")?;
+        if !ids.iter().any(|seen| seen == id) {
+            ids.push(id.to_owned());
+        }
+    }
+    Ok(ids)
+}
+
+// The Linux x86_64 socket constants and sockaddr_un layout match the local
+// sys/socket.h and sys/un.h ABI; other targets keep the existing path.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn reconnect_socket(path: &std::ffi::OsStr) -> io::Result<UnixStream> {
+    #[repr(C)]
+    struct SocketAddress {
+        family: u16,
+        path: [u8; 108],
+    }
+    unsafe extern "C" {
+        fn socket(
+            domain: std::ffi::c_int,
+            kind: std::ffi::c_int,
+            protocol: std::ffi::c_int,
+        ) -> std::ffi::c_int;
+        fn connect(
+            fd: std::ffi::c_int,
+            address: *const std::ffi::c_void,
+            length: u32,
+        ) -> std::ffi::c_int;
+    }
+    let bytes = path.as_bytes();
+    if bytes.is_empty() || bytes.len() >= 108 || bytes.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid Unix socket path",
+        ));
+    }
+    let mut address = SocketAddress {
+        family: 1,
+        path: [0; 108],
+    }; // AF_UNIX
+    address.path[..bytes.len()].copy_from_slice(bytes);
+    let length = (std::mem::offset_of!(SocketAddress, path) + bytes.len() + 1) as u32;
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let cancel = RECONNECT_CANCEL.with(|flag| flag.borrow().clone());
+    loop {
+        if cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "reconnect cancelled",
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "reconnect connect timed out",
+            ));
+        }
+        // SAFETY: these are the verified Linux x86_64 AF_UNIX, SOCK_STREAM,
+        // SOCK_NONBLOCK and SOCK_CLOEXEC constants; socket returns an owned fd.
+        let raw = unsafe { socket(1, 1 | 0o4000 | 0o2000000, 0) };
+        if raw < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: socket returned a fresh valid descriptor, transferred exactly once.
+        let fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        // SAFETY: address is a live repr(C) sockaddr_un prefix, length includes
+        // its terminating NUL and never exceeds the allocated address.
+        let result = unsafe {
+            connect(
+                fd.as_raw_fd(),
+                (&address as *const SocketAddress).cast(),
+                length,
+            )
+        };
+        if result == 0 {
+            let stream = UnixStream::from(fd);
+            stream.set_nonblocking(false)?;
+            if cancel
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Relaxed))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "reconnect cancelled",
+                ));
+            }
+            return Ok(stream);
+        }
+        let error = io::Error::last_os_error();
+        // A failed nonblocking connect leaves socket state unspecified: drop it
+        // and create a fresh socket for every retry, including EAGAIN.
+        drop(fd);
+        if error.raw_os_error() != Some(11) {
+            return Err(error);
+        }
+        thread::sleep(
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(20)),
+        );
+    }
+}
+
+#[cfg(unix)]
+fn subscribe(executable: &std::ffi::OsStr, bounded: bool) -> io::Result<StatusSubscription> {
+    let path = std::env::var_os("HERDR_SOCKET_PATH")
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| "herdr".into());
-    let output = Command::new(&executable)
-        .args(["api", "snapshot"])
-        .output()?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HERDR_SOCKET_PATH missing"))?;
+    let ids = pane_ids(executable, bounded)?;
+    let mut stream = if bounded {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            reconnect_socket(&path)?
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            UnixStream::connect(&path)?
+        }
+    } else {
+        UnixStream::connect(&path)?
+    };
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    serde_json::to_writer(
+        &mut stream,
+        &serde_json::json!({
+            "id":"crossroads-status", "method":"events.subscribe",
+            "params":{"subscriptions":ids.iter().map(|id| serde_json::json!({"type":"pane.agent_status_changed","pane_id":id})).collect::<Vec<_>>()}
+        }),
+    )?;
+    stream.write_all(b"\n")?;
+    let reply = socket_line(
+        &mut stream,
+        Some(Instant::now() + Duration::from_millis(500)),
+    )?;
+    if reply["id"] != "crossroads-status" || reply["result"]["type"] != "subscription_started" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "status subscription rejected",
+        ));
+    }
+    stream.set_read_timeout(None)?;
+    let socket = stream.try_clone()?;
+    let (tx, rx): (SyncSender<StatusMessage>, _) = mpsc::sync_channel(1024);
+    thread::spawn(move || {
+        while let Ok(event) = socket_line(&mut stream, None) {
+            if tx.send(StatusMessage::Event(event)).is_err() {
+                return;
+            }
+        }
+        let _ = tx.send(StatusMessage::Disconnected);
+    });
+    Ok(StatusSubscription { rx, socket })
+}
+
+fn snapshot_rows(
+    executable: &std::ffi::OsStr,
+    width: usize,
+    bounded: bool,
+) -> io::Result<Vec<Row>> {
+    let output = cli_output(executable, &["api", "snapshot"], bounded)?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "herdr api snapshot failed: {}",
@@ -1135,33 +1593,219 @@ fn main() -> io::Result<()> {
         )));
     }
     let snapshot = String::from_utf8(output.stdout).map_err(io::Error::other)?;
-    let width = terminal_size().1;
     let mut rows = rows(
         &snapshot,
         std::env::var("HERDR_PANE_ID").ok().as_deref(),
         width.saturating_sub(1),
     )?;
-    annotate_worktrees(&mut rows, &executable);
-    let mut ui = Ui::new(rows);
+    annotate_worktrees(&mut rows, executable, bounded);
+    #[cfg(unix)]
+    if bounded
+        && RECONNECT_CANCEL.with(|flag| {
+            flag.borrow()
+                .as_ref()
+                .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+        })
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "reconnect cancelled",
+        ));
+    }
+    Ok(rows)
+}
+
+fn main() -> io::Result<()> {
+    let config_dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").filter(|dir| !dir.is_empty());
+    let status_colors = StatusColors::load(config_dir.as_deref().map(Path::new))?;
+    let executable = std::env::var_os("HERDR_BIN_PATH")
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| "herdr".into());
+    let width = terminal_size().1;
+    #[cfg(unix)]
+    let live_status_enabled =
+        std::env::var_os("HERDR_SOCKET_PATH").is_some_and(|path| !path.is_empty());
+    #[cfg(unix)]
+    let mut status = if live_status_enabled {
+        subscribe(&executable, false).ok()
+    } else {
+        None
+    };
+    let mut ui = Ui::new(snapshot_rows(&executable, width, false)?);
     ui.status_colors = status_colors;
     ui.width = width;
     let terminal = Terminal::enter()?;
-    draw(&ui, terminal.0.is_some())?;
-    let mut input = io::stdin().lock();
-    let mut keys = Keys::new();
-    let mut byte = [0];
-    loop {
-        let n = input.read(&mut byte)?;
-        if n == 0 {
-            if let Some(key) = keys.flush() {
-                handle_key(&mut ui, key, terminal.0.is_some())?;
+    if terminal.0.is_some() {
+        let (height, width) = terminal_size();
+        ui.popup_size = Some((width, height));
+    }
+    #[cfg(unix)]
+    if let Some(receiver) = &status {
+        for _ in 0..1024 {
+            match receiver.rx.try_recv() {
+                Ok(StatusMessage::Event(event)) => {
+                    ui.status_event(&event);
+                }
+                Ok(StatusMessage::Disconnected) | Err(mpsc::TryRecvError::Disconnected) => {
+                    status = None;
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
             }
-            if terminal.0.is_none() || ui.closed {
-                break;
-            }
-            continue;
         }
-        if keys.escape == 1 && byte[0] != b'[' {
+    }
+    draw(&ui, terminal.0.is_some())?;
+    let (input_tx, input_rx) = std::sync::mpsc::channel();
+    let raw_terminal = terminal.0.is_some();
+    thread::spawn(move || {
+        let mut input = io::stdin().lock();
+        let mut byte = [0];
+        loop {
+            match input.read(&mut byte) {
+                Ok(0) => {
+                    if input_tx.send(None).is_err() || !raw_terminal {
+                        break;
+                    }
+                }
+                Ok(_) => {
+                    if input_tx.send(Some(byte[0])).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    let _ = input_tx.send(None);
+                    break;
+                }
+            }
+        }
+    });
+    let mut keys = Keys::new();
+    #[cfg(unix)]
+    let mut next_size_check = Instant::now() + Duration::from_millis(250);
+    #[cfg(unix)]
+    let mut retry_at = Instant::now() + Duration::from_millis(500);
+    #[cfg(unix)]
+    let mut reconnect: Option<ReconnectAttempt> = None;
+    #[cfg(unix)]
+    let mut pending: Option<(StatusSubscription, Ui)> = None;
+    loop {
+        #[cfg(unix)]
+        if terminal.0.is_some() && Instant::now() >= next_size_check {
+            let (height, width) = terminal_size();
+            if ui.popup_size != Some((width, height)) {
+                let was_small = ui.popup_size.is_some_and(|(w, h)| w < 80 || h < 15);
+                let is_small = width < 80 || height < 15;
+                ui.popup_size = Some((width, height));
+                if was_small != is_small {
+                    // Do not apply buffered keys from the previous popup mode after resizing.
+                    keys = Keys::new();
+                    while input_rx.try_recv().is_ok() {}
+                }
+                draw(&ui, true)?;
+            }
+            next_size_check = Instant::now() + Duration::from_millis(250);
+        }
+        #[cfg(unix)]
+        {
+            let mut disconnected = false;
+            if let Some(receiver) = &status {
+                let mut changed = false;
+                for _ in 0..1024 {
+                    match receiver.rx.try_recv() {
+                        Ok(StatusMessage::Event(event)) => {
+                            changed |= ui.status_event(&event);
+                        }
+                        Ok(StatusMessage::Disconnected) | Err(mpsc::TryRecvError::Disconnected) => {
+                            disconnected = true;
+                            break;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                    }
+                }
+                if changed {
+                    draw(&ui, terminal.0.is_some())?;
+                }
+            }
+            if disconnected {
+                status = None;
+                retry_at = Instant::now() + Duration::from_millis(500);
+            }
+            if let Some(worker) = &reconnect {
+                match worker.rx.try_recv() {
+                    Ok(Ok((receiver, rows))) => {
+                        pending = Some((receiver, Ui::new(rows)));
+                        reconnect = None;
+                    }
+                    Ok(Err(_)) | Err(mpsc::TryRecvError::Disconnected) => {
+                        reconnect = None;
+                        retry_at = Instant::now() + Duration::from_millis(500);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
+            }
+            if let Some((receiver, staged)) = &mut pending {
+                for _ in 0..1024 {
+                    match receiver.rx.try_recv() {
+                        Ok(StatusMessage::Event(event)) => {
+                            staged.status_event(&event);
+                        }
+                        Ok(StatusMessage::Disconnected) | Err(mpsc::TryRecvError::Disconnected) => {
+                            disconnected = true;
+                            break;
+                        }
+                        Err(mpsc::TryRecvError::Empty) => break,
+                    }
+                }
+                if disconnected {
+                    pending = None;
+                    retry_at = Instant::now() + Duration::from_millis(500);
+                } else {
+                    let (receiver, staged) = pending.take().unwrap();
+                    ui.rows = staged.rows;
+                    status = Some(receiver);
+                    draw(&ui, terminal.0.is_some())?;
+                }
+            }
+            if live_status_enabled
+                && status.is_none()
+                && reconnect.is_none()
+                && pending.is_none()
+                && Instant::now() >= retry_at
+            {
+                let (tx, rx) = mpsc::sync_channel(1);
+                let executable = executable.clone();
+                let cancel = Arc::new(AtomicBool::new(false));
+                let worker_cancel = cancel.clone();
+                let worker = thread::spawn(move || {
+                    RECONNECT_CANCEL.with(|flag| *flag.borrow_mut() = Some(worker_cancel));
+                    let result = subscribe(&executable, true).and_then(|receiver| {
+                        snapshot_rows(&executable, width, true).map(|rows| (receiver, rows))
+                    });
+                    let _ = tx.send(result);
+                });
+                reconnect = Some(ReconnectAttempt {
+                    rx,
+                    cancel,
+                    worker: Some(worker),
+                });
+                retry_at = Instant::now() + Duration::from_millis(500);
+            }
+        }
+        let byte = match input_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(Some(byte)) => byte,
+            Ok(None) => {
+                if let Some(key) = keys.flush() {
+                    handle_key(&mut ui, key, terminal.0.is_some())?;
+                }
+                if terminal.0.is_none() || ui.closed {
+                    break;
+                }
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+        };
+        if keys.escape == 1 && byte != b'[' {
             if let Some(key) = keys.flush() {
                 handle_key(&mut ui, key, terminal.0.is_some())?;
             }
@@ -1169,7 +1813,7 @@ fn main() -> io::Result<()> {
                 break;
             }
         }
-        if let Some(key) = keys.feed(byte[0]) {
+        if let Some(key) = keys.feed(byte) {
             handle_key(&mut ui, key, terminal.0.is_some())?;
             if ui.closed {
                 break;
@@ -1185,8 +1829,163 @@ mod tests {
 
     const SNAPSHOT: &str = include_str!("../tests/fixtures/topology.json");
 
+    #[cfg(unix)]
+    #[test]
+    fn reconnect_cli_kills_a_stalled_command_at_its_deadline() {
+        let started = Instant::now();
+        let error =
+            cli_output(std::ffi::OsStr::new("sh"), &["-c", "exec sleep 5"], true).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
     fn ui() -> Ui {
         Ui::new(rows(SNAPSHOT, Some("p-self"), 160).unwrap())
+    }
+
+    #[test]
+    fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state() {
+        let mut state = ui();
+        state.key(Key::Down);
+        state.key(Key::Char('/'));
+        for c in "codex".chars() {
+            state.key(Key::Char(c));
+        }
+        state.key(Key::Enter);
+        let selected = state.selected.clone();
+        let query = state.query.clone();
+        let ids: Vec<_> = state.rows.iter().map(|row| row.id.clone()).collect();
+        for (width, height) in [(67, 12), (79, 15), (80, 14)] {
+            state.popup_size = Some((width, height));
+            let piped = state.frame_width(width);
+            assert!(piped.contains("Search: codex") && !piped.contains("Crossroads needs"));
+            let frame = state.terminal_frame(width, height);
+            assert_eq!(
+                frame.split("\r\n").collect::<Vec<_>>(),
+                [
+                    "  Crossroads needs minimum content size 80x15.".to_owned(),
+                    format!("  Your content size is: {width}x{height}."),
+                    "  Set larger size in herdr plugin manifest.".to_owned(),
+                    "  Press Enter/Esc/q to close.".to_owned(),
+                ],
+                "{frame}"
+            );
+            assert!(
+                !frame.contains("Search:") && !frame.contains("Claude") && !frame.contains("focus"),
+                "{frame}"
+            );
+            for key in [Key::Char('/'), Key::Down, Key::Char('?')] {
+                assert!(state.key(key).is_none());
+                assert!(!state.closed);
+            }
+            assert_eq!(state.query, query);
+            assert_eq!(state.selected, selected);
+            assert_eq!(
+                state
+                    .rows
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<Vec<_>>(),
+                ids
+            );
+        }
+        state.popup_size = Some((80, 15));
+        assert!(state.terminal_frame(80, 15).contains("Search: codex"));
+        assert_eq!(state.query, query);
+        assert_eq!(state.selected, selected);
+        for key in [Key::Enter, Key::Esc, Key::Char('q')] {
+            state.closed = false;
+            state.popup_size = Some((79, 15));
+            assert!(state.key(key).is_none(), "must not request focus");
+            assert!(state.closed);
+        }
+        for width in [1, 2, 20] {
+            state.popup_size = Some((width, 12));
+            let frame = state.terminal_frame(width, 12);
+            assert_eq!(frame.split("\r\n").count(), 4, "{frame}");
+            assert!(frame
+                .split("\r\n")
+                .all(|line| usize::from(line.cell_width()) < width));
+        }
+    }
+
+    #[test]
+    fn undersized_popup_enter_closes_without_requesting_focus() {
+        let mut state = ui();
+        state.popup_size = Some((79, 15));
+        assert!(state.key(Key::Enter).is_none());
+        assert!(state.closed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_status_only_changes_matching_agent_row_not_navigation() {
+        let mut state = ui();
+        state.key(Key::Char('/'));
+        for c in "codex".chars() {
+            state.key(Key::Char(c));
+        }
+        state.key(Key::Enter);
+        let original_ids: Vec<_> = state.rows.iter().map(|row| row.id.clone()).collect();
+        let selected = state.selected.clone();
+        for (id, workspace) in [("p-other", "w1"), ("closed", "w2")] {
+            assert!(!state.status_event(&serde_json::json!({"event":"pane.agent_status_changed","data":{"pane_id":id,"workspace_id":workspace,"agent_status":"blocked"}})));
+        }
+        assert!(state.status_event(&serde_json::json!({"event":"pane.agent_status_changed","data":{"pane_id":"p-other","workspace_id":"w2","agent_status":"blocked"}})));
+        assert_eq!(
+            state
+                .rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            original_ids
+        );
+        assert_eq!(state.selected, selected);
+        assert_eq!(state.query, "codex");
+        assert_eq!(state.key(Key::Enter).as_deref(), Some("p-other"));
+        assert!(state.frame_width(65).contains("codex | blocked"));
+        assert!(!state.status_event(&serde_json::json!({"event":"pane.agent_status_changed","data":{"pane_id":"p-a","workspace_id":"w1","agent_status":"working","display_agent":"new agent"}})));
+        state.query.clear();
+        assert!(!state.frame_width(150).contains("new agent"));
+        assert!(state
+            .rows
+            .iter()
+            .find(|row| row.id == "p-a")
+            .unwrap()
+            .status
+            .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn status_metadata_cannot_rename_filtered_agent_or_redirect_focus() {
+        let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+        snapshot["result"]["snapshot"]["agents"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"pane_id":"p-a","display_agent":"Claude Extra","agent_status":"idle"}));
+        let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 160).unwrap());
+        state.query = "Claude".into();
+        let visible_ids = |state: &Ui| {
+            state
+                .visible()
+                .iter()
+                .map(|&i| state.rows[i].id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(visible_ids(&state), ["p-b", "p-a"]);
+        assert_eq!(state.selected.as_deref(), Some("p-b"));
+        assert!(state.status_event(&serde_json::json!({"event":"pane.agent_status_changed","data":{"pane_id":"p-b","workspace_id":"w1","agent_status":"blocked","display_agent":"Renamed","agent":"Other"}})));
+        assert_eq!(state.query, "Claude");
+        assert_eq!(visible_ids(&state), ["p-b", "p-a"]);
+        assert_eq!(state.selected.as_deref(), Some("p-b"));
+        assert_eq!(
+            state.rows.iter().find(|row| row.id == "p-b").unwrap().agent,
+            "Claude"
+        );
+        assert!(state.frame_width(150).contains("Claude"));
+        assert!(!state.frame_width(150).contains("Renamed"));
+        assert_eq!(state.key(Key::Enter).as_deref(), Some("p-b"));
     }
 
     fn without_status_ansi(line: &str) -> String {
@@ -1197,6 +1996,110 @@ mod tests {
 
     fn selected_prefix(line: &str) -> bool {
         line.starts_with("  \x1b[48;5;236m> ")
+    }
+
+    #[test]
+    fn search_and_keyboard_footer_share_table_extent_in_both_modes() {
+        use ratatui::buffer::CellWidth;
+        for width in [12, 20, 60, 150] {
+            let mut state = ui();
+            for mode in [Mode::Select, Mode::Search] {
+                state.mode = mode;
+                state.query = "界".repeat(100);
+                let frame = state.terminal_frame(width, 15);
+                let lines: Vec<_> = frame.split("\r\n").collect();
+                let border = lines[1].cell_width() as usize;
+                for line in [lines[0], lines[14]] {
+                    assert!(line.starts_with("  "), "{frame}");
+                    assert!(line.cell_width() as usize <= border, "{frame}");
+                }
+                if width >= 20 {
+                    assert!(lines[0].starts_with("  Search:"), "{frame}");
+                }
+                assert!(!frame.contains("Filter:"), "{frame}");
+            }
+            state.mode = Mode::Select;
+            state.query.clear();
+            let frame = state.terminal_frame(width, 15);
+            if width >= 24 {
+                assert!(frame.starts_with("  Search: / to search"), "{frame}");
+            }
+            assert!(!frame.contains("Filter:"), "{frame}");
+        }
+    }
+
+    #[test]
+    fn sixty_columns_allocate_workspace_tab_and_minimal_inline_agent_status() {
+        let state = ui();
+        let frame = state.terminal_frame(60, 15);
+        let header = frame.split("\r\n").nth(2).unwrap();
+        assert_eq!(
+            ["Workspace", "Tab", "Agent/Pane"].map(|label| header.find(label).unwrap()),
+            [4, 32, 45],
+            "{frame}"
+        );
+        let selected = frame.lines().find(|line| selected_prefix(line)).unwrap();
+        assert!(
+            selected.contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[39m"),
+            "{frame}"
+        );
+        assert!(!header.contains("Status"), "{frame}");
+        assert!(
+            frame
+                .lines()
+                .any(|line| line.contains("pane 3") && !line.contains('|')),
+            "{frame}"
+        );
+        assert!(state.terminal_frame(30, 15).contains("Agent/Pane"));
+        assert!(!state.terminal_frame(30, 15).contains("working"));
+        let mut too_long = ui();
+        too_long.rows[0].status = "busy_now".into();
+        let frame = too_long.terminal_frame(60, 15);
+        let selected = frame.lines().find(|line| selected_prefix(line)).unwrap();
+        assert!(
+            selected.contains("Claude") && !selected.contains("busy_now"),
+            "{frame}"
+        );
+    }
+
+    #[test]
+    fn compact_sixty_column_budget_preserves_workspace_and_status() {
+        let state = ui();
+        let frame = state.terminal_frame(60, 15);
+        let header = frame.split("\r\n").nth(2).unwrap();
+        assert_eq!(
+            ["Workspace", "Tab", "Agent/Pane"].map(|s| header.find(s).unwrap()),
+            [4, 32, 45],
+            "{frame}"
+        );
+        assert!(
+            frame
+                .lines()
+                .any(|line| line.contains("C \x1b[2m|") && line.contains("working")),
+            "{frame}"
+        );
+        assert!(state.terminal_frame(40, 15).contains("Agent/Pane"));
+        assert!(state.terminal_frame(150, 15).contains("Status"));
+    }
+
+    #[test]
+    fn ninety_percent_wide_terminal_header_rule_is_present_only_when_roomy_and_tall() {
+        let state = ui();
+        let frame = state.terminal_frame(162, 36);
+        let lines: Vec<_> = frame.split("\r\n").collect();
+        assert!(lines[2].contains("Status"), "{frame}");
+        assert_eq!(
+            lines[3],
+            format!("  \x1b[2m{}\x1b[22m", "┄".repeat(158)),
+            "{frame}"
+        );
+        assert!(!state
+            .terminal_frame(135, 36)
+            .split("\r\n")
+            .nth(3)
+            .unwrap()
+            .contains('┄'));
+        assert!(!state.terminal_frame(162, 7).contains('┄'));
     }
 
     #[test]
@@ -1211,15 +2114,30 @@ mod tests {
                 let lines: Vec<_> = frame.split("\r\n").collect();
                 assert_eq!(lines.len(), 15, "{frame}");
                 assert!(
-                    lines[0].starts_with(if search { "Search:" } else { "Filter:" }),
+                    lines[0].starts_with(if search || help {
+                        "  Search: "
+                    } else {
+                        "  Search: / to search"
+                    }),
                     "{frame}"
                 );
                 assert!(!frame.contains("Herdr Crossroads"), "{frame}");
                 if !help {
                     assert!(lines[1].starts_with("  ─"), "{frame}");
-                    assert!(lines[2].contains("Agent/Pane Name"), "{frame}");
                     assert!(
-                        lines[if width == 150 { 4 } else { 3 }].contains("Claude"),
+                        lines[2].contains(if width == 60 {
+                            "Agent/Pane"
+                        } else {
+                            "Agent/Pane Name"
+                        }),
+                        "{frame}"
+                    );
+                    assert!(
+                        lines[if width == 150 { 4 } else { 3 }].contains(if width == 60 {
+                            "C \x1b[2m|"
+                        } else {
+                            "Claude"
+                        }),
                         "{frame}"
                     );
                 }
@@ -1237,13 +2155,12 @@ mod tests {
             let lines: Vec<_> = short.split("\r\n").collect();
             assert_eq!(lines.len(), 5, "{short}");
             assert!(
-                lines[0].starts_with("Filter:") && lines[1].starts_with("  ─"),
+                lines[0].starts_with("  Search:") && lines[1].starts_with("  ─"),
                 "{short}"
             );
             assert!(
-                lines
-                    .iter()
-                    .any(|line| selected_prefix(line) && line.contains("codex")),
+                lines.iter().any(|line| selected_prefix(line)
+                    && line.contains(if width == 60 { "idle" } else { "codex" })),
                 "{short}"
             );
             assert!(!short.contains('┄'), "{short}");
@@ -1263,12 +2180,12 @@ mod tests {
                 } else {
                     assert_eq!(
                         lines[height - 2],
-                        "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace",
+                        "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace",
                         "{frame}"
                     );
                     "Enter: focus · Esc/q: exit"
                 };
-                assert_eq!(last, format!("{expected} · ?: keys"), "{frame}");
+                assert_eq!(last, format!("  {expected} · ?: keys"), "{frame}");
                 assert!((last.cell_width() as usize) < width, "{frame}");
                 assert!(!last.contains('|'), "{frame}");
             }
@@ -1353,7 +2270,7 @@ mod tests {
             } else {
                 assert_eq!(
                     frame.split("\r\n").nth(13),
-                    Some("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"),
+                    Some("  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"),
                     "{frame}"
                 );
                 "Enter: focus · Esc/q: exit"
@@ -1364,14 +2281,14 @@ mod tests {
                 "{frame}"
             );
             assert!(!footer.contains('|'), "{frame}");
-            assert!(footer.starts_with(navigation), "{frame}");
+            assert!(footer.starts_with(&format!("  {navigation}")), "{frame}");
             assert_eq!(
                 footer.matches('↕').count(),
                 usize::from(width >= 138) * 3,
                 "{frame}"
             );
             assert!(!footer.contains('↑') && !footer.contains('↓'), "{frame}");
-            assert_eq!(footer, format!("{navigation} · ?: keys"), "{frame}");
+            assert_eq!(footer, format!("  {navigation} · ?: keys"), "{frame}");
             assert!((footer.cell_width() as usize) < width, "{frame}");
             assert_eq!(frame.split("\r\n").count(), 15, "{frame}");
         }
@@ -1386,18 +2303,18 @@ mod tests {
         let compact = state.frame_width(60);
         let header = compact.lines().nth(2).unwrap();
         assert!(
-            header.contains("Workspace") && header.contains("Agent/Pane Name"),
+            header.contains("Workspace") && header.contains("Agent/Pane"),
             "{compact}"
         );
         assert!(!header.contains("Status"), "{compact}");
         assert!(
             compact
                 .lines()
-                .any(|line| line.contains("Long workspace") && line.contains("Claude | working")),
+                .any(|line| line.contains("Long workspace") && line.contains("C | working")),
             "{compact}"
         );
         assert!(
-            compact.lines().any(|line| line.contains("codex | idle")),
+            compact.lines().any(|line| line.contains("co… | idle")),
             "{compact}"
         );
         assert!(
@@ -1439,7 +2356,7 @@ mod tests {
         let mut state = ui();
         state.query = "suffix".into();
         let frame = state.frame_width(60);
-        assert!(frame.contains("codex (An extr… | idle"), "{frame}");
+        assert!(frame.contains("co… | idle"), "{frame}");
         let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
         snapshot["result"]["snapshot"]["agents"][0]["agent_status"] =
             Value::from("working\u{1b}[31m");
@@ -1454,7 +2371,7 @@ mod tests {
         for width in [60, 150] {
             let state = ui();
             let frame = state.terminal_frame(width, 15);
-            let selected = frame.lines().find(|line| line.contains("Claude")).unwrap();
+            let selected = frame.lines().find(|line| selected_prefix(line)).unwrap();
             assert!(selected_prefix(selected), "{selected}");
             assert!(
                 selected.contains("\u{1b}[38;2;249;226;175mworking\u{1b}[39m"),
@@ -1466,7 +2383,7 @@ mod tests {
                     && !selected.contains("\u{1b}[38;2;249;226;175mClaude"),
                 "{selected}"
             );
-            let idle = frame.lines().find(|line| line.contains("codex")).unwrap();
+            let idle = frame.lines().find(|line| line.contains("idle")).unwrap();
             assert!(
                 idle.contains("\u{1b}[38;2;166;227;161midle\u{1b}[39m"),
                 "{idle}"
@@ -1479,23 +2396,23 @@ mod tests {
     fn compact_pipe_is_dim_only_between_unstyled_spaces() {
         let mut state = ui();
         let frame = state.terminal_frame(60, 15);
-        let selected = frame.lines().find(|line| line.contains("Claude")).unwrap();
+        let selected = frame.lines().find(|line| selected_prefix(line)).unwrap();
         assert!(selected.starts_with("  \x1b[48;5;236m> "), "{selected}");
         assert!(
-            selected.contains("Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[39m"),
+            selected.contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[39m"),
             "{selected}"
         );
         assert!(selected.ends_with("\x1b[0m"), "{selected}");
-        let idle = frame.lines().find(|line| line.contains("codex")).unwrap();
+        let idle = frame.lines().find(|line| line.contains("idle")).unwrap();
         assert!(
-            idle.contains("codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m"),
+            idle.contains("co… \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m"),
             "{idle}"
         );
         state.key(Key::Char('/'));
         state.query = "Claude".into();
         let filtered = state.terminal_frame(60, 15);
-        assert_eq!(filtered.lines().next().unwrap(), "Search: Claude");
-        assert!(filtered.contains("Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking"));
+        assert_eq!(filtered.lines().next().unwrap(), "  Search: Claude");
+        assert!(filtered.contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking"));
         let wide = state.terminal_frame(150, 15);
         assert!(wide.lines().nth(2).unwrap().contains("Status"), "{wide}");
         let wide_selected = wide
@@ -1533,10 +2450,7 @@ mod tests {
             let frame = state.terminal_frame(width, height);
             let lines: Vec<_> = frame.split("\r\n").collect();
             assert_eq!(lines.len(), height, "{frame}");
-            let selected = lines
-                .iter()
-                .find(|line| line.contains("Claude") || line.contains("codex"))
-                .unwrap();
+            let selected = lines.iter().find(|line| selected_prefix(line)).unwrap();
             let border: Vec<_> = lines[1]
                 .chars()
                 .enumerate()
@@ -1592,7 +2506,7 @@ mod tests {
                 "phantom terminal column: {frame}"
             );
             if height == 15 {
-                let idle = lines.iter().find(|line| line.contains("codex")).unwrap();
+                let idle = lines.iter().find(|line| line.contains("idle")).unwrap();
                 assert!(!idle.contains("\x1b[48;5;236m"), "{idle:?}");
                 assert!(!without_status_ansi(idle).ends_with(' '), "{idle:?}");
                 assert!(
@@ -1686,7 +2600,8 @@ mod tests {
                 "{frame}"
             );
             assert!(
-                lines[at - 1].contains("pane 1") && lines[at + 1].contains("codex"),
+                lines[at - 1].contains("pane 1")
+                    && lines[at + 1].contains(if width == 60 { "idle" } else { "codex" }),
                 "{frame}"
             );
             assert!(!frame.contains('▏') && !frame.contains('│'), "{frame}");
@@ -1704,8 +2619,8 @@ mod tests {
             );
             assert!(!only.contains('▏'), "{only}");
             assert!(
-                only.lines()
-                    .any(|line| line.contains("Same") && line.contains("codex")),
+                only.lines().any(|line| line.contains("Same")
+                    && line.contains(if width == 60 { "idle" } else { "codex" })),
                 "{only}"
             );
         }
@@ -1724,9 +2639,8 @@ mod tests {
             let lines: Vec<_> = frame.split("\r\n").collect();
             assert_eq!(lines.len(), 10, "{frame}");
             assert!(
-                lines
-                    .iter()
-                    .any(|line| selected_prefix(line) && line.contains("codex")),
+                lines.iter().any(|line| selected_prefix(line)
+                    && line.contains(if width == 60 { "idle" } else { "codex" })),
                 "{frame}"
             );
             assert_eq!(
@@ -1740,14 +2654,15 @@ mod tests {
             assert!(
                 short.lines().any(|line| selected_prefix(line)
                     && line.contains("Same")
-                    && line.contains("codex")),
+                    && line.contains(if width == 60 { "idle" } else { "codex" })),
                 "{short}"
             );
             assert!(!short.contains('┄'), "{short}");
             state.query = "codex".into();
             let filtered = state.terminal_frame(width, 5);
             assert!(
-                !filtered.contains('┄') && filtered.contains("codex"),
+                !filtered.contains('┄')
+                    && filtered.contains(if width == 60 { "idle" } else { "codex" }),
                 "{filtered}"
             );
         }
@@ -1874,7 +2789,7 @@ mod tests {
                 if height > 6 {
                     let codex = lines
                         .iter()
-                        .position(|line| line.contains("codex"))
+                        .position(|line| line.contains(if width == 60 { "idle" } else { "codex" }))
                         .unwrap();
                     assert!(lines[codex].starts_with("    "), "{frame}");
                     assert!(lines[codex].contains("Same"), "{frame}");
@@ -1899,7 +2814,7 @@ mod tests {
             assert!(
                 only.lines().any(|line| selected_prefix(line)
                     && line.contains("Same")
-                    && line.contains("codex")
+                    && line.contains(if width == 60 { "idle" } else { "codex" })
                     && line.ends_with("\x1b[0m")),
                 "{only}"
             );
@@ -1923,7 +2838,9 @@ mod tests {
         assert!(
             compact
                 .lines()
-                .any(|line| line.contains("Long workspace …") && line.contains("Claude")),
+                .any(|line| line.contains("Long workspace feature br…")
+                    && line.contains("C \x1b[2m|")
+                    && line.contains("working")),
             "{compact}"
         );
     }
@@ -1942,10 +2859,7 @@ mod tests {
             .iter()
             .position(|line| line.contains("Second") && line.contains("pane 1"))
             .unwrap();
-        let next = lines
-            .iter()
-            .position(|line| line.contains("codex"))
-            .unwrap();
+        let next = lines.iter().position(|line| line.contains("idle")).unwrap();
         assert_eq!(next, first + 2, "{frame}");
         assert!(lines[first + 1].starts_with("  ┄"), "{frame}");
         assert_eq!(lines.len(), 14, "{frame}");
@@ -1967,7 +2881,7 @@ mod tests {
         assert!(
             lines
                 .iter()
-                .any(|line| line.starts_with("    ") && line.contains("codex")),
+                .any(|line| line.starts_with("    ") && line.contains("idle")),
             "{compact}"
         );
         state.query = "pane".into();
@@ -1977,10 +2891,7 @@ mod tests {
             .iter()
             .position(|line| line.contains("pane 1"))
             .unwrap();
-        let next = lines
-            .iter()
-            .position(|line| line.contains("codex"))
-            .unwrap();
+        let next = lines.iter().position(|line| line.contains("idle")).unwrap();
         assert_eq!(next, first + 2, "{filtered}");
         assert_eq!(
             filtered.lines().filter(|line| line.contains('┄')).count(),
@@ -2005,7 +2916,7 @@ mod tests {
         assert!(!scrolled.contains('▏'), "{scrolled}");
         assert!(
             scrolled.lines().any(|line| selected_prefix(line)
-                && line.contains("codex")
+                && line.contains("idle")
                 && line.ends_with("\x1b[0m")),
             "{scrolled}"
         );
@@ -2242,7 +3153,7 @@ mod tests {
             response["result"]["source"]["source_workspace_id"] = Value::from(source);
             std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", response)).unwrap();
             let mut items = rows(&snapshot.to_string(), Some("p-self"), 120).unwrap();
-            annotate_worktrees(&mut items, fake.as_os_str());
+            annotate_worktrees(&mut items, fake.as_os_str(), false);
             assert_eq!(
                 items
                     .iter()
@@ -2273,9 +3184,34 @@ mod tests {
         std::fs::remove_file(fake).unwrap();
     }
 
+    #[test]
+    fn ordinary_workspace_label_with_link_marker_keeps_normal_separator() {
+        let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+        snapshot["result"]["snapshot"]["workspaces"][0]["label"] = Value::from("↳ Ordinary");
+        let state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 150).unwrap());
+        for width in [60, 150] {
+            for frame in [state.frame_width(width), state.terminal_frame(width, 20)] {
+                let (dim, reset) = if frame.contains('\x1b') {
+                    ("\x1b[2m", "\x1b[22m")
+                } else {
+                    ("", "")
+                };
+                let expected = format!("  {dim}{}{reset}", "┄".repeat(width - 4));
+                let rule = frame
+                    .lines()
+                    .filter(|line| line.contains('┄'))
+                    .last()
+                    .unwrap();
+                assert_eq!(rule, expected, "{frame}");
+                assert!(frame.contains("↳ Ordinary"), "{frame}");
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
-    fn duplicate_linked_entries_in_one_response_mark_workspace_once() {
+    fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
+        use ratatui::buffer::CellWidth;
         use std::os::unix::fs::PermissionsExt;
         let fake = std::path::Path::new("/tmp/opencode")
             .join(format!("crossroads-duplicate-{}", std::process::id()));
@@ -2286,14 +3222,93 @@ mod tests {
         std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", response)).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut items = rows(SNAPSHOT, Some("p-self"), 120).unwrap();
-        annotate_worktrees(&mut items, fake.as_os_str());
+        annotate_worktrees(&mut items, fake.as_os_str(), false);
         std::fs::remove_file(fake).unwrap();
 
         for row in items.iter().filter(|row| row.workspace_id == "w2") {
             assert_eq!(row.workspace, "↳ Same (feature/demo)");
         }
-        let frame = Ui::new(items).terminal_frame(120, 20);
-        assert_eq!(frame.matches("↳ Same (feature/demo)").count(), 1, "{frame}");
+        let mut state = Ui::new(items);
+        for width in [60, 150] {
+            let rule_width = width - 4;
+            for frame in [state.frame_width(width), state.terminal_frame(width, 20)] {
+                let (dim, reset) = if frame.contains('\x1b') {
+                    ("\x1b[2m", "\x1b[22m")
+                } else {
+                    ("", "")
+                };
+                let expected = format!("      {dim}{}{reset}", "┄".repeat(rule_width - 4));
+                // The roomy header rule is unchanged; only the rule before the linked row moves.
+                let separators: Vec<_> = frame.lines().filter(|line| line.contains('┄')).collect();
+                let linked_rule = separators.last().unwrap();
+                let linked_row = frame.lines().find(|line| line.contains("↳ Same")).unwrap();
+                let arrow_col = linked_row
+                    .split_once('↳')
+                    .unwrap()
+                    .0
+                    .replace("\x1b[48;5;236m", "")
+                    .cell_width();
+                let rule_col = linked_rule
+                    .split_once('┄')
+                    .unwrap()
+                    .0
+                    .replace(dim, "")
+                    .cell_width();
+                assert_eq!(rule_col, arrow_col + "↳ ".cell_width(), "{frame}");
+                assert_eq!(
+                    linked_rule.replace(dim, "").replace(reset, "").cell_width(),
+                    (width - 2) as u16,
+                    "{frame}"
+                );
+                assert!(!linked_rule.contains('↳'), "{frame}");
+                assert_eq!(*linked_rule, expected, "{frame}");
+                if width == 150 {
+                    assert_eq!(
+                        separators[0],
+                        format!("  {dim}{}{reset}", "┄".repeat(rule_width)),
+                        "{frame}"
+                    );
+                }
+                assert_eq!(separators.len(), if width == 150 { 2 } else { 1 });
+                assert_eq!(frame.matches("↳ Same").count(), 1, "{frame}");
+                assert!(
+                    frame.lines().any(|line| line.contains("↳ Same")
+                        && line.contains(if width == 60 { "idle" } else { "codex" })),
+                    "{frame}"
+                );
+            }
+            state.query = "pane".into();
+            let filtered = state.terminal_frame(width, 20);
+            assert!(
+                filtered
+                    .lines()
+                    .any(|line| line.starts_with("      \x1b[2m┄")),
+                "{filtered}"
+            );
+            state.query = "codex".into();
+            let only = state.terminal_frame(width, 20);
+            assert_eq!(
+                only.lines().filter(|line| line.contains('┄')).count(),
+                usize::from(width == 150),
+                "{only}"
+            );
+            state.query.clear();
+            state.key(Key::Tab);
+            assert_eq!(state.selected.as_deref(), Some("p-other"));
+            let scrolled = state.terminal_frame(width, 10);
+            assert!(
+                scrolled
+                    .lines()
+                    .any(|line| line.starts_with("      \x1b[2m┄")),
+                "{scrolled}"
+            );
+            assert!(
+                scrolled.lines().any(|line| selected_prefix(line)
+                    && line.contains(if width == 60 { "idle" } else { "codex" })),
+                "{scrolled}"
+            );
+            assert_eq!(state.key(Key::Enter).as_deref(), Some("p-other"));
+        }
     }
 
     #[test]
@@ -2500,12 +3515,12 @@ mod tests {
             let state = ui();
             let frame = state.terminal_frame(width, 16);
             let lines: Vec<_> = frame.split("\r\n").collect();
-            assert_eq!(lines[0], "Filter: / to search");
+            assert_eq!(lines[0], "  Search: / to search");
             assert!(
                 lines[15].starts_with(if width >= 138 {
-                    "j/k: ↕pane"
+                    "  j/k: ↕pane"
                 } else {
-                    "Enter: focus"
+                    "  Enter: focus"
                 }),
                 "{frame}"
             );
@@ -2531,9 +3546,9 @@ mod tests {
             assert_eq!(lines.len(), 5, "{frame}");
             assert!(
                 lines[4].starts_with(if width >= 138 {
-                    "j/k: ↕pane"
+                    "  j/k: ↕pane"
                 } else {
-                    "Enter: focus"
+                    "  Enter: focus"
                 }),
                 "{frame}"
             );
@@ -2648,7 +3663,7 @@ mod tests {
                 let frame = state.terminal_frame(width, height);
                 let lines: Vec<_> = frame.split("\r\n").collect();
                 assert_eq!(lines.len(), height, "{frame}");
-                assert!(lines[height - 1].starts_with("Enter: focus"), "{frame}");
+                assert!(lines[height - 1].starts_with("  Enter: focus"), "{frame}");
                 assert!(
                     lines.iter().all(|line| without_status_ansi(line)
                         .replace("\x1b[48;5;236m", "")
@@ -2668,45 +3683,45 @@ mod tests {
             state.mode = Mode::Help;
             let help = state.terminal_frame(width, 16);
             assert_eq!(help.split("\r\n").count(), 16, "{help}");
-            assert!(help.ends_with("Esc/q/?: back"), "{help}");
+            assert!(help.ends_with("  Esc/q/?: back"), "{help}");
         }
     }
 
     #[test]
-    fn filter_hint_appears_only_in_select_with_empty_query() {
+    fn search_hint_appears_only_in_select_with_empty_query() {
         let mut state = ui();
         for width in [76, 120] {
             assert_eq!(
                 state.terminal_frame(width, 8).split("\r\n").next(),
-                Some("Filter: / to search")
+                Some("  Search: / to search")
             );
         }
         state.key(Key::Char('/'));
         assert_eq!(
             state.terminal_frame(120, 8).split("\r\n").next(),
-            Some("Search: ")
+            Some("  Search: ")
         );
         for c in "codex".chars() {
             state.key(Key::Char(c));
         }
         assert_eq!(
             state.terminal_frame(120, 8).split("\r\n").next(),
-            Some("Search: codex")
+            Some("  Search: codex")
         );
         state.key(Key::Enter);
         assert_eq!(
             state.terminal_frame(120, 8).split("\r\n").next(),
-            Some("Filter: codex")
+            Some("  Search: codex")
         );
         state.key(Key::Char('r'));
         assert_eq!(
             state.terminal_frame(120, 8).split("\r\n").next(),
-            Some("Filter: / to search")
+            Some("  Search: / to search")
         );
         state.key(Key::Char('?'));
         assert_eq!(
             state.terminal_frame(120, 8).split("\r\n").next(),
-            Some("Filter: ")
+            Some("  Search: ")
         );
     }
 
@@ -2921,7 +3936,7 @@ mod tests {
         );
         let compact = state.terminal_frame(76, 20);
         assert!(
-            compact.contains("Claude (Hidden Need… \x1b[2m|\x1b[22m "),
+            compact.contains("Claude (Hidde… \x1b[2m|\x1b[22m "),
             "{compact}"
         );
         let tiny = state.terminal_frame(16, 5);
@@ -2945,9 +3960,9 @@ mod tests {
         state.key(Key::Char('/'));
         state.key(Key::Char('x'));
         let frame = state.terminal_frame(120, 20);
-        assert!(frame.starts_with("Search: x\r\n"), "{frame}");
+        assert!(frame.starts_with("  Search: x\r\n"), "{frame}");
         state.key(Key::Esc);
-        assert!(state.terminal_frame(120, 20).contains("Filter: x\r\n"));
+        assert!(state.terminal_frame(120, 20).contains("  Search: x\r\n"));
         state.key(Key::Char('?'));
         let help = state.terminal_frame(120, 20);
         assert!(help.contains("Enter: focus"), "{help}");
@@ -3095,7 +4110,7 @@ mod tests {
         state.query = "Needle".into();
         let frame = state.frame();
         let lines: Vec<_> = frame.lines().collect();
-        assert_eq!(lines[0], "Filter: Needle");
+        assert_eq!(lines[0], "  Search: Needle");
         assert!(lines[1].starts_with("  ─"));
         assert!(
             frame.lines().any(|line| line.contains("Workshop")

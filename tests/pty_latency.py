@@ -53,6 +53,7 @@ def main(binary):
                        CROSSROADS_TEST_LOG=str(directory / "calls.log"),
                        CROSSROADS_TEST_SNAPSHOT=str(directory / "snapshot.json"),
                        HERDR_PANE_ID="not-present")
+            env.pop("HERDR_SOCKET_PATH", None)
             child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             os.close(slave)
             slave = -1
