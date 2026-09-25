@@ -341,13 +341,99 @@ fn fake_herdr() -> std::path::PathBuf {
     std::fs::write(
         &path,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$1 $2\" >> \"$CROSSROADS_TEST_LOG\"\n[ \"$1 $2\" = 'api snapshot' ] || exit 9\ncat '{}'\n",
+            "#!/bin/sh\nif [ \"$1 $2\" = 'worktree list' ]; then echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; exit; fi\nprintf '%s\\n' \"$1 $2\" >> \"$CROSSROADS_TEST_LOG\"\n[ \"$1 $2\" = 'api snapshot' ] || exit 9\ncat '{}'\n",
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json")
         ),
     )
     .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     path
+}
+
+#[test]
+fn plugin_pane_title_is_parsed_from_manifest() {
+    let output = Command::new("python3")
+        .args(["-c", "import tomllib,sys; p=tomllib.load(open(sys.argv[1], 'rb')); assert p['name'] == 'Herdr Crossroads'; assert p['panes'][0]['id'] == 'crossroads'; assert p['panes'][0]['title'] == 'Herdr Crossroads'", concat!(env!("CARGO_MANIFEST_DIR"), "/herdr-plugin.toml")])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn status_colors_config_defaults_partial_override_and_invalid_files() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let base = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-colors-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&base).unwrap();
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
+    let run = |config: Option<&str>| {
+        match config {
+            Some(contents) => std::fs::write(base.join("status-colors.json"), contents).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(base.join("status-colors.json"));
+            }
+        }
+        Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env("HERDR_PLUGIN_CONFIG_DIR", &base)
+            .env("HERDR_PANE_ID", "p-self")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let missing = run(None);
+    assert!(missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stdout).contains("Claude | working"));
+    let partial = run(Some(r##"{"working":"#123ABC"}"##));
+    assert!(
+        partial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&partial.stderr)
+    );
+    let text = String::from_utf8_lossy(&partial.stdout);
+    assert!(
+        text.contains("Claude | working") && text.contains("codex | idle"),
+        "{text}"
+    );
+    for invalid in [
+        "{",
+        "[]",
+        r##"{"working":"red"}"##,
+        r##"{"working":"#123abz"}"##,
+        r##"{"other":"#123ABC"}"##,
+    ] {
+        let result = run(Some(invalid));
+        assert!(!result.status.success(), "{invalid}");
+        assert!(result.stdout.is_empty(), "{invalid}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("status-colors.json"),
+            "{invalid}: {:?}",
+            result.stderr
+        );
+    }
+    std::fs::remove_file(base.join("status-colors.json")).unwrap();
+    std::fs::create_dir(base.join("status-colors.json")).unwrap();
+    let unreadable = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_PLUGIN_CONFIG_DIR", &base)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!unreadable.status.success());
+    assert!(unreadable.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unreadable.stderr).contains("status-colors.json"));
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
+    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[test]
@@ -369,18 +455,118 @@ fn starts_with_eof_and_exits_successfully() {
     assert!(output.status.success(), "status: {}", output.status);
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(
-        text.contains("p-a") && text.contains("p-b") && text.contains("p-other"),
+        !text.contains("\x1b[?25"),
+        "piped output changed cursor: {text}"
+    );
+    assert!(
+        text.contains("Claude") && text.contains("codex") && text.contains("pane 3"),
         "{text}"
     );
     assert!(!text.contains("p-self"), "{text}");
     assert!(
-        text.find("p-b") < text.find("p-a") && text.find("p-a") < text.find("p-other"),
+        text.find("Claude") < text.find("pane 3") && text.find("pane 3") < text.find("codex"),
         "{text}"
     );
     assert!(
-        text.contains("Claude") && text.contains("working"),
+        text.contains("Claude")
+            && text.contains("Workspace")
+            && text.contains("Agent/Pane Name")
+            && !text.contains("p-b"),
         "{text}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn startup_marks_only_linked_workspace_by_id_and_does_not_requery_on_search() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-worktree-{}", std::process::id()));
+    std::fs::create_dir(&base).unwrap();
+    let fake = base.join("herdr");
+    let log = base.join("calls.log");
+    std::fs::write(&fake, format!(r#"#!/bin/sh
+printf '%s\n' "$*" >> "$CROSSROADS_TEST_LOG"
+if [ "$*" = 'api snapshot' ]; then cat '{}'; exit; fi
+if [ "$*" = 'worktree list --workspace w1' ]; then
+  printf '%s\n' '{{"result":{{"type":"worktree_list","worktrees":[{{"is_linked_worktree":false,"open_workspace_id":"w1","branch":"main","path":"/private/not-for-display"}},{{"is_linked_worktree":true,"open_workspace_id":"w2","branch":"feature/demo","path":"/private/not-for-display"}}]}}}}'
+  exit
+fi
+exit 9
+"#, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .env("HERDR_BIN_PATH", &fake)
+        .env("CROSSROADS_TEST_LOG", &log)
+        .env("HERDR_PANE_ID", "p-self")
+        .env("COLUMNS", "120")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.take().unwrap().write_all(b"/codexq\x1bq")?;
+            child.wait_with_output()
+        })
+        .unwrap();
+    let calls = std::fs::read_to_string(&log).unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("↳ Same (feature/demo)"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.contains("Claude") && line.contains("Same") && !line.contains('↳')),
+        "{text}"
+    );
+    assert!(!text.contains("/private/not-for-display"), "{text}");
+    assert_eq!(calls, "api snapshot\nworktree list --workspace w1\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_or_invalid_worktree_lookup_falls_back_to_plain_workspace_names() {
+    use std::os::unix::fs::PermissionsExt;
+    for (suffix, response) in [("error", "exit 9"), ("invalid", "printf 'invalid json\\n'")] {
+        let base = std::path::Path::new("/tmp/opencode").join(format!(
+            "crossroads-worktree-{}-{suffix}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&base).unwrap();
+        let fake = base.join("herdr");
+        let log = base.join("calls.log");
+        std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\n{response}\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env("HERDR_PANE_ID", "p-self")
+            .env("COLUMNS", "120")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let calls = std::fs::read_to_string(&log).unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+        assert!(
+            output.status.success(),
+            "{suffix}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            text.contains("Same") && text.contains("Claude") && text.contains("codex"),
+            "{text}"
+        );
+        assert!(!text.contains('↳'), "{text}");
+        assert_eq!(
+            calls,
+            "api snapshot\nworktree list --workspace w1\nworktree list --workspace w2\n"
+        );
+    }
 }
 
 #[test]
@@ -408,7 +594,12 @@ fn closes_after_q_in_select() {
     std::fs::remove_file(fake).unwrap();
 
     assert!(output.status.success(), "status: {}", output.status);
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Select (Enter: focus"));
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).lines().last(),
+        Some("Enter: focus · Esc/q: exit · ?: keys")
+    );
 }
 
 #[test]
@@ -462,7 +653,12 @@ fn esc_in_select_closes_on_piped_input_eof() {
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Select (Enter: focus"));
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).lines().last(),
+        Some("Enter: focus · Esc/q: exit · ?: keys")
+    );
 }
 
 #[cfg(target_os = "linux")]

@@ -6,6 +6,6 @@ platforms = ["linux"]
 
 [[panes]]
 id = "crossroads"
-title = "Crossroads"
+title = "Herdr Crossroads"
 placement = "popup"
 command = ["./target/release/herdr-crossroads"]
