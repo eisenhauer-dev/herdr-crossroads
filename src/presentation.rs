@@ -269,6 +269,9 @@ impl Ui {
     }
 
     pub(super) fn layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
+        if self.mode == Mode::Help {
+            return self.help_layout(width, height, ansi);
+        }
         if self.mode == Mode::Themes && !self.theme_table_preview {
             return self.theme_layout(width, height, ansi);
         }
@@ -299,16 +302,7 @@ impl Ui {
             )));
         }
         lines.push(aligned(&search));
-        if self.mode == Mode::Help {
-            lines.push(clipped(
-                "j/k: pane  h/l: tab  Tab/Shift+Tab: workspace",
-                limit,
-            ));
-            lines.push(clipped(
-                "Enter: focus  /: search  r: reset  t: themes  Esc/q/?: back",
-                limit,
-            ));
-        } else {
+        {
             let table_limit = limit.saturating_sub(3);
             let inner = table_limit.saturating_sub(4);
             let roomy = inner >= 102;
@@ -717,9 +711,7 @@ impl Ui {
             lines.push(aligned("Enter: save · Esc: cancel"));
             return lines;
         }
-        let footer = if self.mode == Mode::Help {
-            "Esc/q/?: back"
-        } else if self.mode == Mode::Search {
+        let footer = if self.mode == Mode::Search {
             "Enter/Esc: select  Backspace: erase"
         } else if width >= 110 {
             "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
@@ -749,6 +741,150 @@ impl Ui {
                 }
                 lines.push(aligned(footer));
             }
+        }
+        lines
+    }
+
+    fn help_layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
+        let theme = self.theme();
+        let legacy = theme == Theme::named("catppuccin");
+        let accent = if legacy {
+            Color::Rgb(180, 190, 254)
+        } else {
+            theme.accent
+        };
+        let table_width = width.saturating_sub(4);
+        let aligned = |text: &str| format!("  {}", clipped(text, table_width));
+        let search = if self.help.query.is_empty() && !self.help.searching {
+            "Search: / to search".to_owned()
+        } else {
+            format!("Search: {}", self.help.query)
+        };
+        let rule = format!("  {}", "─".repeat(table_width));
+        let visible = self.help.visible();
+        let selected = self.help.selected_index(&visible);
+        // Headings and spacers scroll, but never participate in selection or matching.
+        let entries = self.help.context.entries();
+        let mut contents = Vec::new();
+        let mut category = None;
+        for &i in &visible {
+            let entry = &entries[i];
+            if category != Some(entry.category) {
+                if category.is_some() {
+                    contents.push((None, ""));
+                }
+                contents.push((None, entry.category));
+                category = Some(entry.category);
+            }
+            contents.push((Some(i), ""));
+        }
+        if contents.is_empty() {
+            contents.push((None, "No matching keys"));
+        }
+        let available = if ansi {
+            height.saturating_sub(4)
+        } else {
+            contents.len()
+        };
+        let mut start = if ansi {
+            self.help
+                .viewport_start
+                .get()
+                .min(contents.len().saturating_sub(available))
+        } else {
+            0
+        };
+        if let Some(at) = contents
+            .iter()
+            .position(|(i, _)| i.is_some() && *i == selected)
+        {
+            if at < start {
+                start = if at > 0 && contents[at - 1].0.is_none() && !contents[at - 1].1.is_empty()
+                {
+                    at - 1
+                } else {
+                    at
+                };
+            }
+            if available > 0 && at >= start + available {
+                start = at + 1 - available;
+            }
+        }
+        if ansi {
+            self.help.viewport_start.set(start);
+        }
+        let key_width = entries
+            .iter()
+            .map(|entry| columns(entry.keys))
+            .max()
+            .unwrap_or(0);
+        let meaning_width = table_width.saturating_sub(key_width + 4);
+        let render_field = |text: &str, limit: usize| {
+            let line = marked_color(
+                text,
+                limit,
+                &match_positions(text, &self.help.query),
+                Some(accent),
+            );
+            line.spans
+                .iter()
+                .map(|span| {
+                    if ansi && span.style.add_modifier.contains(Modifier::UNDERLINED) {
+                        format!(
+                            "{}\x1b[4m{}\x1b[24m{}",
+                            sgr_fg(accent),
+                            span.content,
+                            sgr_fg(theme.text)
+                        )
+                    } else {
+                        span.content.to_string()
+                    }
+                })
+                .collect::<String>()
+        };
+        let mut lines = vec![aligned(&search), rule.clone()];
+        for &(i, heading) in contents.iter().skip(start).take(available) {
+            if let Some(i) = i {
+                let entry = &entries[i];
+                let active = selected == Some(i);
+                let text = format!(
+                    "{} {}{}  {}",
+                    if active { ">" } else { " " },
+                    render_field(entry.keys, key_width),
+                    " ".repeat(key_width.saturating_sub(columns(entry.keys))),
+                    render_field(entry.meaning, meaning_width)
+                );
+                lines.push(if ansi && active {
+                    let padding = table_width.saturating_sub(
+                        4 + key_width + columns(&clipped(entry.meaning, meaning_width)),
+                    );
+                    format!(
+                        "  {}{text}{}\x1b[0m",
+                        sgr_bg(if legacy {
+                            Color::Indexed(236)
+                        } else {
+                            theme.selection
+                        }),
+                        " ".repeat(padding)
+                    )
+                } else {
+                    format!("  {text}")
+                });
+            } else {
+                lines.push(aligned(heading));
+            }
+        }
+        if ansi {
+            lines.resize(height.saturating_sub(2), String::new());
+        }
+        lines.push(rule);
+        lines.push(aligned(if self.help.searching {
+            "Enter/Esc: return to keys · Backspace: erase"
+        } else {
+            "j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"
+        }));
+        if ansi {
+            lines.truncate(height);
         }
         lines
     }
@@ -820,6 +956,7 @@ fn sgr_fg(color: Color) -> String {
 
 fn sgr_bg(color: Color) -> String {
     match color {
+        Color::Indexed(index) => format!("\x1b[48;5;{index}m"),
         Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
         _ => "\x1b[49;7m".into(),
     }
@@ -910,7 +1047,10 @@ pub(super) fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
             }
             write!(out, "\x1b[0m")?;
         }
-        if ui.mode == Mode::Search && width >= 80 && height >= 15 {
+        if (ui.mode == Mode::Search || (ui.mode == Mode::Help && ui.help.searching))
+            && width >= 80
+            && height >= 15
+        {
             // Measure the unstyled line: themed frame prefixes contain ANSI bytes.
             let x = ui.layout(width, height, true)[0].cell_width() as usize;
             write!(

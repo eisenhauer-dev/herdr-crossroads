@@ -48,6 +48,247 @@ fn ui() -> Ui {
 }
 
 #[test]
+fn help_category_spacing_tracks_only_visible_groups() {
+    for (width, height) in [(80, 15), (120, 24)] {
+        for (query, headings) in [
+            ("", vec!["Navigation", "Actions"]),
+            ("pane", vec!["Navigation", "Actions"]),
+            ("previous", vec!["Navigation"]),
+            ("focus", vec!["Actions"]),
+            ("Navigation", vec![]),
+            ("not-a-key", vec![]),
+        ] {
+            let mut state = super::test_support::ui();
+            state.key(Key::Char('?'));
+            state.help.query = query.into();
+            let full = state.layout(width, height, false);
+            let body = &full[2..full.len() - 2];
+            assert!(!body.first().unwrap().trim().is_empty(), "{full:?}");
+            assert!(!body.last().unwrap().trim().is_empty(), "{full:?}");
+            assert_eq!(
+                body.iter().filter(|line| line.trim().is_empty()).count(),
+                headings.len().saturating_sub(1),
+                "query={query:?}: {full:?}"
+            );
+            let actual_headings = body
+                .iter()
+                .filter(|line| matches!(line.trim(), "Navigation" | "Actions"))
+                .map(|line| line.trim())
+                .collect::<Vec<_>>();
+            assert_eq!(actual_headings, headings, "{full:?}");
+            if headings.len() == 2 {
+                let actions = body.iter().position(|line| line == "  Actions").unwrap();
+                assert!(body[actions - 1].trim().is_empty(), "{full:?}");
+                assert!(!body[actions - 2].trim().is_empty(), "{full:?}");
+            }
+            let lines = state.layout(width, height, true);
+            assert_eq!(lines.len(), height);
+            assert_eq!(lines[0], full[0]);
+            assert_eq!(lines[1], full[1]);
+            assert_eq!(lines[height - 2], full[full.len() - 2]);
+            assert_eq!(lines[height - 1], full[full.len() - 1]);
+            if headings.len() == 2 {
+                let actions = lines.iter().position(|line| line == "  Actions").unwrap();
+                assert!(lines[actions - 1].trim().is_empty(), "{lines:?}");
+                assert!(!lines[actions - 2].trim().is_empty(), "{lines:?}");
+            } else {
+                // Remaining blank viewport rows are padding, not content spacers.
+                assert!(
+                    lines[2..2 + body.len()]
+                        .iter()
+                        .all(|line| !line.trim().is_empty()),
+                    "{lines:?}"
+                );
+            }
+            if headings.is_empty() {
+                assert_eq!(body, ["  No matching keys"]);
+                assert!(!lines.iter().any(|line| line.contains("> ")));
+            }
+        }
+    }
+}
+
+#[test]
+fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
+    for (width, height) in [(80, 15), (120, 24)] {
+        let mut state = super::test_support::ui();
+        state.key(Key::Char('?'));
+        let entry_count = state.help.context.entries().len();
+        for selected in 0..entry_count {
+            let lines = state.layout(width, height, true);
+            assert_eq!(state.help.selected, Some(selected));
+            assert_eq!(lines.iter().filter(|line| line.contains("> ")).count(), 1);
+            assert!(
+                lines[2..height - 2].iter().any(|line| {
+                    line.contains("> ")
+                        && line.contains(state.help.context.entries()[selected].meaning)
+                }),
+                "{lines:?}"
+            );
+            assert_eq!(lines[height - 2], lines[1]);
+            assert!(lines[height - 1].contains("Esc/q/?: close keys"));
+            state.key(Key::Down);
+        }
+        let bottom = state.layout(width, height, true);
+        assert_eq!(state.help.selected, Some(entry_count - 1));
+        assert_eq!(
+            state.help.viewport_start.get(),
+            14usize.saturating_sub(height - 4)
+        );
+        if height == 15 {
+            assert!(
+                bottom[height - 3].contains("close Crossroads"),
+                "{bottom:?}"
+            );
+            state.help.viewport_start.set(9);
+            state.help.selected = Some(6);
+            state.key(Key::Up);
+            // Exercise heading restoration with a smaller internal content budget.
+            let lines = state.layout(width, 7, true);
+            assert_eq!(lines[2], "  Actions", "{lines:?}");
+            assert!(lines[3].contains("> Enter"), "{lines:?}");
+            state.key(Key::Up);
+            let lines = state.layout(width, 7, true);
+            assert!(lines[2].contains("> Tab/Shift+Tab"), "{lines:?}");
+            assert!(lines[3].trim().is_empty(), "{lines:?}");
+            assert_eq!(lines[4], "  Actions", "{lines:?}");
+        }
+        for _ in 0..entry_count {
+            state.key(Key::Up);
+            state.layout(width, height, true);
+        }
+        let top = state.layout(width, height, true);
+        assert_eq!(state.help.selected, Some(0));
+        assert_eq!(state.help.viewport_start.get(), 0);
+        assert_eq!(top[2], "  Navigation");
+        assert!(top[3].contains("> j/Down"));
+    }
+}
+
+#[test]
+fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
+    for theme_index in 0..crate::theme::NAMES.len() {
+        let mut state = super::test_support::ui();
+        state.theme_index = theme_index;
+        state.popup_size = Some((80, 15));
+        state.key(Key::Char('?'));
+        for (width, height) in [(80, 15), (109, 15), (110, 15), (162, 36)] {
+            let first = state.layout(width, height, false);
+            let meaning_columns = state
+                .help
+                .context
+                .entries()
+                .iter()
+                .map(|entry| {
+                    let line = first
+                        .iter()
+                        .find(|line| {
+                            line.get(4..).is_some_and(|s| s.starts_with(entry.keys))
+                                && line.ends_with(entry.meaning)
+                        })
+                        .unwrap();
+                    line.len() - entry.meaning.len()
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                meaning_columns.iter().all(|&column| column == 19),
+                "{first:?}: {meaning_columns:?}"
+            );
+            for _ in 0..15 {
+                let lines = state.layout(width, height, true);
+                assert_eq!(lines.len(), height, "{lines:?}");
+                assert_eq!(lines[0], "  Search: / to search");
+                assert_eq!(lines[1], "  ".to_owned() + &"─".repeat(width - 4));
+                assert_eq!(lines[height - 2], lines[1]);
+                assert!(
+                    lines[height - 1].contains("/: search")
+                        && lines[height - 1].contains("r: reset")
+                        && lines[height - 1].contains("Esc/q/?: close keys")
+                );
+                let active = lines
+                    .iter()
+                    .filter(|line| line.contains("> "))
+                    .collect::<Vec<_>>();
+                assert_eq!(active.len(), 1, "{lines:?}");
+                assert!(active[0].contains("\x1b[48;") || active[0].contains("\x1b[49;7m"));
+                assert!(!lines
+                    .iter()
+                    .any(|line| line.contains("Keys ·") || line.contains("Meaning")));
+                let frame = state.terminal_frame(width, height);
+                assert_eq!(frame.split("\r\n").count(), height);
+                state.key(Key::Down);
+            }
+            assert!(state
+                .layout(width, height, true)
+                .iter()
+                .any(|line| line.contains("close Crossroads")));
+            for _ in 0..15 {
+                state.key(Key::Up);
+                state.layout(width, height, true);
+            }
+            assert!(state
+                .layout(width, height, true)
+                .iter()
+                .any(|line| line.contains("next pane")));
+            assert_eq!(state.layout(width, height, true)[2], "  Navigation");
+        }
+        for query in ["DN", "focus", "e"] {
+            state.help.query = query.into();
+            let frame = state.terminal_frame(80, 15);
+            assert!(frame.contains("\x1b[4m"), "{frame}");
+            let accent = if theme_index <= 1 {
+                "\x1b[38;2;180;190;254m".to_owned()
+            } else if state.theme().accent == Color::Blue {
+                "\x1b[34m".to_owned()
+            } else if let Color::Rgb(r, g, b) = state.theme().accent {
+                format!("\x1b[38;2;{r};{g};{b}m")
+            } else {
+                panic!("unexpected accent")
+            };
+            assert!(frame.contains(&format!("{accent}\x1b[4m")), "{frame}");
+        }
+        state.help.query.clear();
+        assert!(!state.terminal_frame(80, 15).contains("\x1b[4m"));
+        state.popup_size = Some((79, 15));
+        assert!(state
+            .terminal_frame(79, 15)
+            .contains("minimum content size 80x15"));
+        state.key(Key::Char('/'));
+        assert!(!state.help.searching);
+        state.popup_size = Some((80, 15));
+        assert!(state.terminal_frame(80, 15).contains("Search:"));
+    }
+}
+
+#[test]
+fn help_marks_first_positions_in_each_matching_column_only() {
+    let mut state = super::test_support::ui();
+    state.key(Key::Char('?'));
+    state.help.query = "E".into();
+    let lines = state.layout(80, 20, true);
+    let accent = "\x1b[38;2;180;190;254m\x1b[4m";
+    let end = "\x1b[24m\x1b[38;2;205;214;244m";
+    let enter = lines.iter().find(|line| line.contains("focus s")).unwrap();
+    assert!(enter.contains(&format!("{accent}E{end}nter")), "{enter}");
+    assert!(
+        enter.contains(&format!("focus s{accent}e{end}lected pane")),
+        "{enter}"
+    );
+    assert_eq!(enter.matches("\x1b[4m").count(), 2, "{enter}");
+    assert_eq!(lines[2], "  Navigation");
+    assert!(lines.iter().any(|line| line == "  Actions"));
+    state.help.query = "?".into();
+    let lines = state.layout(80, 15, true);
+    let show = lines
+        .iter()
+        .find(|line| line.contains("show keys"))
+        .unwrap();
+    assert!(show.contains(&format!("{accent}?{end}")), "{show}");
+    assert_eq!(show.matches("\x1b[4m").count(), 1);
+    assert_eq!(lines[2], "  Actions");
+}
+
+#[test]
 fn marked_distinguishes_generated_from_source_ellipsis() {
     let generated = marked("abcde", 4, &[2], true);
     assert_eq!(
@@ -2021,7 +2262,10 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
         state.mode = Mode::Help;
         let help = state.terminal_frame(width, 16);
         assert_eq!(help.split("\r\n").count(), 16, "{help}");
-        assert!(help.ends_with("  Esc/q/?: back"), "{help}");
+        assert!(
+            help.ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            "{help}"
+        );
     }
 }
 
@@ -2035,24 +2279,51 @@ fn help_shows_theme_shortcut_without_losing_keys_at_minimum_and_wide_sizes() {
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(lines.len(), 15, "{frame}");
         assert!(
-            lines.iter().all(|line| line.chars().count() < width),
+            state
+                .layout(width, 15, false)
+                .iter()
+                .all(|line| line.chars().count() < width),
             "{frame}"
         );
         assert!(
-            frame.contains("j/k: pane  h/l: tab  Tab/Shift+Tab: workspace"),
+            frame.contains("j/Down")
+                && frame.contains("h/Left")
+                && frame.contains("Tab/Shift+Tab")
+                && frame.contains("next/previous workspace"),
             "{frame}"
         );
         assert!(
-            frame.contains("Enter: focus  /: search  r: reset"),
+            frame.contains("Enter")
+                && frame.contains("focus selected pane")
+                && frame.contains("reset search"),
             "{frame}"
         );
-        assert!(frame.contains("t: themes"), "{frame}");
-        assert!(frame.ends_with("  Esc/q/?: back"), "{frame}");
+        assert!(
+            frame.ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            "{frame}"
+        );
+        // The category spacer moves this shortcut below the initial 15-row viewport.
+        for _ in 0..8 {
+            state.key(Key::Down);
+        }
+        let scrolled = state.terminal_frame(width, 15);
+        assert!(scrolled.contains("choose theme"), "{scrolled}");
+        assert!(scrolled.contains("> t"), "{scrolled}");
+        assert_eq!(scrolled.split("\r\n").count(), 15);
+        assert!(
+            scrolled
+                .ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            "{scrolled}"
+        );
+        for _ in 0..8 {
+            state.key(Key::Up);
+        }
+        state.terminal_frame(width, 15);
     }
 }
 
 #[test]
-fn search_hint_appears_only_in_select_with_empty_query() {
+fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     let mut state = ui();
     for width in [76, 120] {
         assert_eq!(
@@ -2083,6 +2354,11 @@ fn search_hint_appears_only_in_select_with_empty_query() {
         Some("  Search: / to search")
     );
     state.key(Key::Char('?'));
+    assert_eq!(
+        state.terminal_frame(120, 8).split("\r\n").next(),
+        Some("  Search: / to search")
+    );
+    state.key(Key::Char('/'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
         Some("  Search: ")

@@ -128,6 +128,21 @@ def assert_panel_background(raw, width, height):
     return lines
 
 
+def assert_help_frame(raw, width=80, height=15, searching=False):
+    lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+    assert wraps == 0 and cursor[0] == searching, (lines, wraps, cursor)
+    border = "  " + "─" * (width - 4)
+    assert lines[1] == border and lines[-2] == border, lines
+    assert lines[0].startswith("  Search: "), lines
+    assert not any("Keys ·" in line or "Meaning" in line or "Agent/Pane Name" in line for line in lines), lines
+    if searching:
+        assert lines[-1] == "  Enter/Esc: return to keys · Backspace: erase", lines
+        assert "close keys" not in lines[-1], lines
+    else:
+        assert lines[-1] == "  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys", lines
+    return lines
+
+
 NOTICE_END = b"  Press Enter/Esc/q to close."
 
 
@@ -179,10 +194,51 @@ def main(binary):
             assert not any("Filter:" in line for line in lines), lines
             assert lines[13] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "  Enter: focus · Esc/q: exit · ?: keys", lines
             os.write(master, b"?")
-            raw = frame(master, b"Esc/q/?: back")
-            lines = assert_panel_background(raw, 80, 15)
-            assert lines[1].startswith("j/k: pane") and lines[2].startswith("Enter: focus"), lines
-            assert all(not line for line in lines[3:-1]) and lines[-1] == "  Esc/q/?: back", lines
+            raw = frame(master, b"Esc/q/?: close keys")
+            lines = assert_help_frame(raw)
+            assert lines[0] == "  Search: / to search" and lines[2] == "  Navigation", lines
+            assert lines[3].startswith("  > j/Down") and "next pane" in lines[3], lines
+            assert lines[7].endswith("next/previous workspace") and lines[8] == "" and lines[9] == "  Actions", lines
+            _, _, backgrounds = screen(raw, 80, 15, track_bg=True)
+            assert [x for x, enabled in enumerate(backgrounds[3]) if enabled] == list(range(2, 78)), backgrounds[3]
+            assert not any(backgrounds[8]), backgrounds[8]
+            for _ in range(12):
+                os.write(master, b"\x1b[B")
+                lines = assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            os.write(master, b"\n")
+            assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            assert child.poll() is None, "Help Enter focused or closed"
+            os.write(master, b"/focus")
+            raw = frame(master, b"\x1b[?25h")
+            lines = assert_help_frame(raw, searching=True)
+            assert lines[0] == "  Search: focus" and lines[2] == "  Actions", lines
+            assert not any("Navigation" in line for line in lines), lines
+            assert any("focus selected pane" in line for line in lines), lines
+            assert lines[3].startswith("  > Enter") and all(not line for line in lines[4:-2]), lines
+            assert "\x1b[38;2;180;190;254m\x1b[4m" in raw, raw
+            os.write(master, b"\x1b")
+            assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            os.write(master, b"r/qr?")
+            lines = assert_help_frame(frame(master, b"\x1b[?25h"), searching=True)
+            assert lines[0] == "  Search: qr?" and lines[2] == "  No matching keys", lines
+            assert not any("Navigation" in line or "Actions" in line for line in lines), lines
+            assert all(not line for line in lines[3:-2]), lines
+            os.write(master, b"\x7f\n")
+            lines = assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            assert lines[0] == "  Search: qr", lines
+            os.write(master, b"r")
+            assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            for width, height in ((120, 24), (162, 36), (109, 15), (110, 15), (80, 15)):
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                lines = assert_help_frame(frame(master, b"Esc/q/?: close keys"), width, height)
+                assert any(line.startswith("  > Enter") for line in lines), lines
+                actions = lines.index("  Actions")
+                assert lines[actions - 1] == "" and lines[actions - 2].endswith("next/previous workspace"), lines
+            for _ in range(12):
+                os.write(master, b"k")
+                lines = assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            assert lines[3].startswith("  > j/Down"), lines
             os.write(master, b"?")
             assert_selected_background(frame(master, b"  Search: "), 80, 15)
             os.write(master, b"\t")
@@ -220,6 +276,12 @@ def main(binary):
             os.write(master, b"/codex\n")
             raw = frame(master, b"Search: codex")
             assert "codex" in "\n".join(screen(raw, 80, 15)[0]), raw
+            before_help = screen(raw, 80, 15)[0]
+            os.write(master, b"?")
+            lines = assert_help_frame(frame(master, b"Esc/q/?: close keys"))
+            assert lines[0] == "  Search: / to search", lines
+            os.write(master, b"q")
+            assert screen(frame(master, b"  Search: codex"), 80, 15)[0] == before_help
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
             lines = assert_selected_background(frame(master, b"  Search: codex"), 110, 15)
             assert "Status" in lines[2] and lines[3].startswith("  ┄"), lines

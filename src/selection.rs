@@ -52,12 +52,128 @@ pub(super) enum Mode {
     Themes,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum HelpContext {
+    Select,
+}
+
+pub(super) struct HelpEntry {
+    pub(super) category: &'static str,
+    pub(super) keys: &'static str,
+    pub(super) meaning: &'static str,
+}
+
+impl HelpContext {
+    pub(super) fn entries(&self) -> &'static [HelpEntry] {
+        match self {
+            Self::Select => &SELECT_KEYS,
+        }
+    }
+}
+
+const SELECT_KEYS: [HelpEntry; 11] = [
+    HelpEntry {
+        category: "Navigation",
+        keys: "j/Down",
+        meaning: "next pane",
+    },
+    HelpEntry {
+        category: "Navigation",
+        keys: "k/Up",
+        meaning: "previous pane",
+    },
+    HelpEntry {
+        category: "Navigation",
+        keys: "h/Left",
+        meaning: "previous tab",
+    },
+    HelpEntry {
+        category: "Navigation",
+        keys: "l/Right",
+        meaning: "next tab",
+    },
+    HelpEntry {
+        category: "Navigation",
+        keys: "Tab/Shift+Tab",
+        meaning: "next/previous workspace",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "Enter",
+        meaning: "focus selected pane",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "/",
+        meaning: "search",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "r",
+        meaning: "reset search",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "t",
+        meaning: "choose theme",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "?",
+        meaning: "show keys",
+    },
+    HelpEntry {
+        category: "Actions",
+        keys: "Esc/q",
+        meaning: "close Crossroads",
+    },
+];
+
+pub(super) struct Help {
+    pub(super) context: HelpContext,
+    pub(super) query: String,
+    pub(super) searching: bool,
+    pub(super) selected: Option<usize>,
+    pub(super) viewport_start: Cell<usize>,
+}
+
+impl Help {
+    fn select() -> Self {
+        Self {
+            context: HelpContext::Select,
+            query: String::new(),
+            searching: false,
+            selected: Some(0),
+            viewport_start: Cell::new(0),
+        }
+    }
+
+    pub(super) fn visible(&self) -> Vec<usize> {
+        self.context
+            .entries()
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                matches_field(entry.keys, &self.query) || matches_field(entry.meaning, &self.query)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub(super) fn selected_index(&self, visible: &[usize]) -> Option<usize> {
+        self.selected
+            .filter(|i| visible.contains(i))
+            .or_else(|| visible.first().copied())
+    }
+}
+
 pub(super) struct Ui {
     pub(super) rows: Vec<Row>,
     pub(super) status_colors: StatusColors,
     pub(super) selected: Option<String>,
     pub(super) query: String,
     pub(super) mode: Mode,
+    pub(super) help: Help,
     pub(super) closed: bool,
     pub(super) width: usize,
     pub(super) popup_size: Option<(usize, usize)>,
@@ -84,6 +200,7 @@ impl Ui {
             selected,
             query: String::new(),
             mode: Mode::Select,
+            help: Help::select(),
             closed: false,
             width: 160,
             popup_size: None,
@@ -195,8 +312,41 @@ impl Ui {
             return None;
         }
         if self.mode == Mode::Help {
-            if matches!(key, Key::Esc | Key::Char('?') | Key::Char('q')) {
-                self.mode = Mode::Select;
+            if self.help.searching {
+                match key {
+                    Key::Enter | Key::Esc => self.help.searching = false,
+                    Key::Backspace => {
+                        self.help.query.pop();
+                    }
+                    Key::Char(c) if !c.is_control() => self.help.query.push(c),
+                    _ => {}
+                }
+            } else {
+                let visible = self.help.visible();
+                match key {
+                    Key::Esc | Key::Char('?') | Key::Char('q') => self.mode = Mode::Select,
+                    Key::Char('/') => self.help.searching = true,
+                    Key::Char('r') => {
+                        self.help.selected =
+                            self.help.selected_index(&visible).or(self.help.selected);
+                        self.help.query.clear();
+                    }
+                    Key::Down | Key::Char('j') | Key::Up | Key::Char('k') => {
+                        if let Some(at) = self
+                            .help
+                            .selected_index(&visible)
+                            .and_then(|i| visible.iter().position(|v| *v == i))
+                        {
+                            let next = if matches!(key, Key::Down | Key::Char('j')) {
+                                (at + 1).min(visible.len() - 1)
+                            } else {
+                                at.saturating_sub(1)
+                            };
+                            self.help.selected = Some(visible[next]);
+                        }
+                    }
+                    _ => {}
+                }
             }
             return None;
         }
@@ -252,7 +402,10 @@ impl Ui {
                 }
             }
             Key::Char('/') => self.mode = Mode::Search,
-            Key::Char('?') => self.mode = Mode::Help,
+            Key::Char('?') => {
+                self.help = Help::select();
+                self.mode = Mode::Help;
+            }
             Key::Char('q') | Key::Esc => self.closed = true,
             Key::Enter => {
                 if let Some(i) = self.selected_index(&visible) {
