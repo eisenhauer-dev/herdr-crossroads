@@ -1,10 +1,12 @@
 use std::cell::Cell;
+use std::path::PathBuf;
 
 #[cfg(unix)]
 use serde_json::Value;
 
 use super::input::Key;
 use super::presentation::{clean, StatusColors};
+use super::theme::{self, Theme, NAMES};
 use super::topology::Row;
 
 pub(super) fn matches_field(field: &str, query: &str) -> bool {
@@ -47,6 +49,7 @@ pub(super) enum Mode {
     Select,
     Search,
     Help,
+    Themes,
 }
 
 pub(super) struct Ui {
@@ -60,12 +63,22 @@ pub(super) struct Ui {
     pub(super) popup_size: Option<(usize, usize)>,
     pub(super) viewport_start: Cell<usize>,
     pub(super) last_selected_at: Cell<Option<usize>>,
+    pub(super) theme_index: usize,
+    pub(super) theme_cursor: usize,
+    pub(super) theme_table_preview: bool,
+    pub(super) theme_error: Option<String>,
+    pub(super) theme_invalid: bool,
+    pub(super) auto_name: &'static str,
+    pub(super) auto_unsupported: Option<String>,
+    pub(super) auto_toast: Option<String>,
+    pub(super) config_dir: Option<PathBuf>,
 }
 
 impl Ui {
     pub(super) fn new(rows: Vec<Row>) -> Self {
         let selected = rows.first().map(|row| row.id.clone());
-        Self {
+        let (auto_name, auto_unsupported) = theme::auto_choice();
+        let mut ui = Self {
             rows,
             status_colors: StatusColors::default(),
             selected,
@@ -76,7 +89,49 @@ impl Ui {
             popup_size: None,
             viewport_start: Cell::new(0),
             last_selected_at: Cell::new(None),
-        }
+            theme_index: 0,
+            theme_cursor: 0,
+            theme_table_preview: false,
+            theme_error: None,
+            theme_invalid: false,
+            auto_name,
+            auto_unsupported: None,
+            auto_toast: None,
+            config_dir: None,
+        };
+        ui.set_auto_choice(auto_name, auto_unsupported);
+        ui
+    }
+
+    pub(super) fn set_auto_choice(&mut self, name: &'static str, unsupported: Option<String>) {
+        self.auto_name = name;
+        self.auto_unsupported = unsupported;
+        self.auto_toast = if self.theme_index == 0 && !self.theme_invalid {
+            self.auto_unsupported
+                .as_ref()
+                .map(|name| format!("Herdr theme {name} not yet supported; using Mocha"))
+        } else {
+            None
+        };
+    }
+
+    pub(super) fn theme_notice(&self) -> Option<&str> {
+        self.theme_error.as_deref().or(self.auto_toast.as_deref())
+    }
+
+    pub(super) fn theme(&self) -> Theme {
+        let name = if self.mode == Mode::Themes {
+            NAMES[self.theme_cursor]
+        } else {
+            NAMES[self.theme_index]
+        };
+        Theme::named(if name == NAMES[0] && self.theme_invalid {
+            "catppuccin"
+        } else if name == NAMES[0] {
+            self.auto_name
+        } else {
+            name
+        })
     }
 
     #[cfg(unix)]
@@ -128,6 +183,8 @@ impl Ui {
     }
 
     pub(super) fn key(&mut self, key: Key) -> Option<String> {
+        self.theme_error = None;
+        self.auto_toast = None;
         if self
             .popup_size
             .is_some_and(|(width, height)| width < 80 || height < 15)
@@ -140,6 +197,33 @@ impl Ui {
         if self.mode == Mode::Help {
             if matches!(key, Key::Esc | Key::Char('?') | Key::Char('q')) {
                 self.mode = Mode::Select;
+            }
+            return None;
+        }
+        if self.mode == Mode::Themes {
+            let previous = self.theme_cursor;
+            match key {
+                Key::Char(' ') => self.theme_table_preview = !self.theme_table_preview,
+                Key::Down | Key::Char('j') => {
+                    self.theme_cursor = (self.theme_cursor + 1).min(NAMES.len() - 1)
+                }
+                Key::Up | Key::Char('k') => self.theme_cursor = self.theme_cursor.saturating_sub(1),
+                Key::Esc => self.mode = Mode::Select,
+                Key::Enter => match theme::save(self.config_dir.as_deref(), self.theme_cursor) {
+                    Ok(()) => {
+                        self.theme_index = self.theme_cursor;
+                        self.theme_invalid = false;
+                        self.mode = Mode::Select;
+                    }
+                    Err(_) => self.theme_error = Some("theme.json save failed; not saved".into()),
+                },
+                _ => {}
+            }
+            if previous != 0 && self.theme_cursor == 0 && !self.theme_invalid {
+                self.auto_toast = self
+                    .auto_unsupported
+                    .as_ref()
+                    .map(|name| format!("Herdr theme {name} not yet supported; using Mocha"));
             }
             return None;
         }
@@ -156,6 +240,17 @@ impl Ui {
         }
         let visible = self.visible();
         match key {
+            Key::Char('t') => {
+                self.theme_cursor = self.theme_index;
+                self.theme_table_preview = false;
+                self.mode = Mode::Themes;
+                if self.theme_cursor == 0 && !self.theme_invalid {
+                    self.auto_toast = self
+                        .auto_unsupported
+                        .as_ref()
+                        .map(|name| format!("Herdr theme {name} not yet supported; using Mocha"));
+                }
+            }
             Key::Char('/') => self.mode = Mode::Search,
             Key::Char('?') => self.mode = Mode::Help,
             Key::Char('q') | Key::Esc => self.closed = true,

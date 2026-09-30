@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 mod input;
 mod presentation;
 mod selection;
+mod theme;
 mod topology;
 mod transport;
 
@@ -38,6 +39,14 @@ pub fn run() -> io::Result<()> {
     };
     let mut ui = Ui::new(snapshot_rows(&executable, width, false)?);
     ui.status_colors = status_colors;
+    let (theme_index, theme_error) = theme::load(config_dir.as_deref().map(Path::new));
+    ui.theme_index = theme_index;
+    ui.theme_invalid = theme_error.is_some();
+    ui.theme_error = theme_error;
+    if ui.theme_invalid || ui.theme_index != 0 {
+        ui.auto_toast = None;
+    }
+    ui.config_dir = config_dir.map(Into::into);
     ui.width = width;
     let terminal = Terminal::enter()?;
     if terminal.0.is_some() {
@@ -237,6 +246,9 @@ mod test_selection;
 #[cfg(test)]
 #[path = "../tests/unit/support.rs"]
 mod test_support;
+#[cfg(test)]
+#[path = "../tests/unit/theme.rs"]
+mod test_theme;
 #[cfg(test)]
 #[path = "../tests/unit/topology.rs"]
 mod test_topology;

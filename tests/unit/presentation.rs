@@ -1,13 +1,51 @@
 use super::test_support::*;
 use crate::input::Key;
 use crate::presentation::{clipped, marked, StatusColors};
-use crate::selection::{Mode, Ui};
+use crate::selection::{Mode, Ui as ProductionUi};
 use crate::topology::{annotate_worktrees, rows};
 use ratatui::{
     buffer::CellWidth,
     style::{Color, Modifier},
 };
 use serde_json::Value;
+
+// These layout assertions predate theme painting. Compare their original ANSI
+// content while the theme frame test checks the actual painted output.
+struct Ui(ProductionUi);
+
+impl Ui {
+    fn new(rows: Vec<crate::topology::Row>) -> Self {
+        let mut state = ProductionUi::new(rows);
+        state.set_auto_choice("catppuccin", None);
+        Self(state)
+    }
+
+    fn terminal_frame(&self, width: usize, height: usize) -> String {
+        let frame = self.0.terminal_frame(width, height);
+        frame
+            .replace("\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m", "")
+            .replace("\x1b[48;2;24;24;37m\x1b[K", "")
+            .replace("\x1b[38;2;205;214;244m", "\x1b[39m")
+    }
+}
+
+impl std::ops::Deref for Ui {
+    type Target = ProductionUi;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Ui {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+fn ui() -> Ui {
+    Ui(super::test_support::ui())
+}
 
 #[test]
 fn marked_distinguishes_generated_from_source_ellipsis() {
@@ -267,6 +305,7 @@ fn search_marks_scrolled_selected_rows_but_not_hidden_pane_or_offscreen_rows() {
 #[test]
 fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state() {
     let mut state = ui();
+    state.theme_index = 3; // Terminal theme retains the four unpainted notice lines.
     state.key(Key::Down);
     state.key(Key::Char('/'));
     for c in "codex".chars() {
@@ -1983,6 +2022,32 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
         let help = state.terminal_frame(width, 16);
         assert_eq!(help.split("\r\n").count(), 16, "{help}");
         assert!(help.ends_with("  Esc/q/?: back"), "{help}");
+    }
+}
+
+#[test]
+fn help_shows_theme_shortcut_without_losing_keys_at_minimum_and_wide_sizes() {
+    let mut state = ui();
+    state.key(Key::Char('?'));
+    assert_eq!(state.mode, Mode::Help);
+    for width in [80, 120] {
+        let frame = state.terminal_frame(width, 15);
+        let lines: Vec<_> = frame.split("\r\n").collect();
+        assert_eq!(lines.len(), 15, "{frame}");
+        assert!(
+            lines.iter().all(|line| line.chars().count() < width),
+            "{frame}"
+        );
+        assert!(
+            frame.contains("j/k: pane  h/l: tab  Tab/Shift+Tab: workspace"),
+            "{frame}"
+        );
+        assert!(
+            frame.contains("Enter: focus  /: search  r: reset"),
+            "{frame}"
+        );
+        assert!(frame.contains("t: themes"), "{frame}");
+        assert!(frame.ends_with("  Esc/q/?: back"), "{frame}");
     }
 }
 
