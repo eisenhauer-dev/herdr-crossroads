@@ -1,6 +1,6 @@
 # Status colors
 
-Crossroads uses static Catppuccin Mocha colors by default. These values may not match a different Herdr theme; Crossroads does not synchronize colors with Herdr's current theme.
+Crossroads uses the selected plugin theme's status colors by default. With Auto (Herdr), it reads a simple saved Herdr theme choice when unambiguous; otherwise it falls back to Catppuccin Mocha. The table shows the Mocha fallback values.
 
 | Status | Default |
 | --- | --- |
@@ -19,4 +19,4 @@ Put an optional `status-colors.json` in the plugin config directory that Herdr i
 }
 ```
 
-Only the five keys in the table are accepted. Values must be strings in `#RRGGBB` form (hexadecimal digits are case-insensitive). Missing keys retain their defaults. With no config directory or no file, all defaults apply; Crossroads never creates or modifies the file. The file is loaded once per popup opening, not on subsequent redraws. Invalid JSON, an unknown key, an invalid color, or a file read error stops startup with an error naming `status-colors.json` rather than silently falling back. These configurable colors apply only to the Status column text in wide layouts and to the status text following ` | ` in Agent/Pane Name in compact layouts. Search matches in workspace, tab, and agent/pane names use a separate fixed accent color (`#b4befe`) and underline. Rows without an agent have no inline status.
+Only the five keys in the table are accepted. Values must be strings in `#RRGGBB` form (hexadecimal digits are case-insensitive). Explicit keys override the selected theme's corresponding status color; missing keys follow the theme. With no config directory or no file, theme colors apply; Crossroads never creates or modifies `status-colors.json`. The file is loaded once per popup opening, not on subsequent redraws. Invalid JSON, an unknown key, an invalid color, or a file read error stops startup with an error naming `status-colors.json` rather than silently falling back. These configurable colors apply only to the Status column text in wide layouts and to the status text following ` | ` in Agent/Pane Name in compact layouts. Search matches in workspace, tab, and agent/pane names are underlined in the theme accent (Mocha keeps its previous `#b4befe` accent). Mocha's ordinary text and panel use `#cdd6f4` and `#181825` respectively; `terminal` alone inherits the terminal's current default text and background colors. Rows without an agent have no inline status.

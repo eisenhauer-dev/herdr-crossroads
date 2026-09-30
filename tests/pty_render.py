@@ -29,10 +29,12 @@ def frame(master, marker):
     return data.decode("utf-8", "replace")
 
 
-def screen(data, width=76, height=12, track_bg=False, track_cursor=False):
+def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False):
     cells = [[" "] * width for _ in range(height)]
     backgrounds = [[False] * width for _ in range(height)]
+    panel_backgrounds = [[False] * width for _ in range(height)]
     selected_bg = False
+    panel_bg = False
     cursor_visible = True
     x = y = 0
     wraps = 0
@@ -45,7 +47,7 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False):
                 end += 1
             assert end < len(data), "incomplete ANSI escape"
             command = data[end]
-            assert command in "HJmhl", command
+            assert command in "HJKmhl", command
             params = data[i + 2:end]
             if command == "H":
                 if params:
@@ -58,12 +60,23 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False):
                 assert params == "", params
                 cells = [[" "] * width for _ in range(height)]
                 backgrounds = [[False] * width for _ in range(height)]
+                panel_backgrounds = [[False] * width for _ in range(height)]
+            elif command == "K":
+                assert params == "", params
+                for at in range(x, width):
+                    cells[y][at] = " "
+                    backgrounds[y][at] = False
+                    panel_backgrounds[y][at] = panel_bg
             elif command == "m":
                 sgr = params
                 if sgr == "48;5;236":
                     selected_bg = True
-                elif sgr in ("0", "49"):
+                elif sgr in ("0", "49", "48;2;24;24;37"):
                     selected_bg = False
+                if sgr in ("0", "49", "48;5;236"):
+                    panel_bg = False
+                elif sgr == "48;2;24;24;37":
+                    panel_bg = True
             else:
                 assert params == "?25", (params, command)
                 cursor_visible = command == "h"
@@ -82,11 +95,14 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False):
             if char_width:
                 cells[y][x] = c
                 backgrounds[y][x] = selected_bg
+                panel_backgrounds[y][x] = panel_bg
                 x += char_width
         i += 1
     result = (["".join(line).rstrip() for line in cells], wraps)
     if track_bg:
         return (*result, backgrounds)
+    if track_panel_bg:
+        return (*result, panel_backgrounds)
     return (*result, (cursor_visible, x, y)) if track_cursor else result
 
 
@@ -102,6 +118,13 @@ def assert_selected_background(raw, width, height):
     painted = [x for x, enabled in enumerate(backgrounds[selected[0]]) if enabled]
     assert painted == border, (width, selected, painted, border)
     assert all(not any(row) for at, row in enumerate(backgrounds) if at != selected[0]), backgrounds
+    return lines
+
+
+def assert_panel_background(raw, width, height):
+    lines, wraps, backgrounds = screen(raw, width, height, track_panel_bg=True)
+    assert wraps == 0, (width, height, wraps, lines)
+    assert all(all(row) for row in backgrounds), (width, height, [at for at, row in enumerate(backgrounds) if not all(row)], lines)
     return lines
 
 
@@ -129,6 +152,9 @@ def main(binary):
         env = dict(os.environ, HERDR_BIN_PATH=str(fake), HERDR_PANE_ID="p-self")
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)
         env.pop("HERDR_SOCKET_PATH", None)
+        env["HERDR_CONFIG_PATH"] = str(directory / "missing-herdr-config.toml")
+        env["XDG_CONFIG_HOME"] = str(directory)
+        env["HOME"] = str(directory)
         child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
         os.close(slave)
         try:
@@ -137,10 +163,10 @@ def main(binary):
             _, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
             assert wraps == 0 and cursor[0] is False, cursor
             lines = assert_selected_background(raw, 80, 15)
-            selected_raw = next(line for line in raw.splitlines() if line.startswith("  \x1b[48;5;236m> "))
-            assert "Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[39m" in selected_raw, raw
-            assert selected_raw.endswith("\x1b[0m"), selected_raw
-            assert "codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m" in raw, raw
+            selected_raw = next(line for line in raw.splitlines() if "  \x1b[48;5;236m> " in line)
+            assert "Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[38;2;205;214;244m" in selected_raw, raw
+            assert selected_raw.endswith("\x1b[0m\x1b[48;2;24;24;37m\x1b[K"), selected_raw
+            assert "codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[38;2;205;214;244m" in raw, raw
             assert lines[0] == "  Search: / to search" and not any("Herdr Crossroads" in line for line in lines), lines
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[12].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
@@ -152,6 +178,13 @@ def main(binary):
             assert not any(pane_id in "\n".join(lines) for pane_id in ("p-b", "p-a", "p-other")), lines
             assert not any("Filter:" in line for line in lines), lines
             assert lines[13] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace" and lines[14] == "  Enter: focus · Esc/q: exit · ?: keys", lines
+            os.write(master, b"?")
+            raw = frame(master, b"Esc/q/?: back")
+            lines = assert_panel_background(raw, 80, 15)
+            assert lines[1].startswith("j/k: pane") and lines[2].startswith("Enter: focus"), lines
+            assert all(not line for line in lines[3:-1]) and lines[-1] == "  Esc/q/?: back", lines
+            os.write(master, b"?")
+            assert_selected_background(frame(master, b"  Search: "), 80, 15)
             os.write(master, b"\t")
             lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
             assert any(line.startswith("  > ") and "codex" in line for line in lines), lines
@@ -195,6 +228,7 @@ def main(binary):
             for width, height in ((79, 15), (80, 14), (78, 14), (67, 12)):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 raw = frame(master, NOTICE_END)
+                assert_panel_background(raw, width, height)
                 lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
                 assert wraps == 0 and cursor[0] is False, (lines, wraps, cursor)
                 assert [line for line in lines if line] == notice_lines(width, height), lines
@@ -220,6 +254,41 @@ def main(binary):
                 child.kill()
                 child.wait()
             os.close(master)
+
+        config = directory / "plugin"
+        config.mkdir()
+        (config / "theme.json").write_text('{"theme":"unknown"}')
+        for width in (80, 120):
+            master, slave = pty.openpty()
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
+            notice_env = dict(env, HERDR_PLUGIN_CONFIG_DIR=str(config))
+            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=notice_env)
+            os.close(slave)
+            try:
+                raw = frame(master, b"\x1b[?25l")
+                lines, wraps = screen(raw, width, 15)
+                notice_row = 12 if width < 110 else 13
+                assert wraps == 0 and "ERROR" in lines[notice_row] and "theme.json invalid" in lines[notice_row], lines
+                assert "\x1b[1m\x1b[38;2;243;139;168mERROR" in raw, raw
+                if width < 110:
+                    assert lines[13] == "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace", lines
+                assert lines[14] == ("  Enter: focus · Esc/q: exit · ?: keys" if width < 110 else "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit · ?: keys"), lines
+                os.write(master, b"t")
+                raw = frame(master, b"\x1b[?25l")
+                lines, wraps = screen(raw, width, 15)
+                assert wraps == 0 and "ERROR" not in "\n".join(lines), lines
+                assert "j/k or ↑/↓: theme · Space: table" in lines[13], lines
+                assert "Enter: save · Esc: cancel" in lines[14], lines
+                os.write(master, b"\x1b")
+                frame(master, b"\x1b[?25l")
+                os.write(master, b"q")
+                frame(master, b"\x1b[?25h")
+                assert child.wait(timeout=3) == 0
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
+                os.close(master)
 
         for key in (b"\n", b"\x1b", b"q"):
             master, slave = pty.openpty()

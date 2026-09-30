@@ -12,6 +12,7 @@ use ratatui::{
 use serde_json::Value;
 
 use super::selection::{match_positions, matches_field, Mode, Ui};
+use super::theme::Theme;
 
 pub(super) fn clean(s: &str) -> String {
     s.chars()
@@ -49,6 +50,7 @@ pub(super) struct StatusColors {
     done: Color,
     pub(super) idle: Color,
     pub(super) unknown: Color,
+    overrides: [bool; 5],
 }
 
 impl Default for StatusColors {
@@ -59,6 +61,7 @@ impl Default for StatusColors {
             done: Color::Rgb(148, 226, 213),
             idle: Color::Rgb(166, 227, 161),
             unknown: Color::Rgb(108, 112, 134),
+            overrides: [false; 5],
         }
     }
 }
@@ -71,6 +74,21 @@ impl StatusColors {
             "done" => self.done,
             "idle" => self.idle,
             _ => self.unknown,
+        }
+    }
+
+    pub(super) fn themed(&self, status: &str, theme: Theme) -> Color {
+        let (index, color) = match status {
+            "working" => (0, theme.working),
+            "blocked" => (1, theme.blocked),
+            "done" => (2, theme.done),
+            "idle" => (3, theme.idle),
+            _ => (4, theme.unknown),
+        };
+        if self.overrides[index] {
+            self.for_status(status)
+        } else {
+            color
         }
     }
 
@@ -127,12 +145,34 @@ impl StatusColors {
                 u8::from_str_radix(&hex[3..5], 16).unwrap(),
                 u8::from_str_radix(&hex[5..7], 16).unwrap(),
             );
+            colors.overrides[match key.as_str() {
+                "working" => 0,
+                "blocked" => 1,
+                "done" => 2,
+                "idle" => 3,
+                _ => 4,
+            }] = true;
         }
         Ok(colors)
     }
 }
 
+#[cfg(test)]
 pub(super) fn marked(text: &str, limit: usize, positions: &[usize], accent: bool) -> Line<'static> {
+    marked_color(
+        text,
+        limit,
+        positions,
+        accent.then_some(Color::Rgb(180, 190, 254)),
+    )
+}
+
+pub(super) fn marked_color(
+    text: &str,
+    limit: usize,
+    positions: &[usize],
+    accent: Option<Color>,
+) -> Line<'static> {
     let clipped = clipped(text, limit);
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut index = 0;
@@ -147,8 +187,8 @@ pub(super) fn marked(text: &str, limit: usize, positions: &[usize], accent: bool
             && (index..index + count).any(|position| positions.contains(&position));
         let style = if matched {
             let style = Style::default().add_modifier(Modifier::UNDERLINED);
-            if accent {
-                style.fg(Color::Rgb(180, 190, 254))
+            if let Some(color) = accent {
+                style.fg(color)
             } else {
                 style
             }
@@ -166,6 +206,26 @@ pub(super) fn marked(text: &str, limit: usize, positions: &[usize], accent: bool
 }
 
 impl Ui {
+    fn notice_line(&self, width: usize, ansi: bool) -> Option<String> {
+        let message = self.theme_notice()?;
+        let error = self.theme_error.is_some();
+        let text = clipped(
+            &format!("{} · {message}", if error { "ERROR" } else { "INFO" }),
+            width.saturating_sub(3),
+        );
+        if !ansi {
+            return Some(format!("  {text}"));
+        }
+        let theme = self.theme();
+        Some(format!(
+            "  {}{}{text}{}{}",
+            if error { "\x1b[1m" } else { "" },
+            sgr_fg(if error { theme.blocked } else { theme.dim }),
+            if error { "\x1b[22m" } else { "" },
+            sgr_fg(theme.text)
+        ))
+    }
+
     pub(super) fn frame(&self) -> String {
         self.frame_width(self.width)
     }
@@ -175,8 +235,8 @@ impl Ui {
     }
 
     pub(super) fn terminal_frame(&self, width: usize, height: usize) -> String {
-        if self.popup_size.is_some() && (width < 80 || height < 15) {
-            return [
+        let mut lines = if self.popup_size.is_some() && (width < 80 || height < 15) {
+            [
                 "  Crossroads needs minimum content size 80x15.".to_owned(),
                 format!("  Your content size is: {width}x{height}."),
                 "  Set larger size in herdr plugin manifest.".to_owned(),
@@ -186,12 +246,40 @@ impl Ui {
             .take(height)
             .map(|line| clipped(&line, width.saturating_sub(1)))
             .collect::<Vec<_>>()
-            .join("\r\n");
+        } else {
+            self.layout(width, height, true)
+        };
+        let theme = self.theme();
+        if theme.background == Color::Reset {
+            return lines.join("\r\n");
         }
-        self.layout(width, height, true).join("\r\n")
+        lines.resize(height, String::new());
+        lines
+            .into_iter()
+            .map(|line| {
+                format!(
+                    "{}{}{line}{}\x1b[K",
+                    sgr_bg(theme.background),
+                    sgr_fg(theme.text),
+                    sgr_bg(theme.background)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n")
     }
 
     pub(super) fn layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
+        if self.mode == Mode::Themes && !self.theme_table_preview {
+            return self.theme_layout(width, height, ansi);
+        }
+        let preview = self.mode == Mode::Themes;
+        let theme = self.theme();
+        let legacy = theme == Theme::named("catppuccin");
+        let accent = if legacy {
+            Color::Rgb(180, 190, 254)
+        } else {
+            theme.accent
+        };
         let limit = width.saturating_sub(1);
         let table_text_limit = width.saturating_sub(4);
         let aligned = |text: &str| format!("  {}", clipped(text, table_text_limit));
@@ -203,6 +291,13 @@ impl Ui {
         } else {
             format!("Search: {}", self.query)
         };
+        if preview {
+            lines.push(aligned(&format!(
+                "Themes · saved: {} · preview: {}",
+                super::theme::NAMES[self.theme_index],
+                super::theme::NAMES[self.theme_cursor]
+            )));
+        }
         lines.push(aligned(&search));
         if self.mode == Mode::Help {
             lines.push(clipped(
@@ -210,7 +305,7 @@ impl Ui {
                 limit,
             ));
             lines.push(clipped(
-                "Enter: focus  /: search  r: reset  Esc/q/?: back",
+                "Enter: focus  /: search  r: reset  t: themes  Esc/q/?: back",
                 limit,
             ));
         } else {
@@ -220,13 +315,18 @@ impl Ui {
             let table_margin = "  ";
             let short = ansi && height <= 6;
             let header_rule = roomy && !short && height >= 8;
-            let footer_rows = if self.mode == Mode::Select && !roomy {
+            let footer_rows = if preview {
+                2
+            } else if self.mode == Mode::Select && !roomy {
                 2
             } else {
                 1
-            };
+            } + usize::from(self.theme_notice().is_some());
             let available = height.saturating_sub(
-                1 + footer_rows + if short { 1 } else { 3 } + usize::from(header_rule),
+                1 + usize::from(preview)
+                    + footer_rows
+                    + if short { 1 } else { 3 }
+                    + usize::from(header_rule),
             );
             let selected_at = visible.iter().position(|i| Some(*i) == selected);
             let span = |start: usize, end: usize| {
@@ -384,17 +484,17 @@ impl Ui {
                 };
                 let mut cells = Vec::new();
                 if context {
-                    cells.push(marked(
+                    cells.push(marked_color(
                         workspace,
                         workspace_width,
                         &match_positions(workspace, &self.query),
-                        true,
+                        Some(accent),
                     ));
-                    cells.push(marked(
+                    cells.push(marked_color(
                         tab,
                         tab_width,
                         &match_positions(tab, &self.query),
-                        true,
+                        Some(accent),
                     ));
                 }
                 let mut name_positions = if row.agent.is_empty() {
@@ -425,24 +525,30 @@ impl Ui {
                     } else {
                         name.clone()
                     };
-                    let mut spans = marked(&prefix, prefix_width, &name_positions, true).spans;
+                    let mut spans =
+                        marked_color(&prefix, prefix_width, &name_positions, Some(accent)).spans;
                     spans.extend([
                         Span::raw(" "),
                         Span::styled("|", Style::default().add_modifier(Modifier::DIM)),
                         Span::raw(" "),
                         Span::styled(
                             row.status.clone(),
-                            Style::default().fg(self.status_colors.for_status(&row.status)),
+                            Style::default().fg(self.status_colors.themed(&row.status, theme)),
                         ),
                     ]);
                     cells.push(Line::from(spans));
                 } else {
-                    cells.push(marked(&name, name_width, &name_positions, true));
+                    cells.push(marked_color(
+                        &name,
+                        name_width,
+                        &name_positions,
+                        Some(accent),
+                    ));
                 }
                 if separate_status {
                     cells.push(Line::from(Span::styled(
                         clipped(&row.status, status_width),
-                        Style::default().fg(self.status_colors.for_status(&row.status)),
+                        Style::default().fg(self.status_colors.themed(&row.status, theme)),
                     )));
                 }
                 table_rows.push(TableRow::new(cells));
@@ -460,7 +566,7 @@ impl Ui {
                 table_rows.push(TableRow::new(cells));
             }
             let table_height = if ansi {
-                height.saturating_sub(1 + footer_rows)
+                height.saturating_sub(1 + usize::from(preview) + footer_rows)
             } else {
                 table_rows.len() + 3
             };
@@ -494,7 +600,11 @@ impl Ui {
                         Borders::TOP | Borders::BOTTOM
                     }))
                     .column_spacing(1)
-                    .row_highlight_style(Style::default().bg(Color::Indexed(236)))
+                    .row_highlight_style(Style::default().bg(if legacy {
+                        Color::Indexed(236)
+                    } else {
+                        theme.selection
+                    }))
                     .highlight_symbol("> ");
                 if !short {
                     table = table.header(TableRow::new(headers));
@@ -526,13 +636,12 @@ impl Ui {
                             break;
                         }
                         if ansi && cell.fg != foreground.unwrap_or(Color::Reset) {
-                            if let Color::Rgb(r, g, b) = cell.fg {
-                                content.push_str(&format!("\x1b[38;2;{r};{g};{b}m"));
-                                foreground = Some(cell.fg);
-                            } else if foreground.is_some() {
-                                content.push_str("\x1b[39m");
-                                foreground = None;
-                            }
+                            content.push_str(&sgr_fg(if cell.fg == Color::Reset {
+                                theme.text
+                            } else {
+                                cell.fg
+                            }));
+                            foreground = (cell.fg != Color::Reset).then_some(cell.fg);
                         }
                         if ansi && cell.modifier.contains(Modifier::DIM) != dim {
                             dim = !dim;
@@ -546,7 +655,7 @@ impl Ui {
                         x += cell.cell_width().max(1);
                     }
                     if ansi && foreground.is_some() {
-                        content.push_str("\x1b[39m");
+                        content.push_str(&sgr_fg(theme.text));
                     }
                     if ansi && dim {
                         content.push_str("\x1b[22m");
@@ -565,7 +674,14 @@ impl Ui {
                             "┄".repeat(table_limit.saturating_sub(if inset { 4 } else { 0 }));
                         let margin = if inset { "      " } else { table_margin };
                         if ansi {
-                            format!("{margin}\x1b[2m{rule}\x1b[22m")
+                            format!(
+                                "{margin}{}\x1b[2m{rule}\x1b[22m",
+                                if legacy {
+                                    String::new()
+                                } else {
+                                    sgr_fg(theme.dim)
+                                }
+                            )
                         } else {
                             format!("{margin}{rule}")
                         }
@@ -574,7 +690,12 @@ impl Ui {
                     };
                     if selected_line {
                         lines.push(format!(
-                            "{table_margin}\x1b[48;5;236m{}\x1b[0m",
+                            "{table_margin}{}{}\x1b[0m",
+                            if legacy {
+                                "\x1b[48;5;236m".to_owned()
+                            } else {
+                                sgr_bg(theme.selection)
+                            },
                             &content[table_margin.len()..]
                         ));
                     } else {
@@ -582,6 +703,19 @@ impl Ui {
                     }
                 }
             }
+        }
+        if preview {
+            let footer_rows = 2 + usize::from(self.theme_notice().is_some());
+            if ansi {
+                lines.truncate(height.saturating_sub(footer_rows));
+                lines.resize(height.saturating_sub(footer_rows), String::new());
+            }
+            if let Some(notice) = self.notice_line(width, ansi) {
+                lines.push(notice);
+            }
+            lines.push(aligned("j/k or ↑/↓: theme · Space: list"));
+            lines.push(aligned("Enter: save · Esc: cancel"));
+            return lines;
         }
         let footer = if self.mode == Mode::Help {
             "Esc/q/?: back"
@@ -594,21 +728,100 @@ impl Ui {
         };
         let compact_select = self.mode == Mode::Select && width < 110;
         if ansi {
-            let body_height = height.saturating_sub(if compact_select { 2 } else { 1 });
+            let body_height = height.saturating_sub(
+                if compact_select { 2 } else { 1 } + usize::from(self.theme_notice().is_some()),
+            );
             lines.truncate(body_height);
             lines.resize(body_height, String::new());
         }
         if !ansi || height > 0 {
             if self.mode == Mode::Select {
+                if let Some(notice) = self.notice_line(width, ansi) {
+                    lines.push(notice);
+                }
                 if compact_select && (!ansi || height > 1) {
                     lines.push(aligned("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
                 }
                 lines.push(aligned(&format!("{footer} · ?: keys")));
             } else {
+                if let Some(notice) = self.notice_line(width, ansi) {
+                    lines.push(notice);
+                }
                 lines.push(aligned(footer));
             }
         }
         lines
+    }
+
+    fn theme_layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
+        let limit = width.saturating_sub(1);
+        let aligned = |text: &str| format!("  {}", clipped(text, limit.saturating_sub(2)));
+        let names = &super::theme::NAMES;
+        let mut lines = vec![aligned(&format!(
+            "Themes · selected: {} · preview: {}",
+            names[self.theme_index], names[self.theme_cursor]
+        ))];
+        let available = if ansi {
+            height
+                .saturating_sub(3 + usize::from(self.theme_notice().is_some()))
+                .max(1)
+        } else {
+            names.len()
+        };
+        let start = self
+            .theme_cursor
+            .saturating_sub(available / 2)
+            .min(names.len().saturating_sub(available));
+        for (index, name) in names.iter().enumerate().skip(start).take(available) {
+            let line = aligned(&format!(
+                "{} {}{}",
+                if index == self.theme_cursor { ">" } else { " " },
+                name,
+                if index == self.theme_index {
+                    " (saved)"
+                } else {
+                    ""
+                }
+            ));
+            lines.push(if ansi && index == self.theme_cursor {
+                format!("{}{}\x1b[0m", sgr_bg(self.theme().selection), line)
+            } else {
+                line
+            });
+        }
+        if ansi {
+            lines.truncate(height.saturating_sub(2 + usize::from(self.theme_notice().is_some())));
+            lines.resize(
+                height.saturating_sub(2 + usize::from(self.theme_notice().is_some())),
+                String::new(),
+            );
+        }
+        if let Some(notice) = self.notice_line(width, ansi) {
+            lines.push(notice);
+        }
+        lines.push(aligned("j/k or ↑/↓: theme · Space: table"));
+        lines.push(aligned("Enter: save · Esc: cancel"));
+        lines
+    }
+}
+
+fn sgr_fg(color: Color) -> String {
+    match color {
+        Color::Rgb(r, g, b) => format!("\x1b[38;2;{r};{g};{b}m"),
+        Color::Blue => "\x1b[34m".into(),
+        Color::Gray => "\x1b[37m".into(),
+        Color::Green => "\x1b[32m".into(),
+        Color::Yellow => "\x1b[33m".into(),
+        Color::LightRed => "\x1b[91m".into(),
+        Color::Cyan => "\x1b[36m".into(),
+        _ => "\x1b[39m".into(),
+    }
+}
+
+fn sgr_bg(color: Color) -> String {
+    match color {
+        Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
+        _ => "\x1b[49;7m".into(),
     }
 }
 
@@ -684,9 +897,22 @@ pub(super) fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
     if terminal {
         let (width, height) = ui.popup_size.expect("interactive terminal size");
         let frame = ui.terminal_frame(width, height);
-        write!(out, "\x1b[H\x1b[J{frame}")?;
+        if ui.theme().background != Color::Reset {
+            write!(out, "\x1b[H\x1b[J{frame}")?;
+            write!(out, "\x1b[0m")?;
+        } else {
+            write!(out, "\x1b[H\x1b[J")?;
+            for (index, line) in frame.split("\r\n").enumerate() {
+                if index > 0 {
+                    write!(out, "\r\n")?;
+                }
+                write!(out, "{}{line}", sgr_fg(ui.theme().text))?;
+            }
+            write!(out, "\x1b[0m")?;
+        }
         if ui.mode == Mode::Search && width >= 80 && height >= 15 {
-            let x = frame.split("\r\n").next().unwrap_or("").cell_width() as usize;
+            // Measure the unstyled line: themed frame prefixes contain ANSI bytes.
+            let x = ui.layout(width, height, true)[0].cell_width() as usize;
             write!(
                 out,
                 "\x1b[1;{}H\x1b[?25h",

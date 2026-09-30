@@ -4,7 +4,9 @@ use std::io;
 
 pub(super) const SNAPSHOT: &str = include_str!("../fixtures/topology.json");
 pub(super) fn ui() -> Ui {
-    Ui::new(rows(SNAPSHOT, Some("p-self"), 160).unwrap())
+    let mut state = Ui::new(rows(SNAPSHOT, Some("p-self"), 160).unwrap());
+    state.set_auto_choice("catppuccin", None);
+    state
 }
 
 pub(super) fn without_match_marks(frame: &str) -> String {
@@ -30,5 +32,7 @@ pub(super) fn selected_prefix(line: &str) -> bool {
 }
 
 pub(super) fn render(response: &str, own_pane: Option<&str>, width: usize) -> io::Result<String> {
-    Ok(Ui::new(rows(response, own_pane, width)?).frame_width(width))
+    let mut state = Ui::new(rows(response, own_pane, width)?);
+    state.set_auto_choice("catppuccin", None);
+    Ok(state.frame_width(width))
 }
