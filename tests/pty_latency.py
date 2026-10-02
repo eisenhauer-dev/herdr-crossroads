@@ -54,7 +54,11 @@ def main(binary):
                        CROSSROADS_TEST_LOG=str(directory / "calls.log"),
                        CROSSROADS_TEST_SNAPSHOT=str(directory / "snapshot.json"),
                        HERDR_PANE_ID="not-present")
+            env.pop("HERDR_PLUGIN_CONFIG_DIR", None)
             env.pop("HERDR_SOCKET_PATH", None)
+            env["HERDR_CONFIG_PATH"] = str(directory / "missing-herdr-config.toml")
+            env["XDG_CONFIG_HOME"] = str(directory)
+            env["HOME"] = str(directory)
             child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             os.close(slave)
             slave = -1

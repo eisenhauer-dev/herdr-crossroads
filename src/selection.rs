@@ -168,8 +168,16 @@ pub(super) struct Ui {
 
 impl Ui {
     pub(super) fn new(rows: Vec<Row>) -> Self {
-        let selected = rows.first().map(|row| row.id.clone());
         let (auto_name, auto_unsupported) = theme::auto_choice();
+        Self::with_theme_choice(rows, auto_name, auto_unsupported)
+    }
+
+    pub(super) fn with_theme_choice(
+        rows: Vec<Row>,
+        auto_name: &'static str,
+        auto_unsupported: Option<String>,
+    ) -> Self {
+        let selected = rows.first().map(|row| row.id.clone());
         let mut ui = Self {
             keymap: Keymap::default(),
             keymap_errors: Vec::new(),

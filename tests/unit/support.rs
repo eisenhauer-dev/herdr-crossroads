@@ -4,9 +4,29 @@ use std::io;
 
 pub(super) const SNAPSHOT: &str = include_str!("../fixtures/topology.json");
 pub(super) fn ui() -> Ui {
-    let mut state = Ui::new(rows(SNAPSHOT, Some("p-self"), 160).unwrap());
-    state.set_auto_choice("catppuccin", None);
-    state
+    Ui::with_theme_choice(
+        rows(SNAPSHOT, Some("p-self"), 160).unwrap(),
+        "catppuccin",
+        None,
+    )
+}
+
+#[test]
+fn explicit_theme_choice_initializes_without_environment_resolution() {
+    let state = Ui::with_theme_choice(
+        rows(SNAPSHOT, Some("p-self"), 160).unwrap(),
+        "dracula",
+        None,
+    );
+    assert_eq!(state.auto_name, "dracula");
+    assert_eq!(state.selected.as_deref(), Some("p-b"));
+    assert!(state.theme_notice().is_none());
+    let unsupported = Ui::with_theme_choice(Vec::new(), "catppuccin", Some("custom".into()));
+    assert_eq!(unsupported.auto_unsupported.as_deref(), Some("custom"));
+    assert_eq!(
+        unsupported.theme_notice(),
+        Some("Herdr theme custom not yet supported; using Mocha")
+    );
 }
 
 pub(super) fn without_match_marks(frame: &str) -> String {
@@ -32,7 +52,6 @@ pub(super) fn selected_prefix(line: &str) -> bool {
 }
 
 pub(super) fn render(response: &str, own_pane: Option<&str>, width: usize) -> io::Result<String> {
-    let mut state = Ui::new(rows(response, own_pane, width)?);
-    state.set_auto_choice("catppuccin", None);
+    let state = Ui::with_theme_choice(rows(response, own_pane, width)?, "catppuccin", None);
     Ok(state.frame_width(width))
 }

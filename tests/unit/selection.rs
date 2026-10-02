@@ -553,7 +553,11 @@ fn saving_from_table_preview_keeps_pane_focus_and_reopens_in_list() {
 fn duplicate_visible_names_still_focus_selected_stable_pane_id() {
     let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
     snapshot["result"]["snapshot"]["panes"][3]["label"] = Value::from("Claude");
-    let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 76).unwrap());
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-self"), 76).unwrap(),
+        "catppuccin",
+        None,
+    );
     let frame = state.terminal_frame(76, 12);
     assert_eq!(frame.matches("Claude").count(), 2, "{frame}");
     assert!(!frame.contains("p-b") && !frame.contains("p-a"), "{frame}");
@@ -609,7 +613,11 @@ fn status_metadata_cannot_rename_filtered_agent_or_redirect_focus() {
             .as_array_mut()
             .unwrap()
             .push(serde_json::json!({"pane_id":"p-a","display_agent":"Claude Extra","agent_status":"idle"}));
-    let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 160).unwrap());
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-self"), 160).unwrap(),
+        "catppuccin",
+        None,
+    );
     state.query = "Claude".into();
     let visible_ids = |state: &Ui| {
         state
@@ -680,7 +688,11 @@ fn workspace_jumps_skip_hidden_blocks_and_stop_at_both_ends() {
     data["panes"].as_array_mut().unwrap().push(
             serde_json::json!({"pane_id":"p-third","workspace_id":"w3","tab_id":"t4","label":"Third pane"}),
         );
-    let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 150).unwrap());
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-self"), 150).unwrap(),
+        "catppuccin",
+        None,
+    );
     state.key(Key::BackTab);
     assert_eq!(state.selected.as_deref(), Some("p-b"));
     state.key(Key::Tab);
@@ -835,7 +847,7 @@ fn arrow_parser_and_empty_state() {
     assert!(matches!(keys.feed(b'B'), Some(Key::Down)));
     assert!(keys.feed(27).is_none());
     assert!(matches!(keys.flush(), Some(Key::Esc)));
-    let empty = Ui::new(Vec::new());
+    let empty = Ui::with_theme_choice(Vec::new(), "catppuccin", None);
     assert!(empty.frame().contains("No matching panes"));
 }
 
@@ -877,7 +889,11 @@ fn first_remaining_row_shows_its_workspace_and_tab_context() {
     snapshot["result"]["snapshot"]["workspaces"][1]["label"] = Value::from("Workshop");
     snapshot["result"]["snapshot"]["tabs"][1]["label"] = Value::from("Backend");
     snapshot["result"]["snapshot"]["panes"][3]["label"] = Value::from("Needle");
-    let mut state = Ui::new(rows(&snapshot.to_string(), Some("p-self"), 160).unwrap());
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-self"), 160).unwrap(),
+        "catppuccin",
+        None,
+    );
     state.query = "Needle".into();
     let frame = state.frame();
     let lines: Vec<_> = frame.lines().collect();

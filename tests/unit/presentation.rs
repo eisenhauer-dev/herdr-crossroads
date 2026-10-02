@@ -15,9 +15,7 @@ struct Ui(ProductionUi);
 
 impl Ui {
     fn new(rows: Vec<crate::topology::Row>) -> Self {
-        let mut state = ProductionUi::new(rows);
-        state.set_auto_choice("catppuccin", None);
-        Self(state)
+        Self(ProductionUi::with_theme_choice(rows, "catppuccin", None))
     }
 
     fn terminal_frame(&self, width: usize, height: usize) -> String {

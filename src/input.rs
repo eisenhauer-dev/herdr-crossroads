@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
+use unicode_general_category::{get_general_category, GeneralCategory};
 
 #[cfg(unix)]
 use serde_json::Value;
@@ -44,7 +45,23 @@ impl Key {
             return text
                 .chars()
                 .next()
-                .filter(|c| !c.is_control())
+                .filter(|c| {
+                    *c == ' '
+                        || !matches!(
+                            get_general_category(*c),
+                            GeneralCategory::NonspacingMark
+                                | GeneralCategory::SpacingMark
+                                | GeneralCategory::EnclosingMark
+                                | GeneralCategory::Control
+                                | GeneralCategory::Format
+                                | GeneralCategory::Surrogate
+                                | GeneralCategory::PrivateUse
+                                | GeneralCategory::Unassigned
+                                | GeneralCategory::SpaceSeparator
+                                | GeneralCategory::LineSeparator
+                                | GeneralCategory::ParagraphSeparator
+                        )
+                })
                 .map(Self::Char);
         }
         let plain = match text {
