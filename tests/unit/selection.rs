@@ -5,6 +5,56 @@ use crate::topology::rows;
 use serde_json::Value;
 
 #[test]
+fn a10c_alt_text_is_ignored_in_both_searches() {
+    for help in [false, true] {
+        let mut state = ui();
+        if help {
+            state.key(Key::Char('?'));
+        }
+        state.key(Key::Char('/'));
+        let mut keys = Keys::new();
+        for byte in b"\x1bx" {
+            if let Some(key) = keys.feed(*byte) {
+                state.key(key);
+            }
+        }
+        assert!(
+            if help {
+                state.help.searching && state.help.query.is_empty()
+            } else {
+                state.mode == Mode::Search && state.query.is_empty()
+            },
+            "Alt+x must be ignored, not Esc or text"
+        );
+    }
+}
+
+#[test]
+fn a10c_ctrl_j_and_h_are_not_search_enter_or_backspace() {
+    for help in [false, true] {
+        let mut state = ui();
+        if help {
+            state.key(Key::Char('?'));
+        }
+        state.key(Key::Char('/'));
+        state.key(Key::Char('x'));
+        let mut keys = Keys::new();
+        for byte in [10, 8] {
+            if let Some(key) = keys.feed(byte) {
+                state.key(key);
+            }
+        }
+        if help {
+            assert!(state.help.searching, "Ctrl+j must not end help search");
+            assert_eq!(state.help.query, "x");
+        } else {
+            assert_eq!(state.mode, Mode::Search, "Ctrl+j must not end pane search");
+            assert_eq!(state.query, "x");
+        }
+    }
+}
+
+#[test]
 fn help_has_independent_search_and_fixed_table_chrome() {
     let mut state = ui();
     state.query = "Claude".into();
@@ -38,19 +88,19 @@ fn help_has_independent_search_and_fixed_table_chrome() {
 fn help_filter_matches_columns_independently_in_original_order() {
     let mut state = ui();
     state.key(Key::Char('?'));
-    assert_eq!(state.help.context, crate::selection::HelpContext::Select);
-    let entries = state.help.context.entries();
+    assert_eq!(state.mode, Mode::Help);
+    let entries = &state.help.entries;
     assert_eq!(
         entries
             .iter()
-            .map(|e| (e.keys, e.meaning))
+            .map(|e| (e.keys.as_str(), e.meaning))
             .collect::<Vec<_>>(),
         vec![
-            ("j/Down", "next pane"),
-            ("k/Up", "previous pane"),
-            ("h/Left", "previous tab"),
-            ("l/Right", "next tab"),
-            ("Tab/Shift+Tab", "next/previous workspace"),
+            ("j/↓", "next pane"),
+            ("k/↑", "previous pane"),
+            ("h/←", "previous tab"),
+            ("l/→", "next tab"),
+            ("→ Tab | ← Shift+Tab", "next/previous workspace"),
             ("Enter", "focus selected pane"),
             ("/", "search"),
             ("r", "reset search"),
@@ -60,7 +110,7 @@ fn help_filter_matches_columns_independently_in_original_order() {
         ]
     );
     for (query, expected) in [
-        ("DN", vec![0, 5]),
+        ("DN", vec![5]),
         ("PRVP", vec![1, 4]),
         ("search", vec![6, 7]),
         ("jnext", vec![]),
@@ -89,7 +139,7 @@ fn help_filter_matches_columns_independently_in_original_order() {
 
 #[test]
 fn help_search_input_reset_reopen_and_close_preserve_select_state() {
-    for close in [Key::Esc, Key::Char('q'), Key::Char('?')] {
+    for close in [Key::Esc, Key::Char('q')] {
         let mut state = ui();
         state.popup_size = Some((80, 15));
         state.query = "Claude".into();
@@ -118,7 +168,7 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
         assert!(state.help.searching && !state.closed);
         let input = state.frame_width(80);
         assert!(input.contains("Enter/Esc: return to keys") && input.contains("Backspace: erase"));
-        assert!(!input.contains("Esc/q/?: close keys"));
+        assert!(!input.contains("Esc: close keys"));
         state.key(Key::Esc);
         assert!(!state.help.searching && state.mode == Mode::Help);
         state.key(Key::Char('r'));
@@ -363,12 +413,7 @@ fn theme_space_switches_between_list_and_real_filtered_table_without_moving_pane
         list.contains("Auto (Herdr)") && !list.contains("Agent/Pane Name"),
         "{list}"
     );
-    assert!(
-        list.contains("Space: table")
-            && list.contains("Enter: save")
-            && list.contains("Esc: cancel"),
-        "{list}"
-    );
+    assert_complete_theme_footer(&state, &list, 80, 15, "table");
     state.key(Key::Char(' '));
     for key in [Key::Down, Key::Char('j'), Key::Up, Key::Char('k')] {
         state.key(key);
@@ -397,12 +442,7 @@ fn theme_space_switches_between_list_and_real_filtered_table_without_moving_pane
             "{frame}"
         );
         assert!(frame.contains("\x1b[38;2;241;250;140mworking"), "{frame}");
-        assert!(
-            frame.contains("Space: list")
-                && frame.contains("Enter: save")
-                && frame.contains("Esc: cancel"),
-            "{frame}"
-        );
+        assert_complete_theme_footer(&state, &frame, width, height, "list");
     }
     state.key(Key::Char(' '));
     assert!(!state.terminal_frame(80, 15).contains("Agent/Pane Name"));
@@ -425,10 +465,8 @@ fn theme_table_preview_handles_empty_filter_bounds_and_failed_save() {
     state.key(Key::Up);
     assert_eq!(state.theme_cursor, 0);
     let empty = state.terminal_frame(80, 15);
-    assert!(
-        empty.contains("No matching panes") && empty.contains("Space: list"),
-        "{empty}"
-    );
+    assert!(empty.contains("No matching panes"), "{empty}");
+    assert_complete_theme_footer(&state, &empty, 80, 15, "list");
     for _ in 0..30 {
         state.key(Key::Char('j'));
     }
@@ -438,21 +476,45 @@ fn theme_table_preview_handles_empty_filter_bounds_and_failed_save() {
     state.key(Key::Enter);
     assert_eq!(state.mode, Mode::Themes);
     let failed = state.terminal_frame(80, 15);
-    assert!(
-        failed.contains("not saved")
-            && failed.contains("Space: list")
-            && failed.contains("Enter: save")
-            && failed.contains("Esc: cancel"),
-        "{failed}"
-    );
+    assert!(failed.contains("not saved"), "{failed}");
+    assert_complete_theme_footer(&state, &failed, 80, 15, "list");
     state.key(Key::Char(' '));
     state.key(Key::Enter);
     let failed_list = state.terminal_frame(80, 15);
-    assert!(
-        failed_list.contains("Space: table")
-            && failed_list.contains("Enter: save")
-            && failed_list.contains("Esc: cancel"),
-        "{failed_list}"
+    assert_complete_theme_footer(&state, &failed_list, 80, 15, "table");
+}
+
+fn assert_complete_theme_footer(
+    state: &Ui,
+    frame: &str,
+    width: usize,
+    height: usize,
+    toggle: &str,
+) {
+    let budget = state.hint_rows(crate::keymap::Context::Themes, width, height);
+    assert!(!state.hint_more.get(), "{frame}");
+    let lines: Vec<_> = frame.split("\r\n").collect();
+    assert_eq!(lines.len(), height, "{frame}");
+    // Footer text has no internal styling; remove only each row's ANSI paint envelope.
+    let footer = lines[height - budget..]
+        .iter()
+        .map(|line| {
+            line.split_once("  ")
+                .map_or("", |(_, text)| text)
+                .split('\x1b')
+                .next()
+                .unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("/ ", "/");
+    assert_eq!(
+        footer,
+        format!("j/↓: ↓theme · k/↑: ↑theme · Space: {toggle} · Enter: save · Esc: cancel"),
+        "{frame}"
     );
 }
 
@@ -478,7 +540,7 @@ fn saving_from_table_preview_keeps_pane_focus_and_reopens_in_list() {
     assert_eq!(state.selected, selected);
     assert_eq!(state.query, "codex");
     assert_eq!(
-        std::fs::read_to_string(dir.join("theme.json")).unwrap(),
+        std::fs::read_to_string(dir.join("theme.jsonc")).unwrap(),
         "{\"theme\":\"catppuccin\"}\n"
     );
     state.key(Key::Char('t'));
@@ -641,7 +703,7 @@ fn workspace_jumps_skip_hidden_blocks_and_stop_at_both_ends() {
     assert_eq!(state.selected.as_deref(), Some("p-b"));
     let help = state.terminal_frame(60, 15);
     assert!(
-        help.contains("Tab/Shift+Tab") && help.contains("next/previous workspace"),
+        help.contains("→ Tab | ← Shift+Tab") && help.contains("next/previous workspace"),
         "{help}"
     );
     state.key(Key::Esc);
@@ -675,7 +737,7 @@ fn query_above_list_and_help_describes_actual_keys() {
         help.contains("Enter") && help.contains("focus selected pane"),
         "{help}"
     );
-    assert!(help.contains("Esc/q/?: close keys"), "{help}");
+    assert!(help.contains("Esc: close keys"), "{help}");
     assert!(!help.contains("Esc/q: close"), "{help}");
 }
 

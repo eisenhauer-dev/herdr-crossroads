@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::input::Key;
+use super::keymap::{Context, Keymap};
 use super::presentation::{clean, StatusColors};
 use super::theme::{self, Theme, NAMES};
 use super::topology::Row;
@@ -59,102 +60,70 @@ pub(super) enum HelpContext {
 
 pub(super) struct HelpEntry {
     pub(super) category: &'static str,
-    pub(super) keys: &'static str,
+    pub(super) keys: String,
     pub(super) meaning: &'static str,
 }
 
 impl HelpContext {
-    pub(super) fn entries(&self) -> &'static [HelpEntry] {
-        match self {
-            Self::Select => &SELECT_KEYS,
-        }
+    pub(super) fn entries(&self, map: &Keymap) -> Vec<HelpEntry> {
+        SELECT_KEYS
+            .iter()
+            .map(|&(category, action, meaning)| HelpEntry {
+                category,
+                meaning,
+                keys: if action == "workspaces" {
+                    format!(
+                        "→ {} | ← {}",
+                        map.display_labels(Context::Select, "next_workspace"),
+                        map.display_labels(Context::Select, "previous_workspace")
+                    )
+                } else {
+                    map.display_labels(Context::Select, action)
+                },
+            })
+            .collect()
     }
 }
 
-const SELECT_KEYS: [HelpEntry; 11] = [
-    HelpEntry {
-        category: "Navigation",
-        keys: "j/Down",
-        meaning: "next pane",
-    },
-    HelpEntry {
-        category: "Navigation",
-        keys: "k/Up",
-        meaning: "previous pane",
-    },
-    HelpEntry {
-        category: "Navigation",
-        keys: "h/Left",
-        meaning: "previous tab",
-    },
-    HelpEntry {
-        category: "Navigation",
-        keys: "l/Right",
-        meaning: "next tab",
-    },
-    HelpEntry {
-        category: "Navigation",
-        keys: "Tab/Shift+Tab",
-        meaning: "next/previous workspace",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "Enter",
-        meaning: "focus selected pane",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "/",
-        meaning: "search",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "r",
-        meaning: "reset search",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "t",
-        meaning: "choose theme",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "?",
-        meaning: "show keys",
-    },
-    HelpEntry {
-        category: "Actions",
-        keys: "Esc/q",
-        meaning: "close Crossroads",
-    },
+const SELECT_KEYS: [(&str, &str, &str); 11] = [
+    ("Navigation", "next_row", "next pane"),
+    ("Navigation", "previous_row", "previous pane"),
+    ("Navigation", "previous_tab", "previous tab"),
+    ("Navigation", "next_tab", "next tab"),
+    ("Navigation", "workspaces", "next/previous workspace"),
+    ("Actions", "focus_pane", "focus selected pane"),
+    ("Actions", "open_search", "search"),
+    ("Actions", "reset_search", "reset search"),
+    ("Actions", "open_themes", "choose theme"),
+    ("Actions", "open_help", "show keys"),
+    ("Actions", "close", "close Crossroads"),
 ];
 
 pub(super) struct Help {
-    pub(super) context: HelpContext,
     pub(super) query: String,
     pub(super) searching: bool,
     pub(super) selected: Option<usize>,
     pub(super) viewport_start: Cell<usize>,
+    pub(super) entries: Vec<HelpEntry>,
 }
 
 impl Help {
-    fn select() -> Self {
+    fn select(map: &Keymap) -> Self {
         Self {
-            context: HelpContext::Select,
             query: String::new(),
             searching: false,
             selected: Some(0),
             viewport_start: Cell::new(0),
+            entries: HelpContext::Select.entries(map),
         }
     }
 
     pub(super) fn visible(&self) -> Vec<usize> {
-        self.context
-            .entries()
+        self.entries
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
-                matches_field(entry.keys, &self.query) || matches_field(entry.meaning, &self.query)
+                matches_field(&entry.keys, &self.query) || matches_field(entry.meaning, &self.query)
             })
             .map(|(i, _)| i)
             .collect()
@@ -168,6 +137,13 @@ impl Help {
 }
 
 pub(super) struct Ui {
+    pub(super) keymap: Keymap,
+    pub(super) keymap_errors: Vec<String>,
+    pub(super) status_errors: super::config::Diagnostics,
+    pub(super) theme_diagnostics: super::config::Diagnostics,
+    pub(super) error_scroll: Cell<usize>,
+    pub(super) hint_scroll: Cell<usize>,
+    pub(super) hint_more: Cell<bool>,
     pub(super) rows: Vec<Row>,
     pub(super) status_colors: StatusColors,
     pub(super) selected: Option<String>,
@@ -195,12 +171,19 @@ impl Ui {
         let selected = rows.first().map(|row| row.id.clone());
         let (auto_name, auto_unsupported) = theme::auto_choice();
         let mut ui = Self {
+            keymap: Keymap::default(),
+            keymap_errors: Vec::new(),
+            status_errors: super::config::Diagnostics::default(),
+            theme_diagnostics: super::config::Diagnostics::default(),
+            error_scroll: Cell::new(0),
+            hint_scroll: Cell::new(0),
+            hint_more: Cell::new(false),
             rows,
             status_colors: StatusColors::default(),
             selected,
             query: String::new(),
             mode: Mode::Select,
-            help: Help::select(),
+            help: Help::select(&Keymap::default()),
             closed: false,
             width: 160,
             popup_size: None,
@@ -300,6 +283,19 @@ impl Ui {
     }
 
     pub(super) fn key(&mut self, key: Key) -> Option<String> {
+        if self.configuration_failed() {
+            match key {
+                Key::Up | Key::Char('k') => self
+                    .error_scroll
+                    .set(self.error_scroll.get().saturating_sub(1)),
+                Key::Down | Key::Char('j') => self
+                    .error_scroll
+                    .set(self.error_scroll.get().saturating_add(1)),
+                Key::Enter | Key::Esc | Key::Char('q') => self.closed = true,
+                _ => {}
+            }
+            return None;
+        }
         self.theme_error = None;
         self.auto_toast = None;
         if self
@@ -322,6 +318,9 @@ impl Ui {
                     _ => {}
                 }
             } else {
+                let Some(key) = self.mapped(Context::Help, key) else {
+                    return None;
+                };
                 let visible = self.help.visible();
                 match key {
                     Key::Esc | Key::Char('?') | Key::Char('q') => self.mode = Mode::Select,
@@ -351,6 +350,9 @@ impl Ui {
             return None;
         }
         if self.mode == Mode::Themes {
+            let Some(key) = self.mapped(Context::Themes, key) else {
+                return None;
+            };
             let previous = self.theme_cursor;
             match key {
                 Key::Char(' ') => self.theme_table_preview = !self.theme_table_preview,
@@ -365,7 +367,7 @@ impl Ui {
                         self.theme_invalid = false;
                         self.mode = Mode::Select;
                     }
-                    Err(_) => self.theme_error = Some("theme.json save failed; not saved".into()),
+                    Err(error) => self.theme_error = Some(format!("{error}; not saved")),
                 },
                 _ => {}
             }
@@ -389,6 +391,9 @@ impl Ui {
             return None;
         }
         let visible = self.visible();
+        let Some(key) = self.mapped(Context::Select, key) else {
+            return None;
+        };
         match key {
             Key::Char('t') => {
                 self.theme_cursor = self.theme_index;
@@ -403,7 +408,7 @@ impl Ui {
             }
             Key::Char('/') => self.mode = Mode::Search,
             Key::Char('?') => {
-                self.help = Help::select();
+                self.help = Help::select(&self.keymap);
                 self.mode = Mode::Help;
             }
             Key::Char('q') | Key::Esc => self.closed = true,
@@ -476,5 +481,29 @@ impl Ui {
             _ => {}
         }
         None
+    }
+
+    pub(super) fn configuration_failed(&self) -> bool {
+        !self.keymap_errors.is_empty() || !self.status_errors.is_empty()
+    }
+
+    // Dispatch to the existing navigation operations, not to other contexts or search.
+    fn mapped(&self, context: Context, key: Key) -> Option<Key> {
+        Some(match self.keymap.action(context, key)? {
+            "next_row" | "next_category" | "next_theme" => Key::Down,
+            "previous_row" | "previous_category" | "previous_theme" => Key::Up,
+            "next_tab" => Key::Right,
+            "previous_tab" => Key::Left,
+            "next_workspace" => Key::Tab,
+            "previous_workspace" => Key::BackTab,
+            "open_search" => Key::Char('/'),
+            "reset_search" => Key::Char('r'),
+            "open_help" => Key::Char('?'),
+            "open_themes" => Key::Char('t'),
+            "focus_pane" | "save" => Key::Enter,
+            "close" | "cancel" => Key::Esc,
+            "toggle_preview" => Key::Char(' '),
+            _ => return None,
+        })
     }
 }

@@ -4,5 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+jsonc-parser = { version = "=0.34.0", default-features = false }
 ratatui = "=0.30.2"
 serde_json = "=1.0.151"

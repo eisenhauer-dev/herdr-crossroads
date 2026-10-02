@@ -103,7 +103,12 @@ fn sorts_context_but_preserves_pane_order_without_visible_ids() {
     assert!(lines
         .iter()
         .any(|line| line.contains("codex") && line.contains("idle")));
-    assert_eq!(lines.len(), 14);
+    assert_eq!(
+        lines.len(),
+        12 + super::test_support::ui()
+            .hints(crate::keymap::Context::Select, 100, 2, false)
+            .len()
+    );
     assert!(!output.contains("p-self") && !output.contains("p-b"));
 }
 
@@ -176,7 +181,11 @@ fn narrow_width_clips_names_without_rendering_ids_or_unused_status() {
     }
     assert!(output.lines().any(|line| line.contains("Claude")));
     assert!(output.lines().any(|line| line.contains("codex")));
-    assert!(output.contains('…'));
+    let long = SNAPSHOT.replace(
+        "\"Claude\"",
+        "\"An exceedingly verbose agent display name\"",
+    );
+    assert!(render(&long, Some("p-self"), 40).unwrap().contains('…'));
     assert!(!output.contains("p-b") && !output.lines().nth(2).unwrap().contains("Status"));
 }
 
@@ -207,11 +216,19 @@ fn absent_own_pane_id_and_empty_topology() {
     let empty = r#"{"id":"test","result":{"type":"session_snapshot","snapshot":{"workspaces":[],"tabs":[],"panes":[],"agents":[],"layouts":[]}}}"#;
     let empty_output = render(empty, None, 40).unwrap();
     assert!(
-        empty_output.contains("No matching panes")
-            && empty_output.contains("Agent/Pane")
-            && empty_output.contains("j/k: ↕pane"),
+        empty_output.contains("No matching panes") && empty_output.contains("Agent/Pane"),
         "{empty_output}"
     );
+    let footer = empty_output
+        .lines()
+        .skip(5)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("/ ", "/");
+    assert_eq!(footer.replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys", "{empty_output}");
 }
 
 #[test]

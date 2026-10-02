@@ -585,13 +585,27 @@ fn reconnect_installs_snapshot_while_status_sender_is_still_active() {
     std::fs::write(base.join("release"), "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut installed = false;
+    let mut installed_during_traffic = false;
     while let Ok(line) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         if line.contains("Fresh topology") {
             installed = true;
+            installed_during_traffic = !writer.is_finished();
             break;
         }
     }
-    let still_sending = sent.load(Ordering::Relaxed) > prefilled && !writer.is_finished();
+    // Installation can beat the writer's next scheduling turn in release builds.
+    // Keep the stream open and verify actual further traffic within the original
+    // deadline, rather than requiring a write in the same instant as installation.
+    while installed
+        && sent.load(Ordering::Relaxed) <= prefilled
+        && !writer.is_finished()
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let still_sending = installed_during_traffic
+        && sent.load(Ordering::Relaxed) > prefilled
+        && !writer.is_finished();
     stop.store(true, Ordering::Relaxed);
     let _ = second.shutdown(Shutdown::Both);
     writer.join().unwrap();
@@ -986,7 +1000,7 @@ fn focus_case(input: &[u8], reply: &str) -> (std::process::Output, serde_json::V
 #[test]
 fn select_enter_focuses_visible_filtered_fallback_by_id() {
     let (output, request) = focus_case(
-        b"/codex\n\n",
+        b"/codex\r\r",
         "{\"id\":\"crossroads-focus\",\"result\":{\"type\":\"pane_info\",\"pane\":{\"pane_id\":\"p-other\",\"focused\":true}}}\n",
     );
     assert!(
@@ -1013,7 +1027,7 @@ fn stale_or_invalid_focus_response_fails_without_another_target() {
         "{\"id\":\"crossroads-focus\",\"result\":{\"type\":\"pane_info\",\"pane\":{\"pane_id\":\"p-b\",\"focused\":false}}}\n",
         "broken\n",
     ] {
-        let (output, request) = focus_case(b"\n", reply);
+        let (output, request) = focus_case(b"\r", reply);
         assert!(!output.status.success());
         assert_eq!(request, serde_json::json!({"id":"crossroads-focus","method":"pane.focus","params":{"pane_id":"p-b"}}));
     }
@@ -1026,7 +1040,7 @@ fn overlong_focus_reply_is_rejected() {
         "{{\"id\":\"crossroads-focus\",\"result\":{{\"type\":\"pane_info\",\"pane\":{{\"pane_id\":\"p-b\",\"focused\":true}},\"padding\":\"{}\"}}}}\n",
         "x".repeat(20_000)
     );
-    let (output, request) = focus_case(b"\n", &reply);
+    let (output, request) = focus_case(b"\r", &reply);
     assert!(!output.status.success(), "overlong reply was accepted");
     assert_eq!(request["params"]["pane_id"], "p-b");
 }
@@ -1054,7 +1068,7 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"\r").unwrap();
     let watchdog = Instant::now() + Duration::from_secs(3);
     let mut stream = loop {
         match listener.accept() {
@@ -1087,8 +1101,19 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+    // BrokenPipe observes socket closure, not completion of the process's error
+    // reporting and exit. Wait for exit within the same original 800ms bound.
+    let exit_deadline = started + Duration::from_millis(800);
+    let finished = loop {
+        if child.try_wait().unwrap().is_some() {
+            break true;
+        }
+        if Instant::now() >= exit_deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
     let elapsed = started.elapsed();
-    let finished = child.try_wait().unwrap().is_some();
     if !finished {
         child.kill().unwrap();
     }
@@ -1132,7 +1157,7 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(b"\n").unwrap();
+    child.stdin.take().unwrap().write_all(b"\r").unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     let stream = loop {
         match listener.accept() {
@@ -1184,17 +1209,48 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
 #[cfg(unix)]
 #[test]
 fn non_select_keys_and_no_matches_never_focus() {
-    for input in [
-        b"/codex\nq".as_slice(),
-        b"/codex\x1bq",
-        b"/nomatch\n\n",
-        b"q",
-        b"\x1b",
-    ] {
+    for input in [b"/codex\rq".as_slice(), b"/nomatch\r\r", b"q", b"\x1b"] {
         let (output, request) = no_focus_case(input);
         assert!(output.status.success());
         assert!(request.is_none(), "unexpected request: {request:?}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn alt_q_in_search_is_ignored_until_piped_input_eof_without_focus() {
+    let (output, request) = no_focus_case(b"/codex\x1bq");
+    assert!(output.status.success());
+    assert!(request.is_none(), "unexpected request: {request:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("Search: codex"), "{text}");
+    assert!(
+        !text.contains("Search: codexq"),
+        "Alt+q must not add text: {text}"
+    );
+    assert_eq!(
+        text.lines().last(),
+        Some("  Enter/Esc: select  Backspace: erase"),
+        "EOF ended the process while it was still in search, not select"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn input_protocol_pty_checks_escape_and_probe_without_eof() {
+    let output = Command::new("python3")
+        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pty_keymaps.py"))
+        .arg(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        .arg("--input-protocol")
+        .output()
+        .expect("python3 with Linux PTY standard library");
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(unix)]
@@ -1274,6 +1330,10 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
         text.contains("Claude | working") && text.contains("codex | idle"),
         "{text}"
     );
+    let source = format!(
+        "status-colors.json  {}",
+        base.join("status-colors.json").display()
+    );
     for invalid in [
         "{",
         "[]",
@@ -1282,12 +1342,18 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
         r##"{"other":"#123ABC"}"##,
     ] {
         let result = run(Some(invalid));
-        assert!(!result.status.success(), "{invalid}");
-        assert!(result.stdout.is_empty(), "{invalid}");
+        assert!(result.status.success(), "{invalid}");
+        let text = String::from_utf8_lossy(&result.stdout);
         assert!(
-            String::from_utf8_lossy(&result.stderr).contains("status-colors.json"),
-            "{invalid}: {:?}",
-            result.stderr
+            text.starts_with("ERROR:") && !text.contains("Agent/Pane Name"),
+            "{invalid}: {text}"
+        );
+        assert!(
+            text.contains("Status colors")
+                && text.lines().nth(1) == Some(source.as_str())
+                && text.matches("status-colors.json").count() == 2
+                && text.matches(&base.display().to_string()).count() == 1,
+            "{invalid}: {text}"
         );
     }
     std::fs::remove_file(base.join("status-colors.json")).unwrap();
@@ -1297,9 +1363,20 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    assert!(!unreadable.status.success());
-    assert!(unreadable.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&unreadable.stderr).contains("status-colors.json"));
+    assert!(unreadable.status.success());
+    let text = String::from_utf8_lossy(&unreadable.stdout);
+    assert!(
+        text.starts_with("ERROR:")
+            && text.contains("Status colors IO")
+            && text.contains("directory"),
+        "{text}"
+    );
+    assert!(
+        text.lines().nth(1) == Some(source.as_str())
+            && text.matches("status-colors.json").count() == 2
+            && !text.contains("Agent/Pane Name"),
+        "{text}"
+    );
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
     std::fs::remove_dir_all(base).unwrap();
@@ -1467,11 +1544,19 @@ fn closes_after_q_in_select() {
     std::fs::remove_file(fake).unwrap();
 
     assert!(output.status.success(), "status: {}", output.status);
-    assert!(String::from_utf8_lossy(&output.stdout)
-        .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).lines().last(),
-        Some("  Enter: focus · Esc/q: exit · ?: keys")
+    let text = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("/ ", "/");
+    let actions = text.replace(" · ", " ");
+    assert!(
+        actions.contains("j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws"),
+        "{text}"
+    );
+    assert!(
+        actions.ends_with("Enter: focus Esc: exit ?: keys"),
+        "{text}"
     );
 }
 
@@ -1488,7 +1573,7 @@ fn search_updates_on_each_character_and_returns_to_selection() {
         .stdout(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin.take().unwrap().write_all(b"/codexq\x1bq")?;
+            child.stdin.take().unwrap().write_all(b"/codexq\rq")?;
             child.wait_with_output()
         })
         .unwrap();
@@ -1528,11 +1613,19 @@ fn esc_in_select_closes_on_piped_input_eof() {
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "api snapshot\n");
     std::fs::remove_file(log).unwrap();
     std::fs::remove_file(fake).unwrap();
-    assert!(String::from_utf8_lossy(&output.stdout)
-        .contains("j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).lines().last(),
-        Some("  Enter: focus · Esc/q: exit · ?: keys")
+    let text = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("/ ", "/");
+    let actions = text.replace(" · ", " ");
+    assert!(
+        actions.contains("j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws"),
+        "{text}"
+    );
+    assert!(
+        actions.ends_with("Enter: focus Esc: exit ?: keys"),
+        "{text}"
     );
 }
 

@@ -152,41 +152,89 @@ impl Theme {
 }
 
 pub(super) fn config_path(dir: Option<&Path>) -> Option<PathBuf> {
-    dir.map(|dir| dir.join("theme.json"))
+    dir.map(|dir| dir.join("theme.jsonc"))
 }
 
+#[cfg(test)]
 pub(super) fn load(dir: Option<&Path>) -> (usize, Option<String>) {
-    let Some(path) = config_path(dir) else {
-        return (0, None);
-    };
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(error)
-            if error.kind() == io::ErrorKind::NotFound
-                && std::fs::symlink_metadata(&path).is_err() =>
-        {
-            return (0, None)
+    let (index, diagnostics) = load_diagnostics(dir);
+    (
+        index,
+        (!diagnostics.is_empty()).then(|| {
+            format!(
+                "Theme configuration: {}; using Mocha",
+                diagnostics.messages().join("; ")
+            )
+        }),
+    )
+}
+
+pub(super) fn load_diagnostics(dir: Option<&Path>) -> (usize, super::config::Diagnostics) {
+    let mut diagnostics = super::config::Diagnostics::default();
+    let content = match super::config::read(dir, "theme") {
+        Ok(Some((path, content))) => {
+            diagnostics.source = Some(path);
+            content
         }
-        Err(_) => return (0, Some("theme.json unreadable; using Mocha".into())),
+        Ok(None) => return (0, diagnostics),
+        Err(error) => {
+            diagnostics.push("Theme IO", error.to_string());
+            diagnostics.source = Some(error.path);
+            return (0, diagnostics);
+        }
     };
-    let parsed: serde_json::Value = match serde_json::from_str(&content) {
+    let parsed = match super::config::parse(&content) {
         Ok(parsed) => parsed,
-        Err(_) => return (0, Some("theme.json invalid; using Mocha".into())),
+        Err(error) => {
+            diagnostics.push("Theme syntax", error);
+            return (0, diagnostics);
+        }
     };
-    match parsed.as_object() {
-        Some(object) if object.len() == 1 => match object.get("theme").and_then(|v| v.as_str()) {
+    for duplicate in parsed.duplicate_fields {
+        let location = super::config::location(&duplicate.location);
+        diagnostics.push(
+            "Theme duplicate fields",
+            if location.is_empty() {
+                format!("duplicate field {}", duplicate.field)
+            } else {
+                format!("{location}: duplicate field {}", duplicate.field)
+            },
+        );
+    }
+    let Some(object) = parsed.ast.as_object() else {
+        diagnostics.push("Theme structure", "expected JSON object");
+        return (0, diagnostics);
+    };
+    let mut index = 0;
+    let mut has_theme = false;
+    for entry in &object.properties {
+        if entry.name.as_str() != "theme" {
+            diagnostics.push(
+                "Theme unknown fields",
+                format!("unknown field {}", entry.name.as_str()),
+            );
+            continue;
+        }
+        has_theme = true;
+        match entry.value.as_string_lit() {
             Some(name) => match NAMES
                 .iter()
-                .position(|entry| *entry == name)
+                .position(|entry| *entry == name.value)
                 .filter(|&i| i > 0)
             {
-                Some(index) => (index, None),
-                None => (0, Some("theme.json invalid; using Mocha".into())),
+                Some(found) => index = found,
+                None => diagnostics.push(
+                    "Theme invalid values",
+                    format!("unknown theme {}", name.value),
+                ),
             },
-            None => (0, Some("theme.json invalid; using Mocha".into())),
-        },
-        _ => (0, Some("theme.json invalid; using Mocha".into())),
+            None => diagnostics.push("Theme invalid values", "theme must be a string"),
+        }
     }
+    if !has_theme {
+        diagnostics.push("Theme structure", "missing theme field");
+    }
+    (if diagnostics.is_empty() { index } else { 0 }, diagnostics)
 }
 
 pub(super) fn save(dir: Option<&Path>, index: usize) -> io::Result<()> {
@@ -196,18 +244,29 @@ pub(super) fn save(dir: Option<&Path>, index: usize) -> io::Result<()> {
             "plugin config directory unavailable",
         )
     })?;
-    let path = dir.join("theme.json");
+    let path = config_path(Some(dir)).unwrap();
     if index == 0 {
-        match std::fs::remove_file(path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            result => result,
+        let mut errors = Vec::new();
+        for path in [path, dir.join("theme.json")] {
+            if let Err(error) = std::fs::remove_file(&path) {
+                if error.kind() != io::ErrorKind::NotFound
+                    || std::fs::symlink_metadata(&path).is_ok()
+                {
+                    errors.push(error.to_string());
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::other(errors.join("; ")))
         }
     } else {
         std::fs::create_dir_all(dir)?;
         static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
         let (temp, mut file) = loop {
             let temp = dir.join(format!(
-                ".theme.json.{}.{}.tmp",
+                ".theme.jsonc.{}.{}.tmp",
                 std::process::id(),
                 NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
             ));
@@ -226,7 +285,7 @@ pub(super) fn save(dir: Option<&Path>, index: usize) -> io::Result<()> {
             file.sync_all()
         })();
         drop(file);
-        let result = written.and_then(|()| std::fs::rename(&temp, path));
+        let result = written.and_then(|()| std::fs::rename(&temp, &path));
         if result.is_err() {
             let _ = std::fs::remove_file(temp);
         }
