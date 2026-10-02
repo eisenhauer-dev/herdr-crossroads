@@ -301,20 +301,27 @@ impl Keymap {
     }
 
     fn collision_groups(&self) -> Vec<(String, Vec<&'static str>, Vec<String>)> {
-        let mut owners: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+        let mut owners: BTreeMap<(String, String), (Key, Vec<&str>)> = BTreeMap::new();
         for binding in &self.bindings {
             for key in &binding.keys {
                 owners
-                    .entry((binding.context.name().into(), key.display_label()))
-                    .or_default()
+                    .entry((binding.context.name().into(), key.label()))
+                    .or_insert_with(|| (*key, Vec::new()))
+                    .1
                     .push(binding.action);
             }
         }
         let mut groups: BTreeMap<(String, Vec<&str>), Vec<String>> = BTreeMap::new();
-        for ((context, key), actions) in owners {
+        for ((context, _), (key, actions)) in owners {
             if actions.len() > 1 {
-                groups.entry((context, actions)).or_default().push(key);
+                groups
+                    .entry((context, actions))
+                    .or_default()
+                    .push(key.display_label());
             }
+        }
+        for keys in groups.values_mut() {
+            keys.sort();
         }
         groups
             .into_iter()

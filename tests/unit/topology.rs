@@ -71,7 +71,7 @@ fn linked_workspace_follows_source_without_reordering_other_blocks_or_panes() {
             expected,
             "source {source}"
         );
-        let mut state = Ui::new(items);
+        let mut state = Ui::with_theme_choice(items, "catppuccin", None);
         let frame = state.terminal_frame(120, 20);
         assert!(frame.contains("↳ Same (feature/demo)"), "{frame}");
         assert!(!frame.contains("w1") && !frame.contains("w2"), "{frame}");

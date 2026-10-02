@@ -473,6 +473,136 @@ fn r2_source_path_requires_a_visible_grapheme_before_clipping_ellipsis() {
 }
 
 #[test]
+fn r3_custom_characters_require_visible_standalone_text() {
+    for text in [
+        "\0",
+        "\u{7f}",
+        "\u{9f}",
+        "\u{ad}",
+        "\u{600}",
+        "\u{61c}",
+        "\u{200b}",
+        "\u{200c}",
+        "\u{200d}",
+        "\u{200e}",
+        "\u{202e}",
+        "\u{2060}",
+        "\u{feff}",
+        "\u{301}",
+        "\u{34f}",
+        "\u{93e}",
+        "\u{20dd}",
+        "\u{fe0f}",
+        "\u{e0100}",
+        "\u{a0}",
+        "\u{2003}",
+        "\u{2028}",
+        "\u{2029}",
+        "\u{3000}",
+        "\u{378}",
+        "\u{379}",
+        "\u{d7ff}",
+        "\u{e000}",
+        "\u{f8ff}",
+        "\u{f0000}",
+        "\u{ffffd}",
+        "\u{100000}",
+        "\u{10fffd}",
+        "\u{fffe}",
+        "\u{10ffff}",
+        "e\u{301}",
+    ] {
+        assert_eq!(Key::parse(text), None, "accepted {text:?}");
+        let (map, errors) =
+            Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text]}}).to_string());
+        assert_eq!(errors.len(), 1, "{text:?}: {errors:?}");
+        assert_eq!(map.action(Context::Themes, Key::Char(' ')), None);
+        assert_eq!(
+            map.diagnostic_blocks()[0].0,
+            "Unknown keymap keys - themes mode"
+        );
+    }
+    for text in [
+        "é",
+        "中",
+        "Ω",
+        "Ж",
+        "ش",
+        "↓",
+        "🙂",
+        "ﾞ",
+        "'",
+        "\"",
+        "\\",
+        " ",
+        "ǅ",
+        "ʰ",
+        "٣",
+        "Ⅳ",
+        "½",
+        "_",
+        "—",
+        "(",
+        ")",
+        "«",
+        "»",
+        "!",
+        "$",
+        "^",
+        "\u{d7a3}",
+        "\u{f900}",
+        "\u{10000}",
+    ] {
+        let key = Key::Char(text.chars().next().unwrap());
+        assert_eq!(Key::parse(text), Some(key), "{text:?}");
+        let (map, errors) =
+            Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text]}}).to_string());
+        assert!(errors.is_empty(), "{text:?}: {errors:?}");
+        assert_eq!(map.action(Context::Themes, key), Some("toggle_preview"));
+    }
+    assert_eq!(Key::parse("Space"), Some(Key::Char(' ')));
+    // Surrogates cannot be represented as Rust chars or a valid single-scalar string.
+    assert_eq!(char::from_u32(0xd800), None);
+    assert_eq!(char::from_u32(0xdfff), None);
+}
+
+#[test]
+fn r3_collision_diagnostics_distinguish_glyphs_from_special_keys() {
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"next_row":["↓"],"previous_row":["Down"],"open_help":["F1"]}}"#,
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        map.action(Context::Select, Key::Char('↓')),
+        Some("next_row")
+    );
+    assert_eq!(map.action(Context::Select, Key::Down), Some("previous_row"));
+    assert_eq!(
+        map.diagnostic_blocks(),
+        vec![(
+            "Unknown keymap keys - select mode".into(),
+            vec!["open_help: unknown key \"F1\"".into()],
+        )]
+    );
+    for key in ["↓", "Down", "Space", " "] {
+        let (map, errors) = Keymap::parse(
+            &serde_json::json!({"select": {"next_row": [key], "previous_row": [key]}}).to_string(),
+        );
+        assert_eq!(errors.len(), 1, "{key}: {errors:?}");
+        assert_eq!(
+            map.diagnostic_blocks(),
+            vec![(
+                "Keymap collisions - select mode".into(),
+                vec![format!(
+                    "next_row, previous_row: {}",
+                    Key::parse(key).unwrap().display_label()
+                )],
+            )]
+        );
+    }
+}
+
+#[test]
 fn r2_arrow_glyph_configuration_is_literal_not_the_special_arrow_key() {
     assert_eq!(Key::parse("↓"), Some(Key::Char('↓')));
     assert_eq!(Key::parse("Down"), Some(Key::Down));

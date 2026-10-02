@@ -1,6 +1,26 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+fn isolated_command(program: &str) -> Command {
+    // This path is never populated: all theme resolution stays outside user config.
+    let config = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-missing-config-{}", std::process::id()));
+    let mut command = Command::new(program);
+    command
+        .env_remove("HERDR_PLUGIN_CONFIG_DIR")
+        .env_remove("HERDR_SOCKET_PATH")
+        .env(
+            "HERDR_CONFIG_PATH",
+            config.join("missing-herdr-config.toml"),
+        )
+        .env("XDG_CONFIG_HOME", &config)
+        .env("HOME", &config)
+        .env_remove("SSH_CONNECTION")
+        .env_remove("SSH_CLIENT")
+        .env_remove("SSH_TTY");
+    command
+}
+
 #[cfg(unix)]
 #[test]
 fn no_socket_variable_keeps_one_snapshot_and_never_lists_panes_on_retry() {
@@ -21,7 +41,7 @@ fn no_socket_variable_keeps_one_snapshot_and_never_lists_panes_on_retry() {
         let log = base.join("calls");
         std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then exit 9; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"));
+        let mut command = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"));
         command
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
@@ -68,7 +88,7 @@ fn live_status_burst_coalesces_frames_and_keeps_quit_responsive() {
     let fake = base.join("herdr");
     std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("HERDR_SOCKET_PATH", base.join("socket"))
         .env("HERDR_PANE_ID", "p-self")
@@ -187,7 +207,7 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
     let log = base.join("calls");
     std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-self\"}},{{\"pane_id\":\"p-a\"}},{{\"pane_id\":\"p-other\"}},{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then sleep 0.15; cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -300,7 +320,7 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
         std::fs::write(base.join("replacement.json"), replacement.to_string()).unwrap();
         std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/second-started\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n    if [ \"$CROSSROADS_RETRY\" = '1' ] && [ ! -f \"$CROSSROADS_BASE/failed\" ]; then touch \"$CROSSROADS_BASE/failed\"; echo invalid; exit; fi\n    cat \"$CROSSROADS_BASE/replacement.json\"\n  else\n    touch \"$CROSSROADS_BASE/first\"\n    cat '{}'\n  fi\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
             .env("CROSSROADS_BASE", &base)
@@ -503,7 +523,7 @@ fn reconnect_installs_snapshot_while_status_sender_is_still_active() {
     let fake = base.join("herdr");
     std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/held\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n    cat \"$CROSSROADS_BASE/replacement.json\"\n  else\n    touch \"$CROSSROADS_BASE/first\"\n    cat '{}'\n  fi\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_BASE", &base)
         .env("HERDR_SOCKET_PATH", base.join("socket"))
@@ -651,7 +671,7 @@ fn blocked_reconnect_snapshot_does_not_block_quit() {
     let fake = base.join("herdr");
     std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then\n  if [ -f \"$CROSSROADS_BASE/first\" ]; then\n    touch \"$CROSSROADS_BASE/held\"\n    while [ ! -f \"$CROSSROADS_BASE/release\" ]; do sleep 0.01; done\n  else touch \"$CROSSROADS_BASE/first\"; fi\n  cat '{}'\n  exit\nfi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_BASE", &base)
         .env("HERDR_SOCKET_PATH", base.join("socket"))
@@ -747,7 +767,7 @@ fn full_reconnect_listen_queue_does_not_block_quit() {
     let log = base.join("calls");
     std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -855,7 +875,7 @@ fn valid_pane_preflight_without_socket_uses_single_snapshot_and_exits() {
     let log = base.join("calls");
     std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; exit; fi\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\necho '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", base.join("missing.sock"))
@@ -887,7 +907,7 @@ fn no_focus_case(input: &[u8]) -> (std::process::Output, Option<serde_json::Valu
     listener.set_nonblocking(true).unwrap();
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -944,7 +964,7 @@ fn focus_case(input: &[u8], reply: &str) -> (std::process::Output, serde_json::V
     let listener = UnixListener::bind(&socket).unwrap();
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -1058,7 +1078,7 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
     listener.set_nonblocking(true).unwrap();
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -1147,7 +1167,7 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
     listener.set_nonblocking(true).unwrap();
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
         .env("HERDR_SOCKET_PATH", &socket)
@@ -1238,7 +1258,9 @@ fn alt_q_in_search_is_ignored_until_piped_input_eof_without_focus() {
 #[cfg(target_os = "linux")]
 #[test]
 fn input_protocol_pty_checks_escape_and_probe_without_eof() {
-    let output = Command::new("python3")
+    // Deliberately partial: full keymap and hint PTYs are separate mandatory
+    // release gates. See docs/keymaps.md, Local verification.
+    let output = isolated_command("python3")
         .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pty_keymaps.py"))
         .arg(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .arg("--input-protocol")
@@ -1277,7 +1299,7 @@ fn fake_herdr() -> std::path::PathBuf {
 
 #[test]
 fn plugin_pane_title_is_parsed_from_manifest() {
-    let output = Command::new("python3")
+    let output = isolated_command("python3")
         .args(["-c", "import tomllib,sys; p=tomllib.load(open(sys.argv[1], 'rb')); assert p['name'] == 'Herdr Crossroads'; assert p['panes'][0]['id'] == 'crossroads'; assert p['panes'][0]['title'] == 'Herdr Crossroads'", concat!(env!("CARGO_MANIFEST_DIR"), "/herdr-plugin.toml")])
         .output()
         .unwrap();
@@ -1307,7 +1329,7 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
                 let _ = std::fs::remove_file(base.join("status-colors.json"));
             }
         }
-        Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
             .env("HERDR_PLUGIN_CONFIG_DIR", &base)
@@ -1358,7 +1380,7 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
     }
     std::fs::remove_file(base.join("status-colors.json")).unwrap();
     std::fs::create_dir(base.join("status-colors.json")).unwrap();
-    let unreadable = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let unreadable = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_PLUGIN_CONFIG_DIR", &base)
         .stdin(Stdio::null())
         .output()
@@ -1386,7 +1408,7 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
 fn starts_with_eof_and_exits_successfully() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
@@ -1442,7 +1464,7 @@ fi
 exit 9
 "#, concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
     std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
@@ -1489,7 +1511,7 @@ fn failed_or_invalid_worktree_lookup_falls_back_to_plain_workspace_names() {
         let log = base.join("calls.log");
         std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CROSSROADS_TEST_LOG\"\nif [ \"$*\" = 'api snapshot' ]; then cat '{}'; exit; fi\n{response}\n", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/topology.json"))).unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+        let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
             .env_remove("HERDR_SOCKET_PATH")
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
@@ -1522,7 +1544,7 @@ fn failed_or_invalid_worktree_lookup_falls_back_to_plain_workspace_names() {
 fn closes_after_q_in_select() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
@@ -1564,7 +1586,7 @@ fn closes_after_q_in_select() {
 fn search_updates_on_each_character_and_returns_to_selection() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
@@ -1596,7 +1618,7 @@ fn search_updates_on_each_character_and_returns_to_selection() {
 fn esc_in_select_closes_on_piped_input_eof() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let mut child = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env_remove("HERDR_SOCKET_PATH")
         .env("HERDR_BIN_PATH", &fake)
         .env("CROSSROADS_TEST_LOG", &log)
@@ -1632,7 +1654,7 @@ fn esc_in_select_closes_on_piped_input_eof() {
 #[cfg(target_os = "linux")]
 #[test]
 fn thousand_rows_pty_keypress_latency() {
-    let output = Command::new("python3")
+    let output = isolated_command("python3")
         .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pty_latency.py"))
         .arg(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .output()
@@ -1648,7 +1670,7 @@ fn thousand_rows_pty_keypress_latency() {
 #[cfg(target_os = "linux")]
 #[test]
 fn narrow_raw_pty_screen_keeps_rows_and_footer_readable() {
-    let output = Command::new("python3")
+    let output = isolated_command("python3")
         .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/pty_render.py"))
         .arg(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .output()
@@ -1662,7 +1684,7 @@ fn narrow_raw_pty_screen_keeps_rows_and_footer_readable() {
 
 #[test]
 fn missing_cli_reports_error_without_rendering_a_table() {
-    let output = Command::new(env!("CARGO_BIN_EXE_herdr-crossroads"))
+    let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_BIN_PATH", "/nonexistent/herdr-crossroads-test")
         .stdin(Stdio::null())
         .output()

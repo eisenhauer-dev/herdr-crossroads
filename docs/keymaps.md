@@ -140,6 +140,17 @@ including in wrapped custom-binding entries. Entries retain their original order
   `-`, `_`, `!`, `"`, `?`, `%`, `&`, `+`, `é`.
   Character bindings are case-sensitive. Space can be `" "` or `"Space"`;
   those are the same identity.
+- Character validation uses Unicode 16.0 general categories from the pinned
+  `unicode-general-category` 1.1.0 tables. A key must be one Unicode scalar;
+  letters, numbers, punctuation, and symbols are allowed. Marks (`Mn`, `Mc`,
+  `Me`), Other categories (`Cc`, `Cf`, `Cs`, `Co`, `Cn`), and separators (`Zs`,
+  `Zl`, `Zp`) are rejected, except ASCII space (`U+0020`). This excludes standalone
+  combining marks, format/zero-width controls, private-use and unassigned scalars,
+  and other whitespace. Decomposed characters and multi-scalar emoji sequences
+  are not single-character keys. This category policy is not a universal glyph
+  visibility guarantee: fonts and terminals can render allowed scalars differently,
+  and some allowed letters/symbols may look blank. It validates custom bindings
+  only; terminal decoding and search-text handling are unchanged.
 - Exact special names: `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`,
   `Right`, `Tab`, `Shift+Tab`, `Space`.
 - **No Ctrl or Alt binding is allowed in any context or keyboard protocol**:
@@ -304,5 +315,31 @@ universal guarantee for every physical key combination.
 Verification sources: [Herdr v0.9.3 input routing](https://github.com/herdrdev/herdr/blob/v0.9.3/src/client/shell/input.rs#L503-L578),
 [recoding](https://github.com/herdrdev/herdr/blob/v0.9.3/src/input/encode.rs#L304-L342),
 [Ghostty VT](https://github.com/herdrdev/herdr/blob/v0.9.3/vendor/libghostty-vt/src/terminal/stream_terminal.zig#L4702-L4732).
-Local coverage is in `tests/unit/keymap.rs`, `tests/a10c.rs`, and the isolated
-`tests/pty_keymaps.py`; no real Herdr processes are used by those tests.
+
+## Local verification
+
+Run from the repository root on Linux with Cargo, Python 3.11+ (standard library
+only), and the pre-created `/tmp/opencode` directory. These isolated harnesses
+use fake Herdr executables and sockets, not real Herdr processes or plugin activation.
+
+`cargo test` covers `tests/unit/keymap.rs`, `tests/a10c.rs`, and startup tests.
+The Linux startup tests run the latency/render PTYs and **only the input-protocol
+subset** of `pty_keymaps.py` (`--input-protocol`). They do not run the complete
+keymap PTY or `pty_hints.py`. The complete keymap and hint PTYs are separate
+**mandatory release gates**, not optional substitutes for Cargo tests.
+
+Run all four complete PTY harnesses against a freshly built release binary:
+
+```sh
+cargo fmt --check
+cargo test
+cargo build --release
+python3 tests/pty_latency.py target/release/herdr-crossroads
+python3 tests/pty_render.py target/release/herdr-crossroads
+python3 tests/pty_keymaps.py target/release/herdr-crossroads
+python3 tests/pty_hints.py target/release/herdr-crossroads
+```
+
+Do not add `--input-protocol` to the complete keymap gate: it returns before
+binding-policy, error-page, search, and long-binding checks. The hint gate checks
+stable default/custom footers, grouping, and sanitized notices separately.
