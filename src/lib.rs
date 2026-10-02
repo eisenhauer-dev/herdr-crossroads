@@ -12,13 +12,16 @@ mod input;
 mod keymap;
 mod presentation;
 mod selection;
+mod status_colors;
+mod terminal;
 mod theme;
 mod topology;
 mod transport;
 
 use input::{handle_key, Keys};
-use presentation::{draw, terminal_size, StatusColors, Terminal};
 use selection::Ui;
+use status_colors::StatusColors;
+use terminal::{draw, terminal_size, Terminal};
 use topology::snapshot_rows;
 #[cfg(unix)]
 use transport::{subscribe, ReconnectAttempt, StatusMessage, StatusSubscription, RECONNECT_CANCEL};
@@ -319,6 +322,9 @@ mod test_presentation;
 #[cfg(test)]
 #[path = "../tests/unit/selection.rs"]
 mod test_selection;
+#[cfg(test)]
+#[path = "../tests/unit/status_colors.rs"]
+mod test_status_colors;
 #[cfg(test)]
 #[path = "../tests/unit/support.rs"]
 mod test_support;

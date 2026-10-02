@@ -1,5 +1,8 @@
 # Keymaps
 
+For setup and the complete defaults overview, see the [README](../README.md).
+Developer test layers are described in [CONTRIBUTING](../CONTRIBUTING.md).
+
 Crossroads reads `keymaps.jsonc` once when a popup opens, from the directory
 injected as `HERDR_PLUGIN_CONFIG_DIR`. If that file is **absent**, it reads legacy
 `keymaps.json` instead. A present but invalid or unreadable `.jsonc` file never

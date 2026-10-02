@@ -1,5 +1,8 @@
 # Status colors
 
+See the [README](../README.md#configuration-and-complete-defaults-overview) for
+general configuration and the execution status of Herdr command examples.
+
 Crossroads uses the selected plugin theme's status colors by default. With Auto (Herdr), it reads a simple saved Herdr theme choice when unambiguous; otherwise it falls back to Catppuccin Mocha. The table shows the Mocha fallback values.
 
 | Status | Default |

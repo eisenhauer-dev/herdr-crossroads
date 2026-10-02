@@ -6,7 +6,8 @@ use serde_json::Value;
 
 use super::input::Key;
 use super::keymap::{Context, Keymap};
-use super::presentation::{clean, StatusColors};
+use super::presentation::clean;
+use super::status_colors::StatusColors;
 use super::theme::{self, Theme, NAMES};
 use super::topology::Row;
 
