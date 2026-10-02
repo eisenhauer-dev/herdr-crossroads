@@ -10,8 +10,8 @@ use unicode_general_category::{get_general_category, GeneralCategory};
 #[cfg(unix)]
 use serde_json::Value;
 
-use super::presentation::draw;
 use super::selection::Ui;
+use super::terminal::draw;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Arrow {

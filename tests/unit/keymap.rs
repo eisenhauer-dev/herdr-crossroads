@@ -1,6 +1,7 @@
 use crate::config;
 use crate::input::{Arrow, Key, Keys};
 use crate::keymap::{Context, Keymap};
+use crate::test_presentation::without_sgr;
 use crate::test_support::ui;
 
 #[test]
@@ -262,19 +263,6 @@ fn error_page_fixed_navigation_precedes_custom_actions_at_every_height() {
             state.closed = false;
         }
     }
-}
-
-fn without_sgr(line: &str) -> String {
-    line.split('\x1b')
-        .enumerate()
-        .map(|(index, part)| {
-            if index == 0 {
-                part
-            } else {
-                part.split_once('m').unwrap().1
-            }
-        })
-        .collect()
 }
 
 fn without_source_rows(frame: &str, source: &std::path::Path) -> String {
@@ -660,7 +648,7 @@ fn loaded_error_blocks_show_selected_source_once_immediately_under_each_heading(
         let mut state = ui();
         (state.keymap, state.keymap_errors) = Keymap::load(Some(&dir));
         (state.status_colors, state.status_errors) =
-            crate::presentation::StatusColors::load_diagnostics(Some(&dir));
+            crate::status_colors::StatusColors::load_diagnostics(Some(&dir));
         (_, state.theme_diagnostics) = crate::theme::load_diagnostics(Some(&dir));
         let frame = state.frame_width(400);
         let lines: Vec<_> = frame.lines().collect();
@@ -830,7 +818,7 @@ fn absent_and_directly_parsed_configuration_never_invents_source_paths() {
     for directory in [None, Some(dir.as_path())] {
         let (map, errors) = Keymap::load(directory);
         assert!(errors.is_empty() && map.diagnostics.source.is_none());
-        let (_, status) = crate::presentation::StatusColors::load_diagnostics(directory);
+        let (_, status) = crate::status_colors::StatusColors::load_diagnostics(directory);
         assert!(status.is_empty() && status.source.is_none());
         let (_, theme) = crate::theme::load_diagnostics(directory);
         assert!(theme.is_empty() && theme.source.is_none());
@@ -1040,187 +1028,6 @@ fn mixed_small_popup_block_is_first_updates_on_resize_and_keeps_config_diagnosti
             !state.frame_width(67).contains("Popup too small"),
             "plaintext must not gain a size gate"
         );
-    }
-}
-
-#[test]
-fn error_blocks_have_individual_highlighted_headings_and_bottom_full_width_footer() {
-    let mut state = ui();
-    (state.keymap, state.keymap_errors) =
-        Keymap::parse(r#"{"select":{"next_row":["J","J","J"],"next_tab":["q"],"broken":null}}"#);
-    state
-        .status_errors
-        .push("Status colors invalid values", "working must be #RRGGBB");
-    state
-        .theme_diagnostics
-        .push("Theme invalid values", "unknown theme bogus");
-    let plain = state.frame_width(240);
-    assert!(!plain.contains("Other diagnostics"), "{plain}");
-    assert!(!plain.contains("Keymap input diagnostics"), "{plain}");
-    assert!(
-        !plain.contains("ERROR: Configuration\n")
-            && !plain.contains("ERROR: Keymap configuration\n"),
-        "{plain}"
-    );
-    for heading in [
-        "Maximum 2 keybinds per action - select mode",
-        "Unknown keymap actions - select mode",
-        "Keymap structure - select mode",
-        "Keymap collisions - select mode",
-        "Status colors invalid values",
-        "Theme invalid values",
-    ] {
-        assert!(plain.contains(&format!("ERROR: {heading}\n")), "{plain}");
-    }
-    assert!(!plain.contains("\n\n"), "plaintext must not pad: {plain}");
-    state.error_scroll.set(usize::MAX);
-    assert_eq!(
-        state.frame_width(240),
-        plain,
-        "plaintext includes all blocks regardless of terminal scroll"
-    );
-    for theme_index in [1, 2, 3] {
-        state.theme_index = theme_index;
-        for (width, height) in [(240, 36), (162, 36), (80, 15), (40, 7), (10, 3)] {
-            state.error_scroll.set(0);
-            let first = state.layout(width, height, true);
-            assert_eq!(first.len(), height);
-            assert_eq!(without_sgr(&first[height - 2]), "─".repeat(width));
-            let footer = first[height - 1].clone();
-            assert!(without_sgr(&footer).starts_with(if width >= 40 {
-                "↑/k: scroll up"
-            } else {
-                "↑/k:"
-            }));
-            let color = match state.theme().blocked {
-                ratatui::style::Color::Rgb(r, g, b) => format!("\x1b[38;2;{r};{g};{b}m"),
-                ratatui::style::Color::Reset => "\x1b[39m".into(),
-                ratatui::style::Color::LightRed => "\x1b[91m".into(),
-                color => panic!("unexpected test palette color: {color:?}"),
-            };
-            let expected_style = format!("\x1b[1m{color}");
-            let mut seen = String::new();
-            for at in 0..200 {
-                state.error_scroll.set(at);
-                let lines = state.layout(width, height, true);
-                assert_eq!(lines[height - 1], footer);
-                assert_eq!(without_sgr(&lines[height - 2]), "─".repeat(width));
-                for line in &lines[..height - 2] {
-                    let text = without_sgr(line);
-                    assert!(crate::presentation::columns(&text) <= width);
-                    if text.starts_with("ERROR:") {
-                        assert!(line.starts_with(&expected_style), "{line:?}");
-                        assert!(line.contains("\x1b[22m"));
-                    } else {
-                        assert!(!line.contains("\x1b[1m"), "{line:?}");
-                    }
-                    seen.push_str(&text);
-                }
-                if state.error_scroll.get() != at {
-                    break;
-                }
-            }
-            assert!(seen.contains("broken"), "{width}x{height}: {seen}");
-            assert!(
-                seen.replace(' ', "").contains("unknownthemebogus"),
-                "{seen}"
-            );
-        }
-    }
-}
-
-#[test]
-fn error_footer_stays_at_absolute_bottom_across_scroll_and_resize() {
-    let mut state = ui();
-    let actions: serde_json::Map<_, _> = (0..60)
-        .map(|at| (format!("diagnostic-{at}"), serde_json::json!(["J"])))
-        .collect();
-    (state.keymap, state.keymap_errors) =
-        Keymap::parse(&serde_json::json!({"select": actions}).to_string());
-    for (width, height) in [(240, 36), (80, 15), (40, 2), (40, 1), (40, 3), (162, 36)] {
-        let lines = state.layout(width, height, true);
-        if height <= 2 {
-            assert!(
-                lines
-                    .iter()
-                    .all(|line| without_sgr(line).starts_with("ERROR:")),
-                "{lines:?}"
-            );
-            assert!(without_sgr(&lines[0]).contains("need 80x15; actual"));
-            continue;
-        }
-        assert_eq!(lines.len(), height);
-        assert_eq!(without_sgr(&lines[height - 2]), "─".repeat(width));
-        let footer = lines[height - 1].clone();
-        state.key(Key::Down);
-        let scrolled = state.layout(width, height, true);
-        assert_ne!(scrolled[..height - 2], lines[..height - 2]);
-        assert_eq!(scrolled[height - 1], footer);
-        assert_eq!(without_sgr(&scrolled[height - 2]), "─".repeat(width));
-        state.key(Key::Up);
-        assert_eq!(state.layout(width, height, true), lines);
-    }
-}
-
-#[test]
-fn tiny_error_marker_reserves_width_without_clipping_diagnostic_fragments() {
-    let diagnostic = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    for width in [10, 20, 40] {
-        for height in [1, 2] {
-            let mut state = ui();
-            (state.keymap, state.keymap_errors) =
-                Keymap::parse(&serde_json::json!({"select": {diagnostic: ["J"]}}).to_string());
-            let mut visible = String::new();
-            for start in 0..200 {
-                state.error_scroll.set(start);
-                let lines = state.layout(width, height, true);
-                assert!(lines.iter().all(|line| !line.contains('─')), "{lines:?}");
-                if state.error_scroll.get() != start {
-                    for line in lines.iter().skip(1) {
-                        visible.push_str(without_sgr(line).strip_prefix("ERROR: ").unwrap());
-                    }
-                    break;
-                }
-                let text = without_sgr(&lines[0]);
-                assert!(crate::presentation::columns(&text) < width, "{text}");
-                visible.push_str(text.strip_prefix("ERROR: ").unwrap());
-            }
-            assert_eq!(
-                visible.replace(' ', ""),
-                format!("need80x15;actual{width}x{height}.Enlargepopupandreopen.{diagnostic}"),
-                "{width}x{height}"
-            );
-            assert!(visible.ends_with(diagnostic), "{visible}");
-        }
-    }
-}
-
-#[test]
-fn painted_error_footer_fills_last_cell_without_erasing_it() {
-    use ratatui::{buffer::CellWidth, style::Color};
-    let mut state = ui();
-    (state.keymap, state.keymap_errors) = Keymap::parse(r#"{"select":{"broken":null}}"#);
-    for theme_index in 0..crate::theme::NAMES.len() {
-        state.theme_index = theme_index;
-        for (width, height) in [(10, 3), (40, 7), (80, 15), (162, 36), (240, 36)] {
-            state.error_scroll.set(0);
-            let frame = state.terminal_frame(width, height);
-            let lines: Vec<_> = frame.split("\r\n").collect();
-            assert_eq!(lines.len(), height);
-            for (at, line) in lines.iter().enumerate() {
-                let cells = usize::from(without_sgr(&line.replace("\x1b[K", "")).cell_width());
-                assert!(cells <= width, "{width}x{height}: {line:?}");
-                if at == height - 2 {
-                    assert_eq!(cells, width);
-                    assert!(
-                        !line.contains("\x1b[K"),
-                        "full-width footer erased: {line:?}"
-                    );
-                } else if state.theme().background != Color::Reset {
-                    assert!(line.ends_with("\x1b[K"), "short row must clear: {line:?}");
-                }
-            }
-        }
     }
 }
 
@@ -2037,27 +1844,6 @@ fn error_page_takes_priority_at_small_sizes_and_scrolls_without_focus() {
 }
 
 #[test]
-fn one_and_two_row_error_pages_still_expose_diagnostics() {
-    let mut state = ui();
-    (state.keymap, state.keymap_errors) =
-        Keymap::parse(r#"{"select":{"unique-diagnosis-123":["J"]}}"#);
-    for height in [1, 2] {
-        state.error_scroll.set(0);
-        let lines = state.layout(40, height, true);
-        assert!(lines[0].contains("need 80x15"), "{lines:?}");
-        state.error_scroll.set(2);
-        let lines = state.layout(40, height, true);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.contains("unique-diagnosis-123")),
-            "{lines:?}"
-        );
-        assert!(lines.len() <= height);
-    }
-}
-
-#[test]
 fn dynamic_help_exposes_both_replacements_footer_only_first_non_arrow() {
     let keys = vec!["A".to_string(), "Z".to_string()];
     let (map, errors) = Keymap::parse(&serde_json::json!({"select":{"next_row":keys}}).to_string());
@@ -2278,7 +2064,7 @@ fn unreadable_jsonc_in_each_source_yields_only_io_without_legacy_fallback() {
     let mut state = ui();
     (state.keymap, state.keymap_errors) = Keymap::load(Some(&dir));
     (state.status_colors, state.status_errors) =
-        crate::presentation::StatusColors::load_diagnostics(Some(&dir));
+        crate::status_colors::StatusColors::load_diagnostics(Some(&dir));
     (state.theme_index, state.theme_diagnostics) = crate::theme::load_diagnostics(Some(&dir));
     let frame = state.frame_width(160);
     assert!(frame.starts_with("ERROR:"), "{frame}");
