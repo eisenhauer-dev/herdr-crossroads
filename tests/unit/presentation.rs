@@ -62,7 +62,10 @@ fn help_category_spacing_tracks_only_visible_groups() {
             state.key(Key::Char('?'));
             state.help.query = query.into();
             let full = state.layout(width, height, false);
-            let body = &full[2..full.len() - 2];
+            let footer_len = state
+                .hints(crate::keymap::Context::Help, width, 1, false)
+                .len();
+            let body = &full[2..full.len() - footer_len - 1];
             assert!(!body.first().unwrap().trim().is_empty(), "{full:?}");
             assert!(!body.last().unwrap().trim().is_empty(), "{full:?}");
             assert_eq!(
@@ -85,8 +88,15 @@ fn help_category_spacing_tracks_only_visible_groups() {
             assert_eq!(lines.len(), height);
             assert_eq!(lines[0], full[0]);
             assert_eq!(lines[1], full[1]);
-            assert_eq!(lines[height - 2], full[full.len() - 2]);
-            assert_eq!(lines[height - 1], full[full.len() - 1]);
+            let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
+            assert_eq!(
+                lines[height - budget - 1],
+                full[full.len() - footer_len - 1]
+            );
+            assert_eq!(
+                lines[height - budget..],
+                state.hints(crate::keymap::Context::Help, width, budget, true)
+            );
             if headings.len() == 2 {
                 let actions = lines.iter().position(|line| line == "  Actions").unwrap();
                 assert!(lines[actions - 1].trim().is_empty(), "{lines:?}");
@@ -113,43 +123,46 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
     for (width, height) in [(80, 15), (120, 24)] {
         let mut state = super::test_support::ui();
         state.key(Key::Char('?'));
-        let entry_count = state.help.context.entries().len();
+        let entry_count = state.help.entries.len();
+        let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
         for selected in 0..entry_count {
             let lines = state.layout(width, height, true);
             assert_eq!(state.help.selected, Some(selected));
             assert_eq!(lines.iter().filter(|line| line.contains("> ")).count(), 1);
             assert!(
-                lines[2..height - 2].iter().any(|line| {
-                    line.contains("> ")
-                        && line.contains(state.help.context.entries()[selected].meaning)
+                lines[2..height - budget - 1].iter().any(|line| {
+                    line.contains("> ") && line.contains(state.help.entries[selected].meaning)
                 }),
                 "{lines:?}"
             );
-            assert_eq!(lines[height - 2], lines[1]);
-            assert!(lines[height - 1].contains("Esc/q/?: close keys"));
+            assert_eq!(lines[height - budget - 1], lines[1]);
+            assert_eq!(
+                lines[height - budget..],
+                state.hints(crate::keymap::Context::Help, width, budget, true)
+            );
             state.key(Key::Down);
         }
         let bottom = state.layout(width, height, true);
         assert_eq!(state.help.selected, Some(entry_count - 1));
         assert_eq!(
             state.help.viewport_start.get(),
-            14usize.saturating_sub(height - 4)
+            14usize.saturating_sub(height - 3 - budget)
         );
         if height == 15 {
             assert!(
-                bottom[height - 3].contains("close Crossroads"),
+                bottom[height - budget - 2].contains("close Crossroads"),
                 "{bottom:?}"
             );
             state.help.viewport_start.set(9);
             state.help.selected = Some(6);
             state.key(Key::Up);
             // Exercise heading restoration with a smaller internal content budget.
-            let lines = state.layout(width, 7, true);
+            let lines = state.layout(width, 8, true);
             assert_eq!(lines[2], "  Actions", "{lines:?}");
             assert!(lines[3].contains("> Enter"), "{lines:?}");
             state.key(Key::Up);
-            let lines = state.layout(width, 7, true);
-            assert!(lines[2].contains("> Tab/Shift+Tab"), "{lines:?}");
+            let lines = state.layout(width, 8, true);
+            assert!(lines[2].contains("> → Tab | ← Shift+Tab"), "{lines:?}");
             assert!(lines[3].trim().is_empty(), "{lines:?}");
             assert_eq!(lines[4], "  Actions", "{lines:?}");
         }
@@ -161,7 +174,7 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
         assert_eq!(state.help.selected, Some(0));
         assert_eq!(state.help.viewport_start.get(), 0);
         assert_eq!(top[2], "  Navigation");
-        assert!(top[3].contains("> j/Down"));
+        assert!(top[3].contains("> j/↓"));
     }
 }
 
@@ -176,22 +189,21 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
             let first = state.layout(width, height, false);
             let meaning_columns = state
                 .help
-                .context
-                .entries()
+                .entries
                 .iter()
                 .map(|entry| {
                     let line = first
                         .iter()
                         .find(|line| {
-                            line.get(4..).is_some_and(|s| s.starts_with(entry.keys))
+                            line.get(4..).is_some_and(|s| s.starts_with(&entry.keys))
                                 && line.ends_with(entry.meaning)
                         })
                         .unwrap();
-                    line.len() - entry.meaning.len()
+                    usize::from(line.strip_suffix(entry.meaning).unwrap().cell_width())
                 })
                 .collect::<Vec<_>>();
             assert!(
-                meaning_columns.iter().all(|&column| column == 19),
+                meaning_columns.iter().all(|&column| column == 25),
                 "{first:?}: {meaning_columns:?}"
             );
             for _ in 0..15 {
@@ -199,11 +211,11 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 assert_eq!(lines.len(), height, "{lines:?}");
                 assert_eq!(lines[0], "  Search: / to search");
                 assert_eq!(lines[1], "  ".to_owned() + &"─".repeat(width - 4));
-                assert_eq!(lines[height - 2], lines[1]);
-                assert!(
-                    lines[height - 1].contains("/: search")
-                        && lines[height - 1].contains("r: reset")
-                        && lines[height - 1].contains("Esc/q/?: close keys")
+                let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
+                assert_eq!(lines[height - budget - 1], lines[1]);
+                assert_eq!(
+                    lines[height - budget..],
+                    state.hints(crate::keymap::Context::Help, width, budget, true)
                 );
                 let active = lines
                     .iter()
@@ -544,9 +556,61 @@ fn search_marks_scrolled_selected_rows_but_not_hidden_pane_or_offscreen_rows() {
 }
 
 #[test]
+fn undersized_notice_starts_error_and_matches_theme_error_style_at_tiny_heights() {
+    for theme_index in [1, 2, 3] {
+        let mut state = super::test_support::ui();
+        state.theme_index = theme_index;
+        state.theme_error = Some("unknown theme".into());
+        let notice_frame = state.terminal_frame(100, 15);
+        let notice = notice_frame
+            .split("\r\n")
+            .find(|line| line.contains("ERROR"))
+            .unwrap();
+        let start = notice.find("\x1b[1m").unwrap();
+        let style = &notice[start..notice.find("ERROR").unwrap()];
+        let end = notice.find("\x1b[22m").unwrap();
+        let reset_end = notice[end + 5..].find('m').unwrap() + end + 6;
+        let reset = &notice[end..reset_end];
+        state.theme_error = None;
+        for (width, height) in [(79, 15), (80, 14), (40, 2), (40, 1)] {
+            state.popup_size = Some((width, height));
+            let frame = state.terminal_frame(width, height);
+            let lines: Vec<_> = frame.split("\r\n").collect();
+            assert!(lines[0].contains(&format!("{style}ERROR:")), "{frame:?}");
+            assert!(lines[0].contains(reset), "{frame:?}");
+            assert!(!lines[0].contains("\x1b[0m"), "{frame:?}");
+            assert!(frame.contains(&format!("{width}x{height}")), "{frame:?}");
+            assert!(frame.contains("80x15"), "{frame:?}");
+            if height > 1 {
+                assert!(frame.contains("reopen"), "{frame:?}");
+                assert!(!lines[1].contains("\x1b[1m"), "{frame:?}");
+            }
+            assert!(lines.len() <= height);
+            let plain = state.frame_width(width);
+            assert!(plain.starts_with("ERROR:"), "{plain}");
+            assert!(!plain.contains('\x1b'), "{plain:?}");
+            assert!(plain.contains(&format!("{width}x{height}")), "{plain}");
+            assert!(plain.contains("80x15"), "{plain}");
+        }
+    }
+}
+
+#[test]
 fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state() {
+    let plain_line = |line: &str| -> String {
+        line.split('\x1b')
+            .enumerate()
+            .map(|(at, part)| {
+                if at == 0 {
+                    part
+                } else {
+                    part.split_once('m').unwrap().1
+                }
+            })
+            .collect()
+    };
     let mut state = ui();
-    state.theme_index = 3; // Terminal theme retains the four unpainted notice lines.
+    state.theme_index = 3; // Terminal theme retains its default background.
     state.key(Key::Down);
     state.key(Key::Char('/'));
     for c in "codex".chars() {
@@ -559,14 +623,14 @@ fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state()
     for (width, height) in [(67, 12), (79, 15), (80, 14)] {
         state.popup_size = Some((width, height));
         let piped = state.frame_width(width);
-        assert!(piped.contains("Search: codex") && !piped.contains("Crossroads needs"));
+        assert!(piped.starts_with("ERROR:") && !piped.contains("Search: codex"));
         let frame = state.terminal_frame(width, height);
         assert_eq!(
-            frame.split("\r\n").collect::<Vec<_>>(),
+            frame.split("\r\n").map(plain_line).collect::<Vec<_>>(),
             [
-                "  Crossroads needs minimum content size 80x15.".to_owned(),
+                "ERROR: Crossroads needs minimum content size 80x15.".to_owned(),
                 format!("  Your content size is: {width}x{height}."),
-                "  Set larger size in herdr plugin manifest.".to_owned(),
+                "  Set larger size in herdr plugin manifest and reopen.".to_owned(),
                 "  Press Enter/Esc/q to close.".to_owned(),
             ],
             "{frame}"
@@ -575,7 +639,14 @@ fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state()
             !frame.contains("Search:") && !frame.contains("Claude") && !frame.contains("focus"),
             "{frame}"
         );
-        for key in [Key::Char('/'), Key::Down, Key::Char('?')] {
+        for key in [
+            Key::Char('/'),
+            Key::Down,
+            Key::Up,
+            Key::Char('j'),
+            Key::Char('k'),
+            Key::Char('?'),
+        ] {
             assert!(state.key(key).is_none());
             assert!(!state.closed);
         }
@@ -606,7 +677,7 @@ fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state()
         assert_eq!(frame.split("\r\n").count(), 4, "{frame}");
         assert!(frame
             .split("\r\n")
-            .all(|line| usize::from(line.cell_width()) < width));
+            .all(|line| usize::from(plain_line(line).cell_width()) < width));
     }
 }
 
@@ -621,7 +692,7 @@ fn undersized_popup_enter_closes_without_requesting_focus() {
 #[test]
 fn search_and_keyboard_footer_share_table_extent_in_both_modes() {
     use ratatui::buffer::CellWidth;
-    for width in [12, 20, 60, 150] {
+    for width in [80, 109, 110, 150] {
         let mut state = ui();
         for mode in [Mode::Select, Mode::Search] {
             state.mode = mode;
@@ -735,14 +806,12 @@ fn popup_switches_all_roomy_chrome_at_110_columns() {
                 && line.contains("working")),
             "{width}: {frame}"
         );
-        assert_eq!(
-            lines[19].contains("j/k: \u{2195}pane"),
-            roomy,
+        let hint_rows = state.hint_rows(crate::keymap::Context::Select, width, 20);
+        assert!(
+            lines[20 - hint_rows].contains("j/↓: ↓pane · k/↑: ↑pane"),
             "{width}: {frame}"
         );
-        if !roomy {
-            assert!(lines[18].contains("j/k: \u{2195}pane"), "{width}: {frame}");
-        }
+        assert!(lines[19].contains("?: keys"), "{width}: {frame}");
         assert_eq!(state.key(Key::Enter).as_deref(), Some("p-b"));
     }
     state.query = "codex".into();
@@ -904,22 +973,30 @@ fn select_footer_uses_dot_groups_without_right_padding() {
     use ratatui::buffer::CellWidth;
     for width in [60, 76, 109, 110, 111, 119, 120, 121, 137, 138, 139, 150] {
         for height in [5, 15] {
-            let frame = ui().terminal_frame(width, height);
+            let state = ui();
+            let frame = state.terminal_frame(width, height);
             let lines: Vec<_> = frame.split("\r\n").collect();
             let last = lines[height - 1];
-            let expected = if width >= 110 {
-                "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
-            } else {
-                assert_eq!(
-                    lines[height - 2],
-                    "  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace",
-                    "{frame}"
-                );
-                "Enter: focus · Esc/q: exit"
-            };
-            assert_eq!(last, format!("  {expected} · ?: keys"), "{frame}");
+            let budget = state.hint_rows(crate::keymap::Context::Select, width, height);
+            let expected = state.hints(crate::keymap::Context::Select, width, budget, true);
+            assert_eq!(
+                &lines[height - budget..],
+                expected.iter().map(String::as_str).collect::<Vec<_>>(),
+                "{frame}"
+            );
+            assert!(!last.ends_with(' '), "{frame}");
             assert!((last.cell_width() as usize) < width, "{frame}");
-            assert!(!last.contains('|'), "{frame}");
+            assert_eq!(
+                expected
+                    .iter()
+                    .map(|line| line.matches('|').count())
+                    .sum::<usize>(),
+                lines[height - budget..]
+                    .iter()
+                    .map(|line| line.matches('|').count())
+                    .sum::<usize>(),
+                "{frame}"
+            );
         }
     }
 }
@@ -965,7 +1042,7 @@ fn roomy_header_rule_is_dim_unselectable_and_respects_viewport_and_filter() {
 
     let mut state = ui();
     state.key(Key::Down);
-    let one_pane = state.terminal_frame(150, 8);
+    let one_pane = state.terminal_frame(150, 9);
     let lines: Vec<_> = one_pane.split("\r\n").collect();
     assert!(lines[3].contains('┄'), "{one_pane}");
     assert!(
@@ -997,32 +1074,189 @@ fn compact_and_roomy_footers_show_navigation_with_final_help_group() {
         let state = ui();
         let frame = state.terminal_frame(width, 15);
         let footer = frame.split("\r\n").last().unwrap();
-        let navigation = if width >= 110 {
-            "j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace · Enter: focus · Esc/q: exit"
-        } else {
-            assert_eq!(
-                frame.split("\r\n").nth(13),
-                Some("  j/k: ↕pane · h/l: ↕tab · Tab/⇧Tab: ↕workspace"),
-                "{frame}"
-            );
-            "Enter: focus · Esc/q: exit"
-        };
+        let complete = state
+            .hints(crate::keymap::Context::Select, width, 2, false)
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace("/ ", "/");
+        let hint_lines = state.hints(crate::keymap::Context::Select, width, 2, false);
         assert_eq!(
-            footer.matches('·').count(),
-            if width >= 110 { 5 } else { 2 },
+            complete.matches('·').count() + hint_lines.len() - 1,
+            8,
+            "{complete}"
+        );
+        for group in [
+            "j/↓: ↓pane",
+            "k/↑: ↑pane",
+            "h/←: ↑tab",
+            "l/→: ↓tab",
+            "Tab: ↓ws",
+            "Shift+Tab: ↑ws",
+            "Enter: focus",
+            "Esc: exit",
+            "?: keys",
+        ] {
+            assert!(complete.contains(group), "{group}: {complete}");
+        }
+        assert_eq!(complete.matches('|').count(), 0, "{frame}");
+        assert_eq!(complete.matches('↓').count(), 4, "{frame}");
+        assert_eq!(complete.matches('↑').count(), 4, "{frame}");
+        assert_eq!(complete.matches('→').count(), 1, "{complete}");
+        assert_eq!(complete.matches('←').count(), 1, "{complete}");
+        assert_eq!(
+            footer,
+            state
+                .hints(
+                    crate::keymap::Context::Select,
+                    width,
+                    state.hint_rows(crate::keymap::Context::Select, width, 15),
+                    true
+                )
+                .last()
+                .unwrap(),
             "{frame}"
         );
-        assert!(!footer.contains('|'), "{frame}");
-        assert!(footer.starts_with(&format!("  {navigation}")), "{frame}");
-        assert_eq!(
-            footer.matches('↕').count(),
-            usize::from(width >= 110) * 3,
-            "{frame}"
-        );
-        assert!(!footer.contains('↑') && !footer.contains('↓'), "{frame}");
-        assert_eq!(footer, format!("  {navigation} · ?: keys"), "{frame}");
         assert!((footer.cell_width() as usize) < width, "{frame}");
         assert_eq!(frame.split("\r\n").count(), 15, "{frame}");
+    }
+}
+
+#[test]
+fn footer_tab_and_workspace_arrows_are_vertical_with_effective_keys() {
+    use crate::keymap::{Context, Keymap};
+    for custom in [false, true] {
+        let mut state = ui();
+        let expected = if custom {
+            let (map, errors) = Keymap::parse(
+                r#"{"select":{"previous_tab":["H"],"next_tab":["L"],"next_workspace":["N"],"previous_workspace":["P"]}}"#,
+            );
+            assert!(errors.is_empty(), "{errors:?}");
+            state.keymap = map;
+            ["H: ↑tab", "L: ↓tab", "N: ↓ws", "P: ↑ws"]
+        } else {
+            ["h/←: ↑tab", "l/→: ↓tab", "Tab: ↓ws", "Shift+Tab: ↑ws"]
+        };
+        let footer = state.hints(Context::Select, 240, 3, false).join(" ");
+        for group in expected {
+            assert!(footer.contains(group), "{group}: {footer}");
+        }
+    }
+}
+
+#[test]
+fn custom_opening_actions_are_absent_from_select_and_help_footers() {
+    use crate::keymap::{Context, Keymap};
+    let mut state = ui();
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"open_search":["S"],"reset_search":["R"],"open_themes":["T"]},"help":{"open_search":["S"],"reset_search":["R"]}}"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    state.keymap = map;
+    let select = state.hints(Context::Select, 240, 3, false).join(" ");
+    let help = state.hints(Context::Help, 240, 3, false).join(" ");
+    assert_eq!(
+        (
+            select.contains("S:"),
+            select.contains("R:"),
+            select.contains("T:"),
+            help.contains("S:"),
+            help.contains("R:")
+        ),
+        (false, false, false, false, false),
+        "select={select}; help={help}"
+    );
+}
+
+#[test]
+fn footers_omit_opening_actions_but_preserve_full_keys_and_search_controls() {
+    use crate::keymap::{Context, Keymap};
+    for custom in [false, true] {
+        let mut state = ui();
+        let (search, reset, themes, labels) = if custom {
+            let (map, errors) = Keymap::parse(
+                r#"{"select":{"open_search":["S"],"reset_search":["R"],"open_themes":["T"]},"help":{"open_search":["S"],"reset_search":["R"]}}"#,
+            );
+            assert!(errors.is_empty(), "{errors:?}");
+            state.keymap = map;
+            (
+                Key::Char('S'),
+                Key::Char('R'),
+                Key::Char('T'),
+                ["S", "R", "T"],
+            )
+        } else {
+            (
+                Key::Char('/'),
+                Key::Char('r'),
+                Key::Char('t'),
+                ["/", "r", "t"],
+            )
+        };
+        for context in [Context::Select, Context::Help] {
+            for width in [80, 120, 240] {
+                let footer = state.hints(context, width, 3, false).join(" ");
+                for action in ["search", "reset", "theme"] {
+                    assert!(!footer.contains(action), "{context:?}: {footer}");
+                }
+                for label in &labels[..if context == Context::Help { 2 } else { 3 }] {
+                    assert!(
+                        !footer
+                            .split_whitespace()
+                            .any(|token| token == format!("{label}:")),
+                        "{footer}"
+                    );
+                }
+            }
+        }
+        state.key(search.clone());
+        assert_eq!(state.mode, Mode::Search);
+        assert!(state
+            .frame_width(240)
+            .contains("Enter/Esc: select  Backspace: erase"));
+        state.key(Key::Char('x'));
+        state.key(Key::Enter);
+        state.key(reset.clone());
+        assert!(state.query.is_empty());
+        state.key(themes);
+        assert_eq!(state.mode, Mode::Themes);
+        state.key(Key::Esc);
+        state.key(Key::Char('?'));
+        for (label, meaning) in labels
+            .into_iter()
+            .zip(["search", "reset search", "choose theme"])
+        {
+            assert!(state
+                .help
+                .entries
+                .iter()
+                .any(|entry| entry.keys == label && entry.meaning == meaning));
+            assert!(state
+                .layout(240, 30, false)
+                .iter()
+                .any(|line| line.contains(label) && line.ends_with(meaning)));
+        }
+        for (keys, meaning) in [
+            ("h/←", "previous tab"),
+            ("l/→", "next tab"),
+            ("→ Tab | ← Shift+Tab", "next/previous workspace"),
+        ] {
+            assert!(state
+                .help
+                .entries
+                .iter()
+                .any(|entry| entry.keys == keys && entry.meaning == meaning));
+        }
+        state.key(search);
+        assert!(state.help.searching);
+        assert!(state
+            .frame_width(240)
+            .contains("Enter/Esc: return to keys · Backspace: erase"));
+        state.key(Key::Char('x'));
+        state.key(Key::Enter);
+        state.key(reset);
+        assert!(state.help.query.is_empty());
     }
 }
 
@@ -1201,7 +1435,8 @@ fn compact_selected_background_matches_horizontal_table_borders() {
         assert!(!border.is_empty(), "{frame}");
         assert_eq!(border, (2..width - 2).collect::<Vec<_>>(), "{frame}");
         if height > 6 {
-            let bottom: Vec<_> = lines[height - if width >= 110 { 2 } else { 3 }]
+            let bottom: Vec<_> = lines
+                [height - state.hint_rows(crate::keymap::Context::Select, width, height) - 1]
                 .chars()
                 .enumerate()
                 .filter_map(|(x, c)| (c == '─').then_some(x))
@@ -1349,7 +1584,9 @@ fn workspace_separators_are_single_dim_rows_only_between_visible_blocks() {
         assert!(!frame.contains('▏') && !frame.contains('│'), "{frame}");
         assert!(
             lines[1].starts_with("  ─")
-                && lines[height - if width == 150 { 2 } else { 3 }].starts_with("  ─"),
+                && lines
+                    [height - state.hint_rows(crate::keymap::Context::Select, width, height) - 1]
+                    .starts_with("  ─"),
             "{frame}"
         );
         state.query = "codex".into();
@@ -1432,7 +1669,10 @@ fn outer_border_is_horizontal_and_workspace_rows_have_no_margin_marker() {
             assert!(lines[1].starts_with("  ─"), "{frame}");
             if height > 6 {
                 assert!(
-                    lines[height - if width == 150 { 2 } else { 3 }].starts_with("  ─"),
+                    lines[height
+                        - state.hint_rows(crate::keymap::Context::Select, width, height)
+                        - 1]
+                    .starts_with("  ─"),
                     "{frame}"
                 );
             }
@@ -1525,7 +1765,13 @@ fn compact_workspace_blocks_have_one_separator_and_preserve_navigation() {
     let next = lines.iter().position(|line| line.contains("idle")).unwrap();
     assert_eq!(next, first + 2, "{frame}");
     assert!(lines[first + 1].starts_with("  ┄"), "{frame}");
-    assert_eq!(lines.len(), 14, "{frame}");
+    assert_eq!(
+        lines.len(),
+        12 + state
+            .hints(crate::keymap::Context::Select, 60, 2, false)
+            .len(),
+        "{frame}"
+    );
     assert!(lines[next].starts_with("    "), "{frame}");
     assert!(
         lines[first].starts_with("  ") && !lines[first].contains('┄'),
@@ -1632,7 +1878,13 @@ fn roomy_workspace_separator_is_one_physical_row() {
         assert!(plain.cell_width() < 150, "phantom column: {line:?}");
     }
     let plain = state.frame_width(150);
-    assert_eq!(plain.lines().count(), 14, "{plain}");
+    assert_eq!(
+        plain.lines().count(),
+        13 + state
+            .hints(crate::keymap::Context::Select, 150, 1, false)
+            .len(),
+        "{plain}"
+    );
     assert!(!plain.contains('\x1b'), "{plain}");
     assert!(
         plain
@@ -1991,7 +2243,14 @@ fn ratatui_table_has_headers_border_and_full_row_selection() {
         "{frame}"
     );
     assert!(frame.lines().nth(1).unwrap().starts_with("  ─"), "{frame}");
-    assert!(frame.lines().nth(9).unwrap().starts_with("  ─"), "{frame}");
+    assert!(
+        frame
+            .lines()
+            .nth(12 - state.hint_rows(crate::keymap::Context::Select, 76, 12) - 1)
+            .unwrap()
+            .starts_with("  ─"),
+        "{frame}"
+    );
     assert!(
         frame.contains("\x1b[48;5;236m")
             && frame.lines().any(|line| selected_prefix(line)
@@ -2089,18 +2348,24 @@ fn table_block_uses_nearly_full_width_without_moving_chrome() {
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(lines[0], "  Search: / to search");
         assert!(
-            lines[15].starts_with(if width >= 110 {
-                "  j/k: ↕pane"
-            } else {
-                "  Enter: focus"
-            }),
+            lines[15]
+                == state
+                    .hints(
+                        crate::keymap::Context::Select,
+                        width,
+                        state.hint_rows(crate::keymap::Context::Select, width, 16),
+                        true
+                    )
+                    .last()
+                    .unwrap(),
             "{frame}"
         );
         assert!(lines[1].starts_with("  ─"), "{frame}");
         assert!(frame.lines().any(|line| line.contains("Claude")), "{frame}");
         assert_eq!(lines[1].chars().count(), width - 2, "{frame}");
         assert!(
-            lines[if width >= 110 { 14 } else { 13 }].starts_with("  ─"),
+            lines[16 - state.hint_rows(crate::keymap::Context::Select, width, 16) - 1]
+                .starts_with("  ─"),
             "{frame}"
         );
     }
@@ -2117,11 +2382,16 @@ fn scrolled_context_stays_on_selected_row_in_short_view() {
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(lines.len(), 5, "{frame}");
         assert!(
-            lines[4].starts_with(if width >= 110 {
-                "  j/k: ↕pane"
-            } else {
-                "  Enter: focus"
-            }),
+            lines[4]
+                == state
+                    .hints(
+                        crate::keymap::Context::Select,
+                        width,
+                        state.hint_rows(crate::keymap::Context::Select, width, 5),
+                        true
+                    )
+                    .last()
+                    .unwrap(),
             "{frame}"
         );
         assert!(lines[1].starts_with("  ─"), "{frame}");
@@ -2236,11 +2506,16 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
             let lines: Vec<_> = frame.split("\r\n").collect();
             assert_eq!(lines.len(), height, "{frame}");
             assert!(
-                lines[height - 1].starts_with(if width >= 110 {
-                    "  j/k: ↕pane"
-                } else {
-                    "  Enter: focus"
-                }),
+                lines[height - 1]
+                    == state
+                        .hints(
+                            crate::keymap::Context::Select,
+                            width,
+                            state.hint_rows(crate::keymap::Context::Select, width, height),
+                            true
+                        )
+                        .last()
+                        .unwrap(),
                 "{frame}"
             );
             assert!(
@@ -2263,7 +2538,17 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
         let help = state.terminal_frame(width, 16);
         assert_eq!(help.split("\r\n").count(), 16, "{help}");
         assert!(
-            help.ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            help.ends_with(
+                state
+                    .hints(
+                        crate::keymap::Context::Help,
+                        width,
+                        state.hint_rows(crate::keymap::Context::Help, width, 16),
+                        true
+                    )
+                    .join("\r\n")
+                    .as_str()
+            ),
             "{help}"
         );
     }
@@ -2286,20 +2571,27 @@ fn help_shows_theme_shortcut_without_losing_keys_at_minimum_and_wide_sizes() {
             "{frame}"
         );
         assert!(
-            frame.contains("j/Down")
-                && frame.contains("h/Left")
-                && frame.contains("Tab/Shift+Tab")
+            frame.contains("j/↓")
+                && frame.contains("h/←")
+                && frame.contains("→ Tab | ← Shift+Tab")
                 && frame.contains("next/previous workspace"),
             "{frame}"
         );
         assert!(
-            frame.contains("Enter")
-                && frame.contains("focus selected pane")
-                && frame.contains("reset search"),
+            frame.contains("Enter") && frame.contains("focus selected pane"),
             "{frame}"
         );
         assert!(
-            frame.ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            frame.ends_with(
+                &state
+                    .hints(
+                        crate::keymap::Context::Help,
+                        width,
+                        state.hint_rows(crate::keymap::Context::Help, width, 15),
+                        true
+                    )
+                    .join("\r\n")
+            ),
             "{frame}"
         );
         // The category spacer moves this shortcut below the initial 15-row viewport.
@@ -2307,12 +2599,21 @@ fn help_shows_theme_shortcut_without_losing_keys_at_minimum_and_wide_sizes() {
             state.key(Key::Down);
         }
         let scrolled = state.terminal_frame(width, 15);
+        assert!(scrolled.contains("reset search"), "{scrolled}");
         assert!(scrolled.contains("choose theme"), "{scrolled}");
         assert!(scrolled.contains("> t"), "{scrolled}");
         assert_eq!(scrolled.split("\r\n").count(), 15);
         assert!(
-            scrolled
-                .ends_with("  j/k/Up/Down: navigate · /: search · r: reset · Esc/q/?: close keys"),
+            scrolled.ends_with(
+                &state
+                    .hints(
+                        crate::keymap::Context::Help,
+                        width,
+                        state.hint_rows(crate::keymap::Context::Help, width, 15),
+                        true
+                    )
+                    .join("\r\n")
+            ),
             "{scrolled}"
         );
         for _ in 0..8 {
@@ -2384,7 +2685,8 @@ fn down_moves_marker_until_viewport_bottom_before_scrolling() {
             "{moved}"
         );
     }
-    for (width, height) in [(76, 10), (120, 11)] {
+    // Keep the same pane-row budget with the additional complete footer line.
+    for (width, height) in [(76, 11), (120, 12)] {
         let mut state = ui();
         let initial = state.terminal_frame(width, height);
         assert!(
@@ -2603,4 +2905,590 @@ fn hidden_pane_match_reveals_name_and_tiny_width_keeps_marker() {
             <= 15),
         "{tiny}"
     );
+}
+#[test]
+fn default_hint_frames_are_complete_and_stable_at_compact_and_wide_boundaries() {
+    for width in [80, 109, 110, 120, 145, 146, 180, 240] {
+        for notice in [false, true] {
+            let mut state = super::test_support::ui();
+            state.popup_size = Some((width, 15));
+            if notice {
+                state.theme_error = Some("theme.jsonc invalid; using Mocha".into());
+            }
+            let first = state.layout(width, 15, true);
+            assert!(
+                !state.hint_more.get(),
+                "defaults must not page at {width}: {first:?}"
+            );
+            assert_eq!(first.len(), 15);
+            let footer = first
+                .iter()
+                .rev()
+                .take_while(|line| !line.contains('─') && !line.contains("ERROR"))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let footer = footer
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace("/ ", "/");
+            for binding in [
+                "j/↓",
+                "k/↑",
+                "h/←",
+                "l/→",
+                "Tab",
+                "Shift+Tab",
+                "Enter: focus",
+                "Esc: exit",
+                "?: keys",
+            ] {
+                assert!(
+                    footer.contains(binding),
+                    "missing {binding} at {width}: {footer}"
+                );
+            }
+            assert_eq!(footer.replace("  ", " ").replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys");
+            assert!(
+                first
+                    .iter()
+                    .any(|line| line.contains("Claude") && line.contains("working")),
+                "{first:?}"
+            );
+            assert_eq!(
+                first.iter().filter(|line| line.contains("ERROR")).count(),
+                usize::from(notice)
+            );
+            state.hint_scroll.set(1);
+            assert_eq!(
+                state.layout(width, 15, true),
+                first,
+                "default hints changed at {width}"
+            );
+        }
+    }
+}
+
+#[test]
+fn footer_keys_precede_actions_for_custom_bindings_in_every_context() {
+    use crate::keymap::{Context, Keymap};
+    let mut state = super::test_support::ui();
+    let (map, errors) = Keymap::parse(
+        r#"{
+        "select":{"next_row":["J","Down"],"previous_row":["K","Up"],
+                  "previous_tab":["H","Left"],"next_tab":["L","Right"],
+                  "next_workspace":["N"],"previous_workspace":["P"]},
+        "help":{"next_category":["J","Down"],"previous_category":["K","Up"]},
+        "themes":{"next_theme":["J","Down"],"previous_theme":["K","Up"]}
+    }"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    state.keymap = map;
+    for (context, expected) in [
+        (Context::Select, "J/↓: ↓pane K/↑: ↑pane H/←: ↑tab L/→: ↓tab N: ↓ws P: ↑ws Enter: focus Esc: exit ?: keys"),
+        (Context::Help, "J/↓: ↓move K/↑: ↑move Esc: close keys"),
+        (Context::Themes, "J/↓: ↓theme K/↑: ↑theme Space: table Enter: save Esc: cancel"),
+    ] {
+        let actual = state.hints(context, 80, 3, false).join(" ")
+            .split_whitespace().collect::<Vec<_>>().join(" ").replace("/ ", "/");
+        assert_eq!(actual.replace(" · ", " "), expected, "{context:?}");
+    }
+    state.theme_table_preview = true;
+    assert!(state
+        .hints(Context::Themes, 240, 3, false)
+        .join(" ")
+        .contains("Space: list"));
+}
+
+#[test]
+fn hint_actions_and_literal_slash_are_unambiguous_without_identity_changes() {
+    use crate::input::Key;
+    use crate::keymap::{Context, Keymap};
+    let mut state = super::test_support::ui();
+    let select = state.hints(Context::Select, 240, 3, false).join(" ");
+    assert!(select.contains("j/↓: ↓pane · k/↑: ↑pane"), "{select}");
+    assert!(select.contains("h/←: ↑tab · l/→: ↓tab"), "{select}");
+    assert!(select.contains("Tab: ↓ws · Shift+Tab: ↑ws"), "{select}");
+    for (context, action) in [(Context::Help, "move"), (Context::Themes, "theme")] {
+        let text = state.hints(context, 240, 3, false).join(" ");
+        assert!(
+            text.contains(&format!("j/↓: ↓{action} · k/↑: ↑{action}")),
+            "{text}"
+        );
+    }
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"next_row":["/","J"],"open_search":["s"]},"themes":{"toggle_preview":["/","p"]}}"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(map.labels(Context::Select, "next_row"), "//J");
+    assert_eq!(
+        map.action(Context::Select, Key::Char('/')),
+        Some("next_row")
+    );
+    state.keymap = map;
+    assert!(state
+        .hints(Context::Select, 240, 3, false)
+        .join(" ")
+        .contains("'/': ↓pane · k/↑: ↑pane"));
+    assert!(state
+        .hints(Context::Themes, 240, 3, false)
+        .join(" ")
+        .contains("'/': table"));
+    state.key(Key::Char('?'));
+    let help = state.frame_width(240);
+    assert!(
+        help.contains("'/'/J") && help.contains("→ Tab | ← Shift+Tab"),
+        "{help}"
+    );
+}
+
+#[test]
+fn separator_characters_are_quoted_only_for_display() {
+    use crate::input::Key;
+    use crate::keymap::{Context, Keymap};
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"next_row":["/","|"],"open_search":["s"]},"help":{"next_category":["/","|"],"open_search":["s"]},"themes":{"next_theme":["/","|"]}}"#,
+    );
+    assert!(errors.is_empty());
+    assert_eq!(map.labels(Context::Select, "next_row"), "//|");
+    assert_eq!(
+        map.action(Context::Select, Key::Char('|')),
+        Some("next_row")
+    );
+    let mut state = super::test_support::ui();
+    state.keymap = map;
+    for width in [80, 240] {
+        for preview in [false, true] {
+            state.theme_table_preview = preview;
+            for (context, action, direction, separators) in [
+                (Context::Select, "next_row", "pane", 8),
+                (Context::Help, "next_category", "move", 2),
+                (Context::Themes, "next_theme", "theme", 4),
+            ] {
+                let hints = state
+                    .hints(context, width, 3, false)
+                    .join(" ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .replace("/ ", "/");
+                assert!(
+                    hints.contains(&format!("'/': ↓{direction} · k/↑: ↑{direction}")),
+                    "{hints}"
+                );
+                assert!(!hints.contains(" | "), "{hints}");
+                let lines = state.hints(context, width, 3, false);
+                assert_eq!(
+                    hints.matches('·').count() + lines.len() - 1,
+                    separators,
+                    "{hints}"
+                );
+                assert_eq!(state.keymap.action(context, Key::Char('|')), Some(action));
+            }
+        }
+    }
+}
+
+#[test]
+fn directional_help_labels_keep_meaning_columns_aligned() {
+    use ratatui::buffer::CellWidth;
+    let mut state = super::test_support::ui();
+    state.key(crate::input::Key::Char('?'));
+    let lines = state.layout(80, 15, false);
+    let positions: Vec<_> = state
+        .help
+        .entries
+        .iter()
+        .map(|entry| {
+            let line = lines
+                .iter()
+                .find(|line| {
+                    (line.starts_with("    ") || line.starts_with("  > "))
+                        && line.ends_with(entry.meaning)
+                })
+                .unwrap();
+            line.strip_suffix(entry.meaning).unwrap().cell_width()
+        })
+        .collect();
+    assert!(
+        positions.iter().all(|column| *column == positions[0]),
+        "{positions:?}: {lines:?}"
+    );
+}
+
+fn assert_help_display_query_filters_and_highlights(query: char, custom: bool, width: usize) {
+    use crate::keymap::Keymap;
+    let mut state = super::test_support::ui();
+    if custom {
+        let aliases = ["A", "Z"];
+        let (map, errors) = Keymap::parse(
+            &serde_json::json!({"select": {
+                "next_row": ["/", "|"],
+                "next_workspace": aliases,
+                "open_search": ["s"]
+            }})
+            .to_string(),
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+        state.keymap = map;
+    }
+    state.key(Key::Char('?'));
+    state.key(Key::Char('/'));
+    state.key(Key::Char(query));
+    let expected = match (custom, query) {
+        (true, '|') => vec![0, 4],
+        (true, '\'') => vec![0],
+        (false, '/') => vec![0, 1, 2, 3, 4, 6, 10],
+        (_, '→') => vec![3, 4],
+        (_, '←') => vec![2, 4],
+        (_, '|') => vec![4],
+        _ => unreachable!(),
+    };
+    assert_eq!(state.help.visible(), expected, "custom={custom}, {query}");
+    assert_eq!(state.help.selected_index(&expected), Some(expected[0]));
+    let lines = state.layout(width, 15, true);
+    let body = lines[2..lines.len() - 2].join("\n");
+    assert!(!body.contains("No matching keys"), "{lines:?}");
+    let highlighted = format!("\x1b[4m{query}\x1b[24m");
+    assert_eq!(
+        body.matches(&highlighted).count(),
+        expected.len(),
+        "custom={custom}, width={width}, {query}: {lines:?}"
+    );
+    let plain_body = body
+        .split('\x1b')
+        .enumerate()
+        .map(|(at, part)| {
+            if at == 0 {
+                part
+            } else {
+                part.split_once('m').unwrap().1
+            }
+        })
+        .collect::<String>();
+    let plain_body = plain_body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let positions: Vec<_> = expected
+        .iter()
+        .map(|&i| {
+            // Full meanings remain distinct even when several matches end in
+            // "pane"; normalize styling and wrapped whitespace, not the labels.
+            plain_body.find(state.help.entries[i].meaning).unwrap()
+        })
+        .collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    if custom {
+        assert_eq!(body.contains("Z"), expected.contains(&4), "{lines:?}");
+        assert_eq!(
+            body.contains(": "),
+            width < 80,
+            "normal/wrapped fixture: {lines:?}"
+        );
+    }
+    state.key(Key::Enter);
+    for &entry in expected.iter().skip(1) {
+        state.key(Key::Down);
+        assert_eq!(state.help.selected, Some(entry));
+    }
+    state.key(Key::Down); // Clamp at the last visible entry, including a single match.
+    assert_eq!(state.help.selected, expected.last().copied());
+    for &entry in expected.iter().rev().skip(1) {
+        state.key(Key::Up);
+        assert_eq!(state.help.selected, Some(entry));
+    }
+    state.key(Key::Up);
+    assert_eq!(state.help.selected, Some(expected[0]));
+    state.key(Key::Char('r'));
+    assert!(state.help.query.is_empty());
+    assert_eq!(state.help.visible(), (0..11).collect::<Vec<_>>());
+    assert_eq!(state.help.selected, Some(expected[0]));
+}
+
+#[test]
+fn help_display_query_pipe_filters_and_highlights() {
+    assert_help_display_query_filters_and_highlights('|', false, 80);
+}
+
+#[test]
+fn help_display_query_right_arrow_filters_and_highlights() {
+    assert_help_display_query_filters_and_highlights('→', false, 80);
+}
+
+#[test]
+fn help_display_query_left_arrow_filters_and_highlights() {
+    assert_help_display_query_filters_and_highlights('←', false, 80);
+}
+
+#[test]
+fn help_display_query_single_slash_filters_and_highlights() {
+    assert_help_display_query_filters_and_highlights('/', false, 80);
+}
+
+#[test]
+fn help_display_query_custom_labels_filter_and_highlight() {
+    for query in ['|', '→', '←', '\''] {
+        assert_help_display_query_filters_and_highlights(query, true, 240);
+    }
+}
+
+#[test]
+fn help_display_query_wrapped_custom_labels_filter_and_highlight() {
+    for query in ['|', '→', '←', '\''] {
+        assert_help_display_query_filters_and_highlights(query, true, 50);
+    }
+}
+
+#[test]
+fn all_contexts_keep_defaults_stable_and_oversized_custom_lists_are_errors() {
+    use crate::keymap::{Context, Keymap};
+    use crate::selection::Mode;
+    for (context, mode, preview) in [
+        (Context::Select, Mode::Select, false),
+        (Context::Help, Mode::Help, false),
+        (Context::Themes, Mode::Themes, false),
+        (Context::Themes, Mode::Themes, true),
+    ] {
+        let mut state = super::test_support::ui();
+        state.mode = mode;
+        state.theme_table_preview = preview;
+        for width in [80, 240] {
+            let first = state.layout(width, 15, true);
+            assert!(!state.hint_more.get(), "{context:?}: {first:?}");
+            let footer = state.hints(context, width, 3, false).join(" ");
+            assert!(
+                footer.contains(" · ") && !footer.contains(" | "),
+                "{footer}"
+            );
+            state.hint_scroll.set(1);
+            assert_eq!(state.layout(width, 15, true), first);
+        }
+    }
+    let aliases: Vec<_> = ["/".to_string(), "|".to_string()]
+        .into_iter()
+        .chain(('A'..='Z').map(|c| c.to_string()))
+        .collect();
+    let previous_aliases: Vec<_> = ('0'..='9').map(|c| c.to_string()).collect();
+    let (map, errors) = Keymap::parse(&serde_json::json!({"select":{"next_row":aliases,"previous_row":previous_aliases,"open_search":["s"]},"help":{"next_category":aliases,"previous_category":previous_aliases,"open_search":["s"]},"themes":{"next_theme":aliases,"previous_theme":previous_aliases}}).to_string());
+    assert_eq!(errors, [crate::keymap::KEY_LIMIT_HINT]);
+    assert_eq!(map.oversized_actions.len(), 6);
+    assert_eq!(map.diagnostic_blocks().len(), 3);
+    assert!(map
+        .diagnostic_blocks()
+        .iter()
+        .all(
+            |(heading, details)| heading.starts_with("Maximum 2 keybinds per action - ")
+                && details.len() == 2
+        ));
+    for (context, action) in [
+        ("select", "next_row"),
+        ("select", "previous_row"),
+        ("help", "next_category"),
+        ("help", "previous_category"),
+        ("themes", "next_theme"),
+        ("themes", "previous_theme"),
+    ] {
+        assert!(
+            map.oversized_actions
+                .iter()
+                .any(|entry| entry.context == context && entry.action == action),
+            "{context}.{action} missing"
+        );
+    }
+    let mut state = super::test_support::ui();
+    state.keymap = map;
+    state.keymap_errors = errors;
+    for (context, mode, preview) in [
+        (Context::Select, Mode::Select, false),
+        (Context::Help, Mode::Help, false),
+        (Context::Themes, Mode::Themes, false),
+        (Context::Themes, Mode::Themes, true),
+    ] {
+        state.mode = mode;
+        state.theme_table_preview = preview;
+        let frame = state.layout(80, 15, true).join("\n");
+        assert!(
+            frame.contains("Maximum 2 keybinds per action - ")
+                && !frame.contains("Context |")
+                && frame.contains("ERROR: Maximum 2 keybinds per action - themes mode")
+                && frame.contains("previous_theme"),
+            "{context:?}: {frame}"
+        );
+        assert!(!frame.contains("Agent/Pane Name"));
+    }
+}
+
+#[test]
+fn keymap_error_marker_matches_theme_error_style_without_hiding_details() {
+    use crate::keymap::Keymap;
+
+    for theme_index in [1, 2, 3] {
+        for config in [
+            r#"{"select":{"next_row":["J","J","J"],"previous_row":["K","K","K"]}}"#,
+            r#"{"select":{"next_row":["J","J","J"],"broken":null}}"#,
+            r#"{"select":{"broken":null}}"#,
+        ] {
+            let mut state = super::test_support::ui();
+            state.theme_index = theme_index;
+            state.theme_error = Some("unknown theme".into());
+            let notice_frame = state.terminal_frame(100, 15);
+            let notice = notice_frame
+                .split("\r\n")
+                .find(|line| line.contains("ERROR"))
+                .unwrap();
+            let start = notice.find("\x1b[1m").unwrap();
+            let error_style = &notice[start..notice.find("ERROR").unwrap()];
+            let end = notice.find("\x1b[22m").unwrap();
+            let reset_end = notice[end + 5..].find('m').unwrap() + end + 6;
+            let text_reset = &notice[end..reset_end];
+            state.theme_error = None;
+            (state.keymap, state.keymap_errors) = Keymap::parse(config);
+
+            let error_frame = state.terminal_frame(100, 15);
+            assert!(
+                error_frame.contains(error_style),
+                "must match theme ERROR style: {error_frame:?}"
+            );
+
+            let plain = state.frame_width(100);
+            assert!(plain.contains("ERROR"), "{plain}");
+            assert!(!plain.contains('\x1b'), "{plain:?}");
+            if !state.keymap.oversized_actions.is_empty() {
+                assert_eq!(
+                    plain
+                        .matches("Maximum 2 keybinds per action - select mode")
+                        .count(),
+                    1
+                );
+                assert!(!plain.contains("Context |"));
+                assert!(plain.contains("next_row"));
+                assert!(plain.starts_with("ERROR: Maximum 2 keybinds per action - select mode\n"));
+                if config.contains("previous_row") {
+                    assert!(plain.contains("next_row\nprevious_row"));
+                }
+            }
+            for height in [1, 2, 3, 15] {
+                let frame = state.terminal_frame(100, height);
+                let lines: Vec<_> = frame.split("\r\n").collect();
+                let header = lines[0];
+                assert!(header.contains("ERROR"), "{height}: {frame:?}");
+                assert!(
+                    header.contains(&format!("{error_style}ERROR:")),
+                    "{height}: {frame:?}"
+                );
+                assert!(header.contains(text_reset), "{height}: {frame:?}");
+                assert!(
+                    !header.contains("\x1b[0m"),
+                    "background must survive: {frame:?}"
+                );
+                let diagnostic_frame = if height < 15 {
+                    state.error_scroll.set(if height <= 2 { 2 } else { 5 });
+                    let scrolled = state.terminal_frame(100, height);
+                    if height == 3 {
+                        assert_eq!(scrolled.split("\r\n").nth(1), Some(lines[1]));
+                        assert_eq!(scrolled.split("\r\n").nth(2), Some(lines[2]));
+                        assert!(!scrolled.split("\r\n").next().unwrap().contains("\x1b[1m"));
+                    }
+                    state.error_scroll.set(0);
+                    scrolled
+                } else {
+                    frame.clone()
+                };
+                assert!(
+                    diagnostic_frame.contains(if state.keymap.oversized_actions.is_empty() {
+                        "broken"
+                    } else {
+                        "next_row"
+                    }),
+                    "diagnostic lost at {height}: {diagnostic_frame:?}"
+                );
+                if height >= 3 {
+                    let detail = lines[1];
+                    assert!(
+                        !detail.contains("\x1b[1m"),
+                        "details must remain normal text: {frame:?}"
+                    );
+                }
+                if theme_index != 3 {
+                    let background = notice.split("\x1b[38;").next().unwrap();
+                    assert!(
+                        lines.iter().all(|line| line.starts_with(background)),
+                        "{frame:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+#[test]
+fn a10c_footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
+    use crate::keymap::{Context, Keymap};
+    let mut state = super::test_support::ui();
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"next_row":["J","Left"],"previous_row":["Up","K"],"previous_tab":["H"],"next_tab":["L"],"next_workspace":["Tab","Right"],"focus_pane":["Enter","F"],"close":["Esc","X"]}}"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    state.keymap = map;
+    let wide = state.hints(Context::Select, 240, 3, false).join(" ");
+    assert!(wide.contains("J/←: ↓pane"), "{wide}");
+    assert!(
+        wide.contains("↑: ↑pane") && wide.contains("Tab/→: ↓ws"),
+        "{wide}"
+    );
+    assert!(
+        wide.contains("Enter: focus") && wide.contains("Esc: exit"),
+        "{wide}"
+    );
+    assert!(
+        !wide.contains("F:") && !wide.contains("X:") && !wide.contains("/K"),
+        "{wide}"
+    );
+    for width in 80..=240 {
+        let lines = state.hints(Context::Select, width, 3, false);
+        for unit in wide.trim().split(" · ") {
+            assert!(
+                lines.iter().any(|line| line.contains(unit)),
+                "split unit {unit} at {width}: {lines:?}"
+            );
+        }
+        assert!(lines
+            .iter()
+            .all(|line| !line.trim().starts_with('·') && !line.trim().ends_with('·')));
+    }
+}
+
+#[test]
+fn a10c_footer_never_splits_default_action_units() {
+    use crate::keymap::Context;
+    let state = super::test_support::ui();
+    let units = state.hints(Context::Select, 240, 3, false).join(" ");
+    for width in 80..=240 {
+        let lines = state.hints(Context::Select, width, 3, false);
+        for unit in units.trim().split(" · ") {
+            assert!(
+                lines.iter().any(|line| line.contains(unit)),
+                "split {unit} at {width}: {lines:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a10c_all_displayed_arrows_are_symbols_but_identity_is_canonical() {
+    use crate::keymap::{Context, Keymap};
+    for (syntax, display) in [("Up", "↑"), ("Down", "↓"), ("Left", "←"), ("Right", "→")] {
+        let (map, errors) = Keymap::parse(&format!(
+            r#"{{"select":{{"open_help":["{syntax}"],"next_row":["J"],"previous_row":["K"],"previous_tab":["H"],"next_tab":["L"]}}}}"#
+        ));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(map.labels(Context::Select, "open_help"), syntax);
+        assert_eq!(map.display_labels(Context::Select, "open_help"), display);
+    }
+    let mut state = super::test_support::ui();
+    (state.keymap, state.keymap_errors) = Keymap::parse(r#"{"select":{"bad_config":null}}"#);
+    assert!(state
+        .frame_width(80)
+        .contains("↑/k: scroll up · ↓/j: scroll down"));
 }

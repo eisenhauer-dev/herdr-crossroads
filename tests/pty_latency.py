@@ -58,7 +58,7 @@ def main(binary):
             child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             os.close(slave)
             slave = -1
-            initial = read_frame(master, " · ?: keys".encode())
+            initial = read_frame(master, b"\x1b[?25l")
             assert "Workspace" in initial and "Tab" in initial and "filler" in initial and "p-0000" not in initial, initial[-300:]
             for key, count in (("x", 3), ("y", 2), ("z", 1)):
                 if key == "x":
@@ -79,7 +79,7 @@ def main(binary):
                 assert elapsed_ms <= 100, f"query {query}: {elapsed_ms:.2f} ms > 100 ms"
             os.write(master, b"\x1b")
             # Raw terminal Esc is resolved after the 100ms input timeout.
-            read_frame(master, " · ?: keys".encode())
+            read_frame(master, b"\x1b[?25l")
             os.write(master, b"\x1b")
             assert child.wait(timeout=3) == 0, "Esc in Select did not close"
             assert (directory / "calls.log").read_text() == "api snapshot\n"
