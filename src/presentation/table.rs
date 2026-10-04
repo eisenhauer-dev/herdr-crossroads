@@ -8,7 +8,8 @@ use ratatui::{
 
 use super::{clipped, columns, marked_color, sgr_bg, sgr_fg};
 use crate::keymap::Context;
-use crate::selection::{match_positions, matches_field, Mode, Ui};
+use crate::search::{match_positions, matches_field};
+use crate::selection::{Mode, Ui};
 use crate::theme::Theme;
 
 impl Ui {

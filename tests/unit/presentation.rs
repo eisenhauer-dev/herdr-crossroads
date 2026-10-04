@@ -207,7 +207,7 @@ fn hint_actions_and_literal_slash_are_unambiguous_without_identity_changes() {
     assert_eq!(map.labels(Context::Select, "next_row"), "//J");
     assert_eq!(
         map.action(Context::Select, Key::Char('/')),
-        Some("next_row")
+        Some(crate::keymap::Action::NextRow)
     );
     state.keymap = map;
     assert!(state

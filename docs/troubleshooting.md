@@ -191,14 +191,20 @@ classic/Kitty tests do not verify every live outer-terminal/Herdr combination.
 
 ## Evidence and example status
 
-Behavior above follows `src/lib.rs` (startup/reconnect), `src/topology.rs`
-(snapshot), `src/selection.rs` (filter/status), `src/input.rs` (input/focus),
-`src/config.rs`, `src/keymap.rs`, `src/theme.rs` and `src/status_colors.rs`.
+Behavior above follows `src/runtime.rs` (startup/input loop),
+`src/runtime/live_status.rs` (status/reconnect), `src/topology.rs` (snapshot),
+`src/selection.rs` and its `help`/`themes` children (state/input), `src/search.rs`
+(matching), `src/input.rs` (decoding), `src/actions.rs` and `src/focus.rs`
+(action execution/focus), `src/config.rs`, `src/keymap.rs`, the `palette`,
+`discovery` and `persistence` children of `src/theme.rs`, and `src/status_colors.rs`.
 `src/presentation.rs` dispatches views and paints frames; its `diagnostics`,
 `table`, `footer`, `help` and `themes` child modules own their respective layouts.
 Rendering checks live under `tests/unit/presentation/`, with shared and cross-view
-checks in `tests/unit/presentation.rs`; mixed configuration/state assertions stay
-in their existing suites. Isolated unit/integration and PTY coverage lives under
+checks in `tests/unit/presentation.rs`. Selection and theme checks mirror their
+domain modules under `tests/unit/selection/` and `tests/unit/theme/`; input, action,
+search and runtime-status cases have dedicated unit suites. Mixed keymap
+configuration/rendering assertions remain in `tests/unit/keymap.rs`.
+Isolated unit/integration and PTY coverage lives under
 `tests/`. Host-command lifecycle
 claims use the versioned sources linked in the [README](../README.md#installation).
 Shell diagnostic snippets are read-only and statically checked here, **not run

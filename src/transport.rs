@@ -21,8 +21,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::topology::{entries, field, Row};
-
 pub(super) enum StatusMessage {
     Event(Value),
     Disconnected,
@@ -31,23 +29,6 @@ pub(super) enum StatusMessage {
 #[cfg(unix)]
 thread_local! {
     pub(super) static RECONNECT_CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(unix)]
-pub(super) struct ReconnectAttempt {
-    pub(super) rx: Receiver<io::Result<(StatusSubscription, Vec<Row>)>>,
-    pub(super) cancel: Arc<AtomicBool>,
-    pub(super) worker: Option<thread::JoinHandle<()>>,
-}
-
-#[cfg(unix)]
-impl Drop for ReconnectAttempt {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -231,10 +212,14 @@ pub(super) fn pane_ids(executable: &std::ffi::OsStr, bounded: bool) -> io::Resul
             "not a pane list",
         ));
     }
-    let panes = entries(&data["result"], "panes")?;
+    let panes = data["result"]["panes"]
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing panes in snapshot"))?;
     let mut ids = Vec::new();
     for pane in panes {
-        let id = field(pane, "pane_id")?;
+        let id = pane["pane_id"].as_str().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "missing pane_id in snapshot")
+        })?;
         if !ids.iter().any(|seen| seen == id) {
             ids.push(id.to_owned());
         }
