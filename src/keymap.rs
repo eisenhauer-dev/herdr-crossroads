@@ -28,9 +28,58 @@ impl Context {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Action {
+    NextRow,
+    PreviousRow,
+    PreviousTab,
+    NextTab,
+    NextWorkspace,
+    PreviousWorkspace,
+    FocusPane,
+    OpenSearch,
+    ResetSearch,
+    OpenThemes,
+    OpenHelp,
+    Close,
+    NextCategory,
+    PreviousCategory,
+    NextTheme,
+    PreviousTheme,
+    TogglePreview,
+    Save,
+    Cancel,
+}
+
+impl Action {
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::NextRow => "next_row",
+            Self::PreviousRow => "previous_row",
+            Self::PreviousTab => "previous_tab",
+            Self::NextTab => "next_tab",
+            Self::NextWorkspace => "next_workspace",
+            Self::PreviousWorkspace => "previous_workspace",
+            Self::FocusPane => "focus_pane",
+            Self::OpenSearch => "open_search",
+            Self::ResetSearch => "reset_search",
+            Self::OpenThemes => "open_themes",
+            Self::OpenHelp => "open_help",
+            Self::Close => "close",
+            Self::NextCategory => "next_category",
+            Self::PreviousCategory => "previous_category",
+            Self::NextTheme => "next_theme",
+            Self::PreviousTheme => "previous_theme",
+            Self::TogglePreview => "toggle_preview",
+            Self::Save => "save",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
 pub(super) struct Binding {
     pub(super) context: Context,
-    pub(super) action: &'static str,
+    pub(super) action: Action,
     pub(super) keys: Vec<Key>,
 }
 pub(super) struct Keymap {
@@ -53,43 +102,43 @@ impl Default for Keymap {
             (
                 Context::Select,
                 &[
-                    ("next_row", "j/Down"),
-                    ("previous_row", "k/Up"),
-                    ("previous_tab", "h/Left"),
-                    ("next_tab", "l/Right"),
-                    ("next_workspace", "Tab"),
-                    ("previous_workspace", "Shift+Tab"),
-                    ("focus_pane", "Enter"),
-                    ("open_search", "/"),
-                    ("reset_search", "r"),
-                    ("open_themes", "t"),
-                    ("open_help", "?"),
-                    ("close", "Esc/q"),
+                    (Action::NextRow, "j/Down"),
+                    (Action::PreviousRow, "k/Up"),
+                    (Action::PreviousTab, "h/Left"),
+                    (Action::NextTab, "l/Right"),
+                    (Action::NextWorkspace, "Tab"),
+                    (Action::PreviousWorkspace, "Shift+Tab"),
+                    (Action::FocusPane, "Enter"),
+                    (Action::OpenSearch, "/"),
+                    (Action::ResetSearch, "r"),
+                    (Action::OpenThemes, "t"),
+                    (Action::OpenHelp, "?"),
+                    (Action::Close, "Esc/q"),
                 ][..],
             ),
             (
                 Context::Help,
                 &[
-                    ("next_category", "j/Down"),
-                    ("previous_category", "k/Up"),
-                    ("open_search", "/"),
-                    ("reset_search", "r"),
-                    ("close", "Esc/q"),
+                    (Action::NextCategory, "j/Down"),
+                    (Action::PreviousCategory, "k/Up"),
+                    (Action::OpenSearch, "/"),
+                    (Action::ResetSearch, "r"),
+                    (Action::Close, "Esc/q"),
                 ][..],
             ),
             (
                 Context::Themes,
                 &[
-                    ("next_theme", "j/Down"),
-                    ("previous_theme", "k/Up"),
-                    ("toggle_preview", "Space"),
-                    ("save", "Enter"),
-                    ("cancel", "Esc/q"),
+                    (Action::NextTheme, "j/Down"),
+                    (Action::PreviousTheme, "k/Up"),
+                    (Action::TogglePreview, "Space"),
+                    (Action::Save, "Enter"),
+                    (Action::Cancel, "Esc/q"),
                 ][..],
             ),
         ] {
             for &(action, keys) in actions {
-                let keys = if action == "open_search" {
+                let keys = if action == Action::OpenSearch {
                     vec![Key::Char('/')]
                 } else {
                     keys.split('/').map(|s| Key::parse(s).unwrap()).collect()
@@ -199,7 +248,7 @@ impl Keymap {
                 let target = map
                     .bindings
                     .iter()
-                    .position(|b| b.context.name() == context && b.action == action);
+                    .position(|b| b.context.name() == context && b.action.name() == action);
                 if known_context && target.is_none() {
                     let error = format!("{context}: unknown action {action}");
                     map.push_mode_diagnostic("Unknown keymap actions", context, action.into());
@@ -258,8 +307,11 @@ impl Keymap {
                 }
             }
         }
-        errors.extend(map.conflicts());
-        for (context, actions, keys) in map.collision_groups() {
+        let owners = map.collision_owners();
+        errors.extend(owners.iter().map(|((context, key), (_, actions))| {
+            format!("{context} | {key} | {}", actions.join(", "))
+        }));
+        for (context, actions, keys) in Self::collision_groups(owners) {
             map.diagnostics.push(
                 format!("Keymap collisions - {context} mode"),
                 format!("{}: {}", actions.join(", "), keys.join("/")),
@@ -283,24 +335,7 @@ impl Keymap {
         }
     }
 
-    fn conflicts(&self) -> Vec<String> {
-        let mut owners: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
-        for binding in &self.bindings {
-            for key in &binding.keys {
-                owners
-                    .entry((binding.context.name().into(), key.label()))
-                    .or_default()
-                    .push(binding.action);
-            }
-        }
-        owners
-            .into_iter()
-            .filter(|(_, actions)| actions.len() > 1)
-            .map(|((context, key), actions)| format!("{context} | {key} | {}", actions.join(", ")))
-            .collect()
-    }
-
-    fn collision_groups(&self) -> Vec<(String, Vec<&'static str>, Vec<String>)> {
+    fn collision_owners(&self) -> BTreeMap<(String, String), (Key, Vec<&'static str>)> {
         let mut owners: BTreeMap<(String, String), (Key, Vec<&str>)> = BTreeMap::new();
         for binding in &self.bindings {
             for key in &binding.keys {
@@ -308,9 +343,16 @@ impl Keymap {
                     .entry((binding.context.name().into(), key.label()))
                     .or_insert_with(|| (*key, Vec::new()))
                     .1
-                    .push(binding.action);
+                    .push(binding.action.name());
             }
         }
+        owners.retain(|_, (_, actions)| actions.len() > 1);
+        owners
+    }
+
+    fn collision_groups(
+        owners: BTreeMap<(String, String), (Key, Vec<&'static str>)>,
+    ) -> Vec<(String, Vec<&'static str>, Vec<String>)> {
         let mut groups: BTreeMap<(String, Vec<&str>), Vec<String>> = BTreeMap::new();
         for ((context, _), (key, actions)) in owners {
             if actions.len() > 1 {
@@ -350,7 +392,7 @@ impl Keymap {
         diagnostics.blocks
     }
 
-    pub(super) fn action(&self, context: Context, key: Key) -> Option<&'static str> {
+    pub(super) fn action(&self, context: Context, key: Key) -> Option<Action> {
         self.bindings
             .iter()
             .find(|b| b.context == context && b.keys.contains(&key))
@@ -360,7 +402,7 @@ impl Keymap {
     pub(super) fn labels(&self, context: Context, action: &str) -> String {
         self.bindings
             .iter()
-            .find(|b| b.context == context && b.action == action)
+            .find(|b| b.context == context && b.action.name() == action)
             .map(|b| {
                 b.keys
                     .iter()
@@ -375,7 +417,7 @@ impl Keymap {
     pub(super) fn display_labels(&self, context: Context, action: &str) -> String {
         self.bindings
             .iter()
-            .find(|b| b.context == context && b.action == action)
+            .find(|b| b.context == context && b.action.name() == action)
             .map(|b| {
                 if b.keys == [Key::Char('/')] {
                     return "/".into();
@@ -405,7 +447,7 @@ impl Keymap {
         };
         self.bindings
             .iter()
-            .find(|b| b.context == context && b.action == action)
+            .find(|b| b.context == context && b.action.name() == action)
             .map(|b| {
                 b.keys
                     .iter()

@@ -1,8 +1,120 @@
 use crate::config;
-use crate::input::{Arrow, Key, Keys};
-use crate::keymap::{Context, Keymap};
+use crate::input::{Arrow, Key};
+use crate::keymap::{Action, Context, Keymap};
+use crate::test_input::decode;
 use crate::test_presentation::without_sgr;
 use crate::test_support::ui;
+
+#[test]
+fn every_action_resolves_only_in_its_declared_modes_with_stable_names() {
+    let map = Keymap::default();
+    for (action, name, contexts) in [
+        (Action::NextRow, "next_row", vec![Context::Select]),
+        (Action::PreviousRow, "previous_row", vec![Context::Select]),
+        (Action::PreviousTab, "previous_tab", vec![Context::Select]),
+        (Action::NextTab, "next_tab", vec![Context::Select]),
+        (
+            Action::NextWorkspace,
+            "next_workspace",
+            vec![Context::Select],
+        ),
+        (
+            Action::PreviousWorkspace,
+            "previous_workspace",
+            vec![Context::Select],
+        ),
+        (Action::FocusPane, "focus_pane", vec![Context::Select]),
+        (
+            Action::OpenSearch,
+            "open_search",
+            vec![Context::Select, Context::Help],
+        ),
+        (
+            Action::ResetSearch,
+            "reset_search",
+            vec![Context::Select, Context::Help],
+        ),
+        (Action::OpenThemes, "open_themes", vec![Context::Select]),
+        (Action::OpenHelp, "open_help", vec![Context::Select]),
+        (Action::Close, "close", vec![Context::Select, Context::Help]),
+        (Action::NextCategory, "next_category", vec![Context::Help]),
+        (
+            Action::PreviousCategory,
+            "previous_category",
+            vec![Context::Help],
+        ),
+        (Action::NextTheme, "next_theme", vec![Context::Themes]),
+        (
+            Action::PreviousTheme,
+            "previous_theme",
+            vec![Context::Themes],
+        ),
+        (
+            Action::TogglePreview,
+            "toggle_preview",
+            vec![Context::Themes],
+        ),
+        (Action::Save, "save", vec![Context::Themes]),
+        (Action::Cancel, "cancel", vec![Context::Themes]),
+    ] {
+        assert_eq!(action.name(), name);
+        for context in [Context::Select, Context::Help, Context::Themes] {
+            let (replacement, errors) =
+                Keymap::parse(&serde_json::json!({context.name(): {name: ["Z"]}}).to_string());
+            if contexts.contains(&context) {
+                assert!(errors.is_empty(), "{context:?}.{name}: {errors:?}");
+                assert_eq!(replacement.action(context, Key::Char('Z')), Some(action));
+                let binding = map
+                    .bindings
+                    .iter()
+                    .find(|b| b.context == context && b.action == action)
+                    .unwrap();
+                for &key in &binding.keys {
+                    assert_eq!(map.action(context, key), Some(action));
+                    assert_eq!(replacement.action(context, key), None);
+                }
+            } else {
+                assert_eq!(
+                    errors,
+                    [format!("{}: unknown action {name}", context.name())]
+                );
+                assert_eq!(replacement.action(context, Key::Char('Z')), None);
+            }
+        }
+    }
+}
+
+#[test]
+fn collision_errors_and_groups_keep_canonical_and_display_ordering() {
+    let (map, errors) = Keymap::parse(
+        r#"{
+        "select":{"next_row":["↓","Down"],"previous_row":["↓","Down"]},
+        "help":{"next_category":["z","a"],"previous_category":["z","a"]}
+    }"#,
+    );
+    assert_eq!(
+        errors,
+        [
+            "help | a | next_category, previous_category",
+            "help | z | next_category, previous_category",
+            "select | Down | next_row, previous_row",
+            "select | ↓ | next_row, previous_row",
+        ]
+    );
+    assert_eq!(
+        map.diagnostic_blocks(),
+        vec![
+            (
+                "Keymap collisions - help mode".into(),
+                vec!["next_category, previous_category: a/z".into()]
+            ),
+            (
+                "Keymap collisions - select mode".into(),
+                vec!["next_row, previous_row: ↓/↓".into()]
+            ),
+        ]
+    );
+}
 
 #[test]
 fn conservative_bindings_reject_all_ctrl_alt_in_every_context() {
@@ -75,7 +187,10 @@ fn conservative_allowed_characters_and_specials_roundtrip() {
         assert_eq!(Key::parse(&key.label()), Some(key), "{text}");
         let (map, errors) = Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text], "next_theme": ["A"], "previous_theme": ["B"], "save": ["C"], "cancel": ["D"]}}).to_string());
         assert!(errors.is_empty(), "{text}: {errors:?}");
-        assert_eq!(map.action(Context::Themes, key), Some("toggle_preview"));
+        assert_eq!(
+            map.action(Context::Themes, key),
+            Some(Action::TogglePreview)
+        );
         if let Key::Char(c) = key {
             assert_eq!(decode(c.to_string().as_bytes()), [key], "raw {text}");
             let kitty = decode(format!("\x1b[{}u", c as u32).as_bytes());
@@ -546,7 +661,10 @@ fn r3_custom_characters_require_visible_standalone_text() {
         let (map, errors) =
             Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text]}}).to_string());
         assert!(errors.is_empty(), "{text:?}: {errors:?}");
-        assert_eq!(map.action(Context::Themes, key), Some("toggle_preview"));
+        assert_eq!(
+            map.action(Context::Themes, key),
+            Some(Action::TogglePreview)
+        );
     }
     assert_eq!(Key::parse("Space"), Some(Key::Char(' ')));
     // Surrogates cannot be represented as Rust chars or a valid single-scalar string.
@@ -562,9 +680,12 @@ fn r3_collision_diagnostics_distinguish_glyphs_from_special_keys() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(
         map.action(Context::Select, Key::Char('↓')),
-        Some("next_row")
+        Some(Action::NextRow)
     );
-    assert_eq!(map.action(Context::Select, Key::Down), Some("previous_row"));
+    assert_eq!(
+        map.action(Context::Select, Key::Down),
+        Some(Action::PreviousRow)
+    );
     assert_eq!(
         map.diagnostic_blocks(),
         vec![(
@@ -598,7 +719,7 @@ fn r2_arrow_glyph_configuration_is_literal_not_the_special_arrow_key() {
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(
         map.action(Context::Select, Key::Char('↓')),
-        Some("next_row")
+        Some(Action::NextRow)
     );
     assert_eq!(map.action(Context::Select, Key::Down), None);
     assert_eq!(decode("↓".as_bytes()), [Key::Char('↓')]);
@@ -1254,7 +1375,7 @@ fn a10c_defaults_quit_and_search_q_are_context_specific() {
 fn footer_label_selection_applies_to_every_navigation_and_non_navigation_action() {
     for binding in Keymap::default().bindings {
         let context = binding.context;
-        let action = binding.action;
+        let action = binding.action.name();
         let navigation = matches!(
             action,
             "next_row"
@@ -1283,7 +1404,7 @@ fn footer_label_selection_applies_to_every_navigation_and_non_navigation_action(
                 .enumerate()
             {
                 actions.insert(
-                    binding.action.into(),
+                    binding.action.name().into(),
                     serde_json::json!([char::from_u32(0x100 + at as u32).unwrap().to_string()]),
                 );
             }
@@ -1362,9 +1483,12 @@ fn replacements_deduplicate_and_validate_all_effective_owners() {
     assert_eq!(map.action(Context::Select, Key::Down), None);
     assert_eq!(
         map.action(Context::Select, Key::Char('!')),
-        Some("next_row")
+        Some(Action::NextRow)
     );
-    assert_eq!(map.action(Context::Select, Key::Enter), Some("focus_pane"));
+    assert_eq!(
+        map.action(Context::Select, Key::Enter),
+        Some(Action::FocusPane)
+    );
     let (_, errors) = Keymap::parse(r#"{"select":{"next_row":["k","q"]}}"#);
     assert_eq!(errors.len(), 2);
     assert!(errors
@@ -1494,178 +1618,6 @@ fn key_syntax_is_case_sensitive_and_limited() {
     assert_eq!(map.diagnostic_blocks()[0].1.len(), 2);
 }
 
-fn decode(bytes: &[u8]) -> Vec<Key> {
-    let mut keys = Keys::new();
-    bytes.iter().filter_map(|b| keys.feed(*b)).collect()
-}
-
-#[test]
-fn recognized_modifiers_never_resolve_actions_search_or_focus() {
-    use crate::selection::Mode;
-    let mut modified = Vec::new();
-    for c in 'a'..='z' {
-        modified.extend([Key::Ctrl(c), Key::Alt(c)]);
-    }
-    for arrow in [Arrow::Up, Arrow::Down, Arrow::Left, Arrow::Right] {
-        modified.extend([Key::CtrlArrow(arrow), Key::AltArrow(arrow)]);
-    }
-    modified.extend(decode(
-        b"\x01\n\x08\x1bf\x1b[102;5u\x1b[109;5u\x1b[105;5u\x1b[1;5A\x1b[1;3B\x1b[57351;5u",
-    ));
-    for mode in [Mode::Select, Mode::Help, Mode::Themes, Mode::Search] {
-        for help_search in [false, true] {
-            let mut state = ui();
-            state.key(Key::Char('?')); // Initialize effective help labels.
-            state.mode = match mode {
-                Mode::Select => Mode::Select,
-                Mode::Help => Mode::Help,
-                Mode::Themes => Mode::Themes,
-                Mode::Search => Mode::Search,
-            };
-            state.help.searching = help_search;
-            state.query = "kept".into();
-            state.help.query = "kept".into();
-            let selected = state.selected.clone();
-            let help_selected = state.help.selected;
-            let cursor = state.theme_cursor;
-            for &key in &modified {
-                for context in [Context::Select, Context::Help, Context::Themes] {
-                    assert_eq!(state.keymap.action(context, key), None);
-                }
-                assert_eq!(state.key(key), None, "focus from {key:?}");
-                assert_eq!(state.mode, mode);
-                assert_eq!(state.selected, selected);
-                assert_eq!(state.help.selected, help_selected);
-                assert_eq!(state.theme_cursor, cursor);
-                assert!(!state.theme_table_preview && !state.closed);
-                assert_eq!(state.help.searching, help_search);
-                assert_eq!(state.query, "kept");
-                assert_eq!(state.help.query, "kept");
-            }
-        }
-    }
-}
-
-#[test]
-fn raw_ht_cr_aliases_remain_physical_byte_limits_not_configured_chords() {
-    assert_eq!(decode(b"\t\r"), [Key::Tab, Key::Enter]);
-    let map = Keymap::default();
-    assert_eq!(
-        map.action(Context::Select, decode(b"\t")[0]),
-        Some("next_workspace")
-    );
-    assert_eq!(
-        map.action(Context::Select, decode(b"\r")[0]),
-        Some("focus_pane")
-    );
-    assert_eq!(map.action(Context::Select, Key::Ctrl('i')), None);
-    assert_eq!(map.action(Context::Select, Key::Ctrl('m')), None);
-}
-
-#[test]
-fn classic_and_kitty_keep_control_identities_and_arrows() {
-    assert_eq!(
-        decode(b"\n\x08\r\x7f\t"),
-        [
-            Key::Ctrl('j'),
-            Key::Ctrl('h'),
-            Key::Enter,
-            Key::Backspace,
-            Key::Tab
-        ]
-    );
-    assert_eq!(
-        decode(b"\x1bj\x1bOA\x1b[B\x1b[1;5D\x1b[1;3C"),
-        [
-            Key::Alt('j'),
-            Key::Up,
-            Key::Down,
-            Key::CtrlArrow(Arrow::Left),
-            Key::AltArrow(Arrow::Right)
-        ]
-    );
-    assert_eq!(
-        decode(b"\x1b[105;5u\x1b[109;5u\x1b[13u\x1b[9u\x1b[106;5u\x1b[104;5u"),
-        [
-            Key::Ctrl('i'),
-            Key::Ctrl('m'),
-            Key::Enter,
-            Key::Tab,
-            Key::Ctrl('j'),
-            Key::Ctrl('h')
-        ]
-    );
-    assert_eq!(
-        decode(b"\x1b[9;2u\x1b[106;2u\x1b[57352;3u"),
-        [Key::BackTab, Key::Char('J'), Key::AltArrow(Arrow::Up)]
-    );
-    assert!(decode(b"\x1b[106;7u\x1b[106;5:3u\x1b[27;3u\x1b[1;6A").is_empty());
-    let mut keys = Keys::new();
-    for byte in b"\x1b[?1u" {
-        keys.feed(*byte);
-    }
-    assert!(keys.kitty_response);
-    keys.feed(27);
-    assert_eq!(keys.flush(), Some(Key::Esc));
-}
-
-#[test]
-fn repeated_escape_emits_the_first_escape_and_restarts_the_deadline() {
-    use std::time::{Duration, Instant};
-    let mut keys = Keys::new();
-    assert_eq!(keys.feed(27), None);
-    keys.escape_started = Some(Instant::now() - Duration::from_millis(50));
-    let second_press = Instant::now();
-    assert_eq!(keys.feed(27), Some(Key::Esc));
-    assert_eq!(keys.escape, 1);
-    assert!(keys.escape_started.unwrap() >= second_press);
-    assert_eq!(keys.flush(), Some(Key::Esc));
-    assert_eq!(keys.flush(), None);
-}
-
-#[test]
-fn repeated_escape_keeps_csi_and_ss3_sequences_out_of_search_text() {
-    use crate::selection::Mode;
-    for (bytes, expected) in [
-        (b"\x1b\x1b[A".as_slice(), vec![Key::Esc, Key::Up]),
-        (b"\x1b\x1bOA", vec![Key::Esc, Key::Up]),
-        (b"\x1b\x1b\x1b[A", vec![Key::Esc, Key::Esc, Key::Up]),
-        (b"\x1b\x1b[1;5A", vec![Key::Esc, Key::CtrlArrow(Arrow::Up)]),
-        (b"\x1b\x1b[15~", vec![Key::Esc]),
-        (b"\x1b\x1bj", vec![Key::Esc, Key::Alt('j')]),
-        (b"\x1b\x1b[?1u", vec![Key::Esc]),
-    ] {
-        assert_eq!(decode(bytes), expected, "{bytes:?}");
-    }
-    for help in [false, true] {
-        let mut state = ui();
-        if help {
-            state.key(Key::Char('?'));
-        }
-        state.key(Key::Char('/'));
-        state.key(Key::Char('x'));
-        for key in decode(b"\x1b\x1b[A") {
-            state.key(key);
-        }
-        if help {
-            assert_eq!(state.mode, Mode::Help);
-            assert!(!state.help.searching);
-            assert_eq!(state.help.query, "x");
-        } else {
-            assert_eq!(state.mode, Mode::Select);
-            assert_eq!(state.query, "x");
-        }
-        assert!(!state.closed);
-    }
-}
-
-#[test]
-fn malformed_alt_utf8_does_not_modify_the_following_plain_key() {
-    assert_eq!(decode(b"\x1b\xffx"), [Key::Char('x')]);
-    assert_eq!(decode("é".as_bytes()), [Key::Char('é')]);
-    assert_eq!(decode("\x1béx".as_bytes()), [Key::Char('x')]);
-}
-
 #[test]
 fn fixed_search_ignores_all_modifiers_despite_mappings() {
     let (map, errors) =
@@ -1708,101 +1660,6 @@ fn fixed_search_ignores_all_modifiers_despite_mappings() {
             assert_eq!(state.query, "y");
         }
     }
-}
-
-#[test]
-fn every_existing_action_dispatches_its_replacement_without_changing_pane_state() {
-    use crate::selection::Mode;
-    let (map, errors) = Keymap::parse(
-        r#"{
-        "select":{"next_row":["J"],"previous_row":["K"],"next_tab":["L"],"previous_tab":["H"],"next_workspace":["N"],"previous_workspace":["P"],"open_search":["S"],"reset_search":["R"],"open_help":["?"],"open_themes":["T"],"focus_pane":["F"],"close":["Q"]},
-        "help":{"next_category":["J"],"previous_category":["K"],"open_search":["S"],"reset_search":["R"],"close":["Q"]},
-        "themes":{"next_theme":["J"],"previous_theme":["K"],"toggle_preview":["P"],"save":["S"],"cancel":["Q"]}
-    }"#,
-    );
-    assert!(errors.is_empty(), "{errors:?}");
-    let mut state = ui();
-    state.keymap = map;
-    let ids = state
-        .rows
-        .iter()
-        .map(|row| row.id.clone())
-        .collect::<Vec<_>>();
-    for (key, id) in [
-        (Key::Char('J'), "p-a"),
-        (Key::Char('K'), "p-b"),
-        (Key::Char('L'), "p-second-tab"),
-        (Key::Char('H'), "p-b"),
-        (Key::Char('N'), "p-other"),
-        (Key::Char('P'), "p-b"),
-    ] {
-        assert!(state.key(key).is_none());
-        assert_eq!(state.selected.as_deref(), Some(id));
-    }
-    assert!(
-        state.key(Key::Enter).is_none(),
-        "replaced focus default is inactive"
-    );
-    assert!(!state.closed);
-    state.key(Key::Char('S'));
-    assert_eq!(state.mode, Mode::Search);
-    state.key(Key::Char('x'));
-    state.key(Key::Enter);
-    state.key(Key::Char('R'));
-    assert!(state.query.is_empty());
-    state.key(Key::Char('?'));
-    assert_eq!(state.mode, Mode::Help);
-    state.key(Key::Down);
-    assert_eq!(state.help.selected, Some(0));
-    state.key(Key::Char('J'));
-    assert_eq!(state.help.selected, Some(1));
-    state.key(Key::Char('K'));
-    assert_eq!(state.help.selected, Some(0));
-    state.key(Key::Char('S'));
-    assert!(state.help.searching);
-    state.key(Key::Char('x'));
-    state.key(Key::Enter);
-    state.key(Key::Char('R'));
-    assert!(state.help.query.is_empty());
-    state.key(Key::Char('Q'));
-    assert_eq!(state.mode, Mode::Select);
-    assert!(!state.closed);
-    state.key(Key::Char('T'));
-    assert_eq!(state.mode, Mode::Themes);
-    state.key(Key::Char('J'));
-    assert_eq!(state.theme_cursor, 1);
-    state.key(Key::Char('K'));
-    assert_eq!(state.theme_cursor, 0);
-    state.key(Key::Char('P'));
-    assert!(state.theme_table_preview);
-    state.key(Key::Char('Q'));
-    assert_eq!(state.mode, Mode::Select);
-    let dir = std::path::Path::new("/tmp/opencode")
-        .join(format!("crossroads-remapped-save-{}", std::process::id()));
-    state.config_dir = Some(dir.clone());
-    state.key(Key::Char('T'));
-    state.key(Key::Char('J'));
-    state.key(Key::Char('S'));
-    assert_eq!(state.theme_index, 1);
-    assert_eq!(state.mode, Mode::Select);
-    assert_eq!(
-        std::fs::read_to_string(dir.join("theme.jsonc")).unwrap(),
-        "{\"theme\":\"catppuccin\"}\n"
-    );
-    std::fs::remove_dir_all(dir).unwrap();
-    assert_eq!(
-        state
-            .rows
-            .iter()
-            .map(|row| row.id.clone())
-            .collect::<Vec<_>>(),
-        ids
-    );
-    assert_eq!(state.key(Key::Char('F')).as_deref(), Some("p-b"));
-    assert!(state.closed);
-    state.closed = false;
-    assert_eq!(state.key(Key::Char('Q')), None);
-    assert!(state.closed);
 }
 
 #[test]

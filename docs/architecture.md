@@ -11,20 +11,30 @@ it has no build hooks, actions, startup hooks, or event hooks.
 | Module | Responsibility |
 | --- | --- |
 | `src/main.rs` | Thin executable entry point calling the library |
-| `src/lib.rs` | Startup orchestration and event loop: config, terminal/input probe, snapshot, status subscription, resize, redraw, reconnect lifecycle |
+| `src/lib.rs` | Private module declarations, public `run` facade and unit-test wiring |
+| `src/runtime.rs` | Startup and event loop: config, terminal/input probe, subscription-before-snapshot, resize, hints and input deadlines |
+| `src/runtime/live_status.rs` | Validated row-status updates, bootstrap draining, bounded batches/redraws, retry eligibility and staged reconnect installation; owns active subscription, retry worker and pending rows |
 | `src/config.rs` | Shared JSONC/legacy selection, strict JSON-plus-comments/trailing-commas parsing, duplicate-field locations, grouped diagnostics |
-| `src/keymap.rs` | Default bindings, schema/replacement validation, per-context collision checks, effective action resolution and labels |
-| `src/input.rs` | Classical/Kitty byte decoding, key identity/display, key dispatch/redraw, exact-ID socket focus and reply validation |
+| `src/keymap.rs` | Typed actions and default bindings, schema/replacement validation, shared collision ownership for errors/diagnostics, effective action resolution and labels |
+| `src/input.rs` | Classical/Kitty byte decoding and key identity/display only |
+| `src/actions.rs` | Execute a UI key result: focus the emitted pane ID, then redraw only while open |
+| `src/focus.rs` | Exact-ID socket focus, bounded reply reading and reply validation |
 | `src/topology.rs` | Snapshot validation and pane rows, workspace/tab ordering, own-pane exclusion, sanitized labels, best-effort linked-worktree annotation/grouping |
 | `src/transport.rs` | CLI/socket transport, status-subscription ownership and readers, bounded reconnect execution and connection deadlines, reconnect cancellation |
-| `src/selection.rs` | UI state machine, independent pane/help filters, subsequence matching, visible navigation, selected pane identity, theme preview/save, validated status updates |
-| `src/theme.rs` | Built-in palettes, conservative Auto recognition, theme-file validation and explicit persistence |
+| `src/selection.rs` | Shared UI state, mode/keymap dispatch, pane filtering/navigation and selected pane identity |
+| `src/selection/help.rs` | Help entries/state, independent filter and search/navigation input |
+| `src/selection/themes.rs` | Theme-picker input, preview toggle, save/cancel transitions and Auto-transition notice |
+| `src/search.rs` | Case-insensitive per-field subsequence matching and greedy source-character match positions |
+| `src/theme.rs` | Internal theme facade preserving caller access to palettes, discovery and persistence |
+| `src/theme/palette.rs` | Built-in theme names and color roles |
+| `src/theme/discovery.rs` | Conservative read-only Herdr Auto theme recognition |
+| `src/theme/persistence.rs` | Plugin theme-file validation/diagnostics and explicit save/delete |
 | `src/status_colors.rs` | Status-color defaults, file validation/diagnostics, status lookup and explicit overrides of theme roles |
 | `src/presentation.rs` | Rendering facade: view dispatch, frame painting, size-only notices, shared text/style helpers and theme notices |
 | `src/presentation/table.rs` | Pane table and theme table preview: column budgets, rows, borders, match/status styling and selected-pane viewport |
 | `src/presentation/diagnostics.rs` | Common configuration-error page, source-row cell clipping and diagnostic scrolling |
 | `src/presentation/footer.rs` | Effective-binding hint groups, footer row budgets, hint paging and shared search prompts |
-| `src/presentation/help.rs` | Help layout, category spacing, selected-entry viewport, wrapped custom bindings and match highlighting; UI state remains in `selection` |
+| `src/presentation/help.rs` | Help layout, category spacing, selected-entry viewport, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
 | `src/presentation/themes.rs` | Theme-list picker layout, visible choices and preview highlight; theme state/persistence remain in `selection`/`theme` |
 | `src/terminal.rs` | Terminal sizing, raw-mode and Kitty ownership/restoration, stdout drawing and cursor placement |
 
@@ -37,8 +47,17 @@ Rendering cases are grouped under `tests/unit/presentation/` into `table.rs`,
 `diagnostics.rs`, `footer.rs`, `help.rs` and `themes.rs`, included as children of
 `tests/unit/presentation.rs`. The parent retains shared fixtures/text helpers and
 cross-view frame/dispatch checks; the children reuse those fixtures rather than
-duplicating a harness. Schema, persistence and state-machine checks remain in
-the keymap, theme and selection suites, including their mixed rendering assertions. Terminal
+duplicating a harness. Selection cases live under `tests/unit/selection/` in
+`navigation.rs`, `help.rs` and `themes.rs`; `tests/unit/selection.rs` wires them
+together. `tests/unit/search.rs` covers matching and retained pane/help search,
+and `tests/unit/input.rs` covers byte decoding and escape/protocol identities.
+`tests/unit/actions.rs` groups cross-context action dispatch and modifier rejection.
+Theme cases mirror palette, discovery and persistence ownership under
+`tests/unit/theme/`, with the shared layout-fixture check in `tests/unit/theme.rs`.
+Validated status-update cases live in `tests/unit/runtime/live_status.rs`, wired
+by `tests/unit/runtime.rs`; reconnect ordering, staging, cancellation and focus
+IPC remain covered by the existing startup process tests. Keymap schema and mixed
+configuration/rendering assertions remain in `tests/unit/keymap.rs`. Terminal
 lifecycle/output is exercised by startup process and PTY tests; there is no
 separate terminal unit-test harness. Process tests and Python PTYs use deterministic
 fixtures and fake hosts.
@@ -57,7 +76,10 @@ Theme confirmation ──> plugin-owned theme file save/delete
 
 Rows retain IDs internally; the visible table shows labels rather than IDs.
 Search and navigation operate on visible row indices while remembered selection
-is a pane ID. Rendering clips by terminal-cell width and sanitizes control text.
+is a pane ID. Rendering sanitizes control text. General presentation budgets and
+clipping use a conservative estimate: one column per ASCII character and two per
+non-ASCII character, not exact Unicode terminal-cell widths. Diagnostic source
+paths instead use grapheme terminal-cell widths when clipping their source row.
 
 ## Core flows
 
@@ -88,7 +110,9 @@ CSI/SS3 arrows, Kitty input, and a 100-ms raw-Esc ambiguity deadline. Recognized
 Ctrl/Alt events cannot invoke actions or become search text; raw HT/CR retain
 their unavoidable Tab/Enter aliases.
 
-Select, Help navigation, and Themes resolve their own effective keymaps. Pane
+Select, Help navigation, and Themes resolve their own effective keymaps to
+internal actions and dispatch those actions directly, without synthetic keys.
+JSON action names and displayed binding syntax remain unchanged. Pane
 Search and Help search instead have fixed text-editing controls. Subsequence
 matching is case-insensitive, per field, and preserves topology/help order.
 No CLI call or socket request is caused by a search keystroke. Selection falls
@@ -106,7 +130,8 @@ anchored by each view's layout. The main loop checks interactive size about ever
 
 ### Focus and close
 
-Only confirmation in Select with a visible candidate emits a pane ID. `input`
+Only confirmation in Select with a visible candidate emits a pane ID. `actions`
+executes that result through `focus`, which
 sends `pane.focus` over `HERDR_SOCKET_PATH` and validates reply ID, result type,
 exact pane ID, and `focused: true`. Reply reading has a 500-ms overall deadline
 and a 16-KiB limit; this is not a general socket-connect/write timeout promise.
@@ -125,12 +150,18 @@ refresh topology; reopen to refresh it, or a reconnect installs a fresh snapshot
 
 On disconnect/failure, background retry is eligible after 500 ms. A worker
 resubscribes **before** taking a fresh snapshot and worktree annotations, stages
-the result, then the main loop applies queued statuses before installing rows.
+the subscription and rows without constructing another UI, then the main loop
+applies queued statuses before installing rows. Active, bootstrap and staged rows
+share the same validated status application.
 The existing UI remains usable during this work. Reconnect CLI calls have a
 two-second deadline per command, cancellation, and capped output; subscription
 acknowledgment has a 500-ms deadline. Linux x86_64 also has a bounded socket-connect
 retry path; other Unix architectures use ordinary connect. Without a nonempty
 socket environment variable there is no subscription or reconnect attempt.
+The coordinator owns the row-bearing retry result and drops pending state and
+cancels/joins its retry worker before dropping the active subscription; low-level
+cancellation and socket shutdown remain owned by `transport`. Transport validates
+pane-list IDs locally and does not depend on topology rows.
 
 ### Themes and persistence
 

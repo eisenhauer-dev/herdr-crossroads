@@ -244,7 +244,7 @@ fn separator_characters_are_quoted_only_for_display() {
     assert_eq!(map.labels(Context::Select, "next_row"), "//|");
     assert_eq!(
         map.action(Context::Select, Key::Char('|')),
-        Some("next_row")
+        Some(crate::keymap::Action::NextRow)
     );
     let mut state = super::test_support::ui();
     state.keymap = map;
@@ -274,7 +274,13 @@ fn separator_characters_are_quoted_only_for_display() {
                     separators,
                     "{hints}"
                 );
-                assert_eq!(state.keymap.action(context, Key::Char('|')), Some(action));
+                assert_eq!(
+                    state
+                        .keymap
+                        .action(context, Key::Char('|'))
+                        .map(crate::keymap::Action::name),
+                    Some(action)
+                );
             }
         }
     }

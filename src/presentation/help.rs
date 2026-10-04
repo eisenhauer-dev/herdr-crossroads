@@ -5,7 +5,8 @@ use ratatui::{
 
 use super::{clipped, columns, marked_color, sgr_bg, sgr_fg, wrapped};
 use crate::keymap::Context;
-use crate::selection::{match_positions, Ui};
+use crate::search::match_positions;
+use crate::selection::Ui;
 use crate::theme::Theme;
 
 impl Ui {
