@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 
 sys.dont_write_bytecode = True
-from pty_render import screen
+from pty_render import expected_search_row, screen
 
 
 def read_until(fd, marker, timeout=3):
@@ -187,6 +187,7 @@ def main(binary):
             print("A10c package 1 PTY: repeated Esc, delayed Esc/q, Alt+q, late Kitty reply, buffered probe input passed")
             return
         binding_policy_cases(binary, directory)
+        themes_help_cases(binary, directory)
         error_block_cases(binary, directory)
         long_source_block_cases(binary, directory)
         popup = None
@@ -200,14 +201,14 @@ def main(binary):
                     start = time.monotonic()
                     lines = popup.send(b"\x1bx")
                     assert time.monotonic() - start < 0.095, "complete Alt input must not wait for Esc timeout"
-                    assert lines[0] == "  Search: x" and "Backspace: erase" in lines[-1], lines
+                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
                     keys = b"\n\x08\t" if not kitty else b"\x1b[106;5u\x1b[104;5u\x1b[105;5u\x1b[109;5u"
                     os.write(popup.master, keys)
                     raw = read_frame(popup.master) + drain(popup.master).decode("utf-8", "replace")
                     lines, wraps = screen(raw, 80, 15)
-                    assert wraps == 0 and lines[0] == "  Search: x" and "Backspace: erase" in lines[-1], lines
+                    assert wraps == 0 and lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
                     lines = popup.send(b"\x7f")
-                    assert lines[0] == "  Search:", lines
+                    assert lines[0] == expected_search_row(80, "", "Help" if help_search else "Search"), lines
                     # Raw Esc has a fixed 100ms ambiguity deadline in either mode.
                     start = time.monotonic()
                     os.write(popup.master, b"\x1b")
@@ -360,13 +361,14 @@ def binding_policy_cases(binary, directory):
             popup = Popup(binary, directory, {"select": {"open_search": keys}, "help": {"open_search": keys}}, kitty=kitty, width=160, height=24)
             try:
                 lines, _ = screen(popup.initial, 160, 24)
-                assert lines[0] == f"  Search: {label} to search", lines
+                assert lines[0] == expected_search_row(160, f"{label} to search", "Select"), lines
                 lines = popup.send(b"?")
-                assert lines[0] == f"  Search: {label} to search", lines
+                assert lines[0] == expected_search_row(160, f"{label} to search", "Help"), lines
+                assert lines[1] == "  Keys — Select", lines
                 assert any(line.split() == [label, "search"] for line in lines), lines
                 popup.send(keys[0].encode())
                 lines = popup.send(label.encode())
-                assert any("search" in line and label in line for line in lines[2:-2]), lines
+                assert any("search" in line and label in line for line in lines[3:-2]), lines
                 popup.send(b"\r")
                 popup.send(b"q")
                 popup.finish(b"q")
@@ -379,10 +381,71 @@ def binding_policy_cases(binary, directory):
             assert any(line.startswith("  >") and "codex" in line for line in lines), lines
             popup.send(b"/x")
             lines = popup.send(b"\r")
-            assert lines[0] == "  Search: x" and "Backspace: erase" not in lines[-1], lines
+            assert lines[0] == expected_search_row(80, "x", "Select") and "Backspace: erase" not in lines[-1], lines
             popup.finish(b"q")
         finally:
             popup.abort()
+
+
+def themes_help_cases(binary, directory):
+    theme = directory / "theme.jsonc"
+    saved = '{"theme":"dracula"}'
+    theme.write_text(saved)
+    address = directory / "themes-help-focus.sock"
+    try:
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(address))
+            listener.listen()
+            listener.setblocking(False)
+            for width, height in ((80, 15), (142, 30)):
+                popup = Popup(binary, directory, width=width, height=height, focus_socket=address)
+                try:
+                    popup.send(b"/Same")
+                    popup.send(b"\r")
+                    select_before = popup.send(b"j")
+                    assert select_before[0] == expected_search_row(width, "Same", "Select"), select_before
+                    assert any(line.startswith("  >") and line.endswith("Same") for line in select_before), select_before
+                    popup.send(b"t")
+                    for preview in (False, True):
+                        # Change the pending cursor without saving the prior choice.
+                        before = popup.send(b"j")
+                        if preview:
+                            before = popup.send(b" ")
+                            assert before[1] == expected_search_row(width, "Same", "Themes"), before
+                            assert any("Agent/Pane Name" in line for line in before), before
+                        else:
+                            assert before[0] == "  Themes · selected: dracula · preview: nord", before
+                            assert any(line.startswith("  > nord") for line in before), before
+                            assert not any("Search:" in line for line in before), before
+                        help_lines = popup.send(b"?")
+                        assert help_lines[0] == expected_search_row(width, "/ to search", "Help"), help_lines
+                        assert help_lines[1] == "  Keys — Themes", help_lines
+                        assert any("save theme" in line and "Enter" in line for line in help_lines), help_lines
+                        assert not any("focus selected pane" in line or "next workspace" in line for line in help_lines), help_lines
+                        popup.send(b"/")
+                        searching = popup.send(b"?")
+                        assert searching[0] == expected_search_row(width, "?", "Help"), searching
+                        assert searching[1] == "  Keys — Themes", searching
+                        assert any("show keys" in line for line in searching), searching
+                        assert searching[-1] == "  Enter/Esc: return to keys · Backspace: erase", searching
+                        navigation = popup.send(b"\x1b")
+                        assert navigation[0] == expected_search_row(width, "?", "Help") and navigation[1] == "  Keys — Themes", navigation
+                        assert "close keys" in navigation[-1], navigation
+                        assert popup.send(b"q") == before, "nested help changed theme view, cursor or pane preview"
+                        assert theme.read_text() == saved, "help saved or canceled a pending theme"
+                    assert popup.send(b"\x1b") == select_before, "help changed remembered pane query, selection or viewport"
+                    popup.finish(b"q")
+                finally:
+                    popup.abort()
+            try:
+                connection, _ = listener.accept()
+            except BlockingIOError:
+                pass
+            else:
+                connection.close()
+                raise AssertionError("Themes help must never focus a pane")
+    finally:
+        theme.unlink()
 
 
 def error_block_cases(binary, directory):
@@ -536,7 +599,7 @@ def input_protocol_cases(binary, directory):
             for kitty in [False, True]:
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 initial, _ = screen(popup.initial, 80, 15)
-                assert initial[0] == "  Search: / to search", initial
+                assert initial[0] == expected_search_row(80, "/ to search", "Select"), initial
                 # Recognized modifier sequences must never focus, navigate, close,
                 # or leak their bytes into Select/Help search or theme controls.
                 modified = (b"\n", b"\x08", b"\x1bf", b"\x1b[105;5u", b"\x1b[109;5u", b"\x1b[106;3u", b"\x1b[1;5A", b"\x1b[1;3B", b"\x1b[57351;5u")
@@ -557,7 +620,7 @@ def input_protocol_cases(binary, directory):
                 start = time.monotonic()
                 lines = popup.send(b"\x1b\x1b[A")
                 assert time.monotonic() - start < 0.095, "a complete double-Esc arrow must not wait for timeout"
-                assert lines[0] == "  Search: Same" and "Backspace: erase" not in lines[-1], lines
+                assert lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" not in lines[-1], lines
                 assert any(line.startswith("  >") and "Claude" in line for line in lines), lines
                 assert popup.child.poll() is None
                 popup.send(b"/")
@@ -568,7 +631,7 @@ def input_protocol_cases(binary, directory):
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 popup.send(b"/codex")
                 lines = popup.send(b"\x1bq")
-                assert lines[0] == "  Search: codex" and "Backspace: erase" in lines[-1], lines
+                assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
                 assert popup.child.poll() is None, "Alt+q must not close search"
                 # Now exercise actual standalone Esc, then q, with stdin still open.
                 start = time.monotonic()
@@ -576,7 +639,7 @@ def input_protocol_cases(binary, directory):
                 assert not select.select([popup.master], [], [], 0.075)[0], "Esc resolved before its deadline"
                 raw = read_frame(popup.master)
                 lines, wraps = screen(raw, 80, 15)
-                assert wraps == 0 and lines[0] == "  Search: codex", lines
+                assert wraps == 0 and lines[0] == expected_search_row(80, "codex", "Select"), lines
                 assert "Backspace: erase" not in lines[-1], lines
                 assert 0.09 <= time.monotonic() - start < 0.22
                 assert popup.child.poll() is None, "Esc must return to navigation, not close"
@@ -596,10 +659,10 @@ def input_protocol_cases(binary, directory):
 
             def searching_codex(raw):
                 lines, _ = screen(raw, 80, 15)
-                return lines[0] == "  Search: codex" and "Backspace: erase" in lines[-1]
+                return lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1]
             def navigation_codex(raw):
                 lines, _ = screen(raw, 80, 15)
-                return lines[0] == "  Search: codex" and "Backspace: erase" not in lines[-1]
+                return lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" not in lines[-1]
             def pane_three(raw):
                 lines, _ = screen(raw, 80, 15)
                 return any(line.startswith("  >") and "pane 3" in line for line in lines)
@@ -613,10 +676,10 @@ def input_protocol_cases(binary, directory):
                 # F4: preserve input preceding the probe response, including a pending Esc.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[B/codex\x1b", initial_frame=searching_codex)
                 initial, wraps = screen(popup.initial, 80, 15)
-                assert wraps == 0 and initial[0] == "  Search: codex" and "Backspace: erase" in initial[-1], initial
+                assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in initial[-1], initial
                 raw = read_frame(popup.master, expected=navigation_codex)
                 lines, wraps = screen(raw, 80, 15)
-                assert wraps == 0 and lines[0] == "  Search: codex" and "Backspace: erase" not in lines[-1], lines
+                assert wraps == 0 and lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" not in lines[-1], lines
                 assert popup.child.poll() is None
                 popup.finish(b"q")
 

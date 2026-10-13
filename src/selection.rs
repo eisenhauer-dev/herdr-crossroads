@@ -11,7 +11,7 @@ use super::topology::Row;
 mod help;
 mod themes;
 
-use help::Help;
+use help::{Help, HelpContext};
 
 #[derive(PartialEq, Eq, Debug)]
 pub(super) enum Mode {
@@ -76,7 +76,7 @@ impl Ui {
             selected,
             query: String::new(),
             mode: Mode::Select,
-            help: Help::select(&Keymap::default()),
+            help: Help::new(HelpContext::Select, &Keymap::default()),
             closed: false,
             width: 160,
             popup_size: None,
@@ -113,7 +113,9 @@ impl Ui {
     }
 
     pub(super) fn theme(&self) -> Theme {
-        let name = if self.mode == Mode::Themes {
+        let name = if self.mode == Mode::Themes
+            || (self.mode == Mode::Help && self.help.context == HelpContext::Themes)
+        {
             NAMES[self.theme_cursor]
         } else {
             NAMES[self.theme_index]
@@ -191,9 +193,7 @@ impl Ui {
             return None;
         }
         let visible = self.visible();
-        let Some(action) = self.keymap.action(Context::Select, key) else {
-            return None;
-        };
+        let action = self.keymap.action(Context::Select, key)?;
         match action {
             Action::OpenThemes => {
                 self.theme_cursor = self.theme_index;
@@ -208,7 +208,7 @@ impl Ui {
             }
             Action::OpenSearch => self.mode = Mode::Search,
             Action::OpenHelp => {
-                self.help = Help::select(&self.keymap);
+                self.help = Help::new(HelpContext::Select, &self.keymap);
                 self.mode = Mode::Help;
             }
             Action::Close => self.closed = true,
@@ -231,14 +231,13 @@ impl Ui {
                                 .then_some(v)
                         })
                         .collect();
-                    if let Some(at) = blocks.iter().rposition(|&b| b <= i).and_then(|at| {
-                        if action == Action::NextWorkspace {
-                            blocks.get(at + 1)
+                    if let Some(at) = blocks.iter().rposition(|&b| b <= i) {
+                        let next = if action == Action::NextWorkspace {
+                            (at + 1) % blocks.len()
                         } else {
-                            at.checked_sub(1).and_then(|prev| blocks.get(prev))
-                        }
-                    }) {
-                        self.selected = Some(self.rows[*at].id.clone());
+                            at.checked_sub(1).unwrap_or(blocks.len() - 1)
+                        };
+                        self.selected = Some(self.rows[blocks[next]].id.clone());
                     }
                 }
             }
@@ -248,9 +247,9 @@ impl Ui {
                     .and_then(|i| visible.iter().position(|v| *v == i))
                 {
                     let next = if action == Action::NextRow {
-                        (at + 1).min(visible.len() - 1)
+                        (at + 1) % visible.len()
                     } else {
-                        at.saturating_sub(1)
+                        at.checked_sub(1).unwrap_or(visible.len() - 1)
                     };
                     self.selected = Some(self.rows[visible[next]].id.clone());
                 }
@@ -267,14 +266,12 @@ impl Ui {
                         })
                         .collect();
                     if let Some(at) = blocks.iter().position(|&b| &self.rows[b].tab_id == current) {
-                        let target = if action == Action::PreviousTab {
-                            at.checked_sub(1)
+                        let next = if action == Action::PreviousTab {
+                            at.checked_sub(1).unwrap_or(blocks.len() - 1)
                         } else {
-                            blocks.get(at + 1).map(|_| at + 1)
+                            (at + 1) % blocks.len()
                         };
-                        if let Some(next) = target {
-                            self.selected = Some(self.rows[blocks[next]].id.clone());
-                        }
+                        self.selected = Some(self.rows[blocks[next]].id.clone());
                     }
                 }
             }

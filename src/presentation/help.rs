@@ -55,7 +55,7 @@ impl Ui {
             contents.push((None, "No matching keys"));
         }
         let available = if ansi {
-            height.saturating_sub(3 + footer_rows)
+            height.saturating_sub(4 + footer_rows)
         } else {
             contents.len()
         };
@@ -115,7 +115,11 @@ impl Ui {
                 })
                 .collect::<String>()
         };
-        let mut lines = vec![aligned(&search), rule.clone()];
+        let mut lines = vec![
+            format!("  {search}"),
+            aligned(&format!("Keys — {}", self.help.context.name())),
+            rule.clone(),
+        ];
         for &(i, heading) in contents.iter().skip(start).take(available) {
             if let Some(i) = i {
                 let entry = &entries[i];
@@ -253,7 +257,7 @@ impl Ui {
         if contents.is_empty() {
             contents.push("  No matching keys".into());
         }
-        let budget = height.saturating_sub(3 + footer_rows).max(1);
+        let budget = height.saturating_sub(4 + footer_rows).max(1);
         let start = if ansi {
             if selected_len > budget {
                 self.hint_more.set(true);
@@ -273,6 +277,7 @@ impl Ui {
                 "  {}",
                 self.search_prompt(Context::Help, &self.help.query, self.help.searching, width)
             ),
+            format!("  Keys — {}", self.help.context.name()),
             rule.clone(),
         ];
         lines.extend(

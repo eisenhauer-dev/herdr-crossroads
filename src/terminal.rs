@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 
 use ratatui::{buffer::CellWidth, style::Color};
 
-use super::presentation::sgr_fg;
+use super::presentation::{clipped, sgr_fg};
 use super::selection::{Mode, Ui};
 
 pub(super) fn terminal_size() -> (usize, usize) {
@@ -113,8 +113,14 @@ pub(super) fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
             && width >= 80
             && height >= 15
         {
-            // Measure the unstyled line: themed frame prefixes contain ANSI bytes.
-            let x = ui.layout(width, height, true)[0].cell_width() as usize;
+            // Keep the cursor after the clipped query, before padding and the mode badge.
+            let query = if ui.mode == Mode::Help {
+                &ui.help.query
+            } else {
+                &ui.query
+            };
+            let (_, available) = ui.search_prompt_geometry(width);
+            let x = 2 + clipped(&format!("Search: {query}"), available).cell_width() as usize;
             write!(
                 out,
                 "\x1b[1;{}H\x1b[?25h",

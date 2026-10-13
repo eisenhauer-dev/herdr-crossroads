@@ -122,7 +122,7 @@ impl LiveStatus {
                 }
             }
             if changed {
-                draw(&ui, terminal)?;
+                draw(ui, terminal)?;
             }
         }
         if disconnected {
@@ -162,7 +162,7 @@ impl LiveStatus {
                 let (receiver, staged) = self.pending.take().unwrap();
                 ui.rows = staged;
                 self.status = Some(receiver);
-                draw(&ui, terminal)?;
+                draw(ui, terminal)?;
             }
         }
         if self.enabled

@@ -3,6 +3,80 @@ use crate::selection::{Mode, Ui};
 use crate::test_support::ui;
 
 #[test]
+fn last_theme_wraps_forward_to_auto_in_list_and_table_preview() {
+    for preview in [false, true] {
+        let mut state = ui();
+        state.key(Key::Char('t'));
+        state.theme_table_preview = preview;
+        state.theme_cursor = crate::theme::NAMES.len() - 1;
+        assert!(state.key(Key::Down).is_none());
+        assert_eq!(state.theme_cursor, 0);
+    }
+}
+
+#[test]
+fn theme_wrap_changes_pending_palette_in_both_views_without_saving_or_focusing() {
+    use crate::theme::{Theme, NAMES};
+    let dir = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-theme-wrap-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let saved = "{\"theme\":\"dracula\"}\n";
+    std::fs::write(dir.join("theme.jsonc"), saved).unwrap();
+    for preview in [false, true] {
+        for (previous, next) in [(Key::Up, Key::Down), (Key::Char('k'), Key::Char('j'))] {
+            let mut state = ui();
+            state.config_dir = Some(dir.clone());
+            state.theme_index = 6;
+            state.query = "Claude".into();
+            state.viewport_start.set(0);
+            state.last_selected_at.set(Some(0));
+            state.set_auto_choice("catppuccin", Some("custom".into()));
+            let selected = state.selected.clone();
+            state.key(Key::Char('t'));
+            state.theme_table_preview = preview;
+            state.theme_cursor = 0;
+            assert!(state.key(previous).is_none());
+            assert_eq!(state.theme_cursor, NAMES.len() - 1);
+            assert_eq!(state.theme(), Theme::named(NAMES[NAMES.len() - 1]));
+            assert!(state.theme_notice().is_none());
+            let last = state.terminal_frame(80, 15);
+            assert!(last.contains("vesper"), "{last}");
+            assert!(state.key(next).is_none());
+            assert_eq!(state.theme_cursor, 0);
+            assert_eq!(state.theme(), Theme::named("catppuccin"));
+            assert_eq!(
+                state.theme_notice(),
+                Some("Herdr theme custom not yet supported; using Mocha")
+            );
+            let first = state.terminal_frame(80, 15);
+            assert!(first.contains("Auto (Herdr)"), "{first}");
+            assert_eq!(state.terminal_frame(80, 15), first);
+            assert!(state.key(next).is_none());
+            assert!(state.theme_notice().is_none());
+            assert_eq!(state.theme_index, 6);
+            assert_eq!(state.mode, Mode::Themes);
+            assert_eq!(state.theme_table_preview, preview);
+            assert_eq!(state.selected, selected);
+            assert_eq!(state.query, "Claude");
+            assert_eq!(state.viewport_start.get(), 0);
+            assert_eq!(state.last_selected_at.get(), Some(0));
+            assert!(!state.closed);
+            assert_eq!(
+                std::fs::read_to_string(dir.join("theme.jsonc")).unwrap(),
+                saved
+            );
+            state.key(Key::Esc);
+            assert_eq!(state.theme_index, 6);
+            assert_eq!(state.theme(), Theme::named("dracula"));
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn unsupported_auto_notice_is_transient_on_start_and_each_picker_auto_transition() {
     let mut state = ui();
     state.set_auto_choice("catppuccin", Some("catppuccin-mocha".into()));
@@ -114,7 +188,7 @@ fn picker_scrolls_to_last_theme_at_minimum_size_without_losing_keys() {
     let mut state = ui();
     state.popup_size = Some((80, 15));
     state.key(Key::Char('t'));
-    for _ in 0..30 {
+    for _ in 1..crate::theme::NAMES.len() {
         state.key(Key::Char('j'));
     }
     assert_eq!(state.theme_cursor, 18);
@@ -208,23 +282,23 @@ fn theme_space_switches_between_list_and_real_filtered_table_without_moving_pane
 }
 
 #[test]
-fn theme_table_preview_handles_empty_filter_bounds_and_failed_save() {
+fn theme_table_preview_handles_empty_filter_wrap_and_failed_save() {
     let mut state = ui();
     state.popup_size = Some((80, 15));
     state.query = "no-such-pane".into();
     state.key(Key::Char('t'));
     state.key(Key::Char(' '));
     state.key(Key::Up);
-    assert_eq!(state.theme_cursor, 0);
+    assert_eq!(state.theme_cursor, 18);
     let empty = state.terminal_frame(80, 15);
     assert!(empty.contains("No matching panes"), "{empty}");
     assert_complete_theme_footer(&state, &empty, 80, 15, "list");
-    for _ in 0..30 {
+    for _ in 0..crate::theme::NAMES.len() {
         state.key(Key::Char('j'));
     }
     assert_eq!(state.theme_cursor, 18);
     state.key(Key::Down);
-    assert_eq!(state.theme_cursor, 18);
+    assert_eq!(state.theme_cursor, 0);
     state.key(Key::Enter);
     assert_eq!(state.mode, Mode::Themes);
     let failed = state.terminal_frame(80, 15);

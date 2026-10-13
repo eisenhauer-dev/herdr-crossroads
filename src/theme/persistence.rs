@@ -136,7 +136,7 @@ pub(crate) fn save(dir: Option<&Path>, index: usize) -> io::Result<()> {
             }
         };
         let written = (|| {
-            write!(file, "{{\"theme\":\"{}\"}}\n", NAMES[index])?;
+            writeln!(file, "{{\"theme\":\"{}\"}}", NAMES[index])?;
             file.sync_all()
         })();
         drop(file);

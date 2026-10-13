@@ -555,7 +555,7 @@ fn roomy_columns_allocate_workspace_tab_name_and_status_without_overflow() {
         let selected = without_status_ansi(lines[4])
             .replace("\x1b[48;5;236m", "")
             .replace("\x1b[0m", "");
-        assert!(selected.cell_width() as usize <= width - 1, "{frame}");
+        assert!((selected.cell_width() as usize) < width, "{frame}");
         assert!(selected[expected[2]..].contains("Claude"), "{frame}");
         assert!(selected[expected[3]..].contains("working"), "{frame}");
     }
@@ -620,7 +620,10 @@ fn compact_pipe_is_dim_only_between_unstyled_spaces() {
     state.key(Key::Char('/'));
     state.query = "Claude".into();
     let filtered = state.terminal_frame(60, 15);
-    assert_eq!(filtered.lines().next().unwrap(), "  Search: Claude");
+    assert_eq!(
+        filtered.lines().next().unwrap(),
+        format!("  Search: Claude{}Search", " ".repeat(36))
+    );
     assert!(
         without_match_marks(&filtered).contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking")
     );
@@ -711,13 +714,13 @@ fn compact_selected_background_matches_horizontal_table_borders() {
         );
         assert!(
             lines.iter().all(|line| {
-                without_status_ansi(line)
+                (without_status_ansi(line)
                     .replace("\x1b[48;5;236m", "")
                     .replace("\x1b[2m", "")
                     .replace("\x1b[22m", "")
                     .replace("\x1b[0m", "")
-                    .cell_width() as usize
-                    <= width - 1
+                    .cell_width() as usize)
+                    < width
             }),
             "phantom terminal column: {frame}"
         );
@@ -1233,11 +1236,7 @@ fn ordinary_workspace_label_with_link_marker_keeps_normal_separator() {
                 ("", "")
             };
             let expected = format!("  {dim}{}{reset}", "┄".repeat(width - 4));
-            let rule = frame
-                .lines()
-                .filter(|line| line.contains('┄'))
-                .last()
-                .unwrap();
+            let rule = frame.lines().rfind(|line| line.contains('┄')).unwrap();
             assert_eq!(rule, expected, "{frame}");
             assert!(frame.contains("↳ Ordinary"), "{frame}");
         }
@@ -1329,6 +1328,8 @@ fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
             "{only}"
         );
         state.query.clear();
+        // Start each layout's jump from the source, not the previous layout's linked block.
+        state.selected = state.rows.first().map(|row| row.id.clone());
         state.key(Key::Tab);
         assert_eq!(state.selected.as_deref(), Some("p-other"));
         let scrolled = state.terminal_frame(width, 10);
@@ -1545,7 +1546,10 @@ fn table_block_uses_nearly_full_width_without_moving_chrome() {
         let state = ui();
         let frame = state.terminal_frame(width, 16);
         let lines: Vec<_> = frame.split("\r\n").collect();
-        assert_eq!(lines[0], "  Search: / to search");
+        assert_eq!(
+            lines[0],
+            format!("  Search: / to search{}Select", " ".repeat(width - 29))
+        );
         assert!(
             lines[15]
                 == state

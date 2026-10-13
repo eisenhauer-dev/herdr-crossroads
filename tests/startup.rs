@@ -464,8 +464,7 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
         assert!(output.status.success());
         let last_agent = output_lines
             .iter()
-            .filter(|line| line.contains("Claude | "))
-            .last()
+            .rfind(|line| line.contains("Claude | "))
             .unwrap();
         assert!(
             last_agent.contains(&format!("Claude | {expected}")),
@@ -1314,15 +1313,16 @@ fn plugin_pane_title_is_parsed_from_manifest() {
 fn status_colors_config_defaults_partial_override_and_invalid_files() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+    // Exercise a long source path regardless of the current PID's digit count.
     let base = std::path::Path::new("/tmp/opencode").join(format!(
-        "crossroads-colors-{}-{}",
+        "crossroads-colors-{:010}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::create_dir(&base).unwrap();
     let fake = fake_herdr();
     let log = fake.with_extension("log");
-    let run = |config: Option<&str>| {
+    let run = |config: Option<&str>, columns: &str| {
         match config {
             Some(contents) => std::fs::write(base.join("status-colors.json"), contents).unwrap(),
             None => {
@@ -1334,14 +1334,15 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
             .env("CROSSROADS_TEST_LOG", &log)
             .env("HERDR_PLUGIN_CONFIG_DIR", &base)
             .env("HERDR_PANE_ID", "p-self")
+            .env("COLUMNS", columns)
             .stdin(Stdio::null())
             .output()
             .unwrap()
     };
-    let missing = run(None);
+    let missing = run(None, "80");
     assert!(missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stdout).contains("Claude | working"));
-    let partial = run(Some(r##"{"working":"#123ABC"}"##));
+    let partial = run(Some(r##"{"working":"#123ABC"}"##), "80");
     assert!(
         partial.status.success(),
         "{}",
@@ -1363,7 +1364,7 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
         r##"{"working":"#123abz"}"##,
         r##"{"other":"#123ABC"}"##,
     ] {
-        let result = run(Some(invalid));
+        let result = run(Some(invalid), "200");
         assert!(result.status.success(), "{invalid}");
         let text = String::from_utf8_lossy(&result.stdout);
         assert!(
@@ -1382,6 +1383,7 @@ fn status_colors_config_defaults_partial_override_and_invalid_files() {
     std::fs::create_dir(base.join("status-colors.json")).unwrap();
     let unreadable = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
         .env("HERDR_PLUGIN_CONFIG_DIR", &base)
+        .env("COLUMNS", "200")
         .stdin(Stdio::null())
         .output()
         .unwrap();
