@@ -51,14 +51,14 @@ fn footers_omit_opening_actions_but_preserve_full_keys_and_search_controls() {
                 }
             }
         }
-        state.key(search.clone());
+        state.key(search);
         assert_eq!(state.mode, Mode::Search);
         assert!(state
             .frame_width(240)
             .contains("Enter/Esc: select  Backspace: erase"));
         state.key(Key::Char('x'));
         state.key(Key::Enter);
-        state.key(reset.clone());
+        state.key(reset);
         assert!(state.query.is_empty());
         state.key(themes);
         assert_eq!(state.mode, Mode::Themes);
@@ -147,40 +147,40 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     for width in [76, 120] {
         assert_eq!(
             state.terminal_frame(width, 8).split("\r\n").next(),
-            Some("  Search: / to search")
+            Some(format!("  Search: / to search{}Select", " ".repeat(width - 29)).as_str())
         );
     }
     state.key(Key::Char('/'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: ")
+        Some(format!("  Search: {}Search", " ".repeat(102)).as_str())
     );
     for c in "codex".chars() {
         state.key(Key::Char(c));
     }
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: codex")
+        Some(format!("  Search: codex{}Search", " ".repeat(97)).as_str())
     );
     state.key(Key::Enter);
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: codex")
+        Some(format!("  Search: codex{}Select", " ".repeat(97)).as_str())
     );
     state.key(Key::Char('r'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: / to search")
+        Some(format!("  Search: / to search{}Select", " ".repeat(91)).as_str())
     );
     state.key(Key::Char('?'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: / to search")
+        Some(format!("  Search: / to search{}Help", " ".repeat(93)).as_str())
     );
     state.key(Key::Char('/'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some("  Search: ")
+        Some(format!("  Search: {}Help", " ".repeat(104)).as_str())
     );
 }
 
@@ -920,4 +920,43 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
             "{help}"
         );
     }
+}
+#[test]
+fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_search() {
+    for (width, height) in [(80, 15), (142, 30), (240, 40)] {
+        for (mode, badge, preview) in [
+            (Mode::Select, "Select", false),
+            (Mode::Search, "Search", false),
+            (Mode::Help, "Help", false),
+            (Mode::Themes, "Themes", true),
+        ] {
+            let mut state = super::test_support::ui();
+            state.mode = mode;
+            state.theme_table_preview = preview;
+            state.help.searching = true;
+            for query in ["", "界👩\u{200d}💻", &"界".repeat(300)] {
+                state.query = query.into();
+                state.help.query = query.into();
+                for ansi in [false, true] {
+                    let lines = state.layout(width, height, ansi);
+                    let row = &lines[usize::from(preview)];
+                    assert!(
+                        row.starts_with("  Search:") && row.ends_with(badge),
+                        "{row:?}"
+                    );
+                    assert_eq!(row.cell_width() as usize, width - 2, "{row:?}");
+                    if query.len() > width {
+                        assert!(row.contains('…'), "{row:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+#[test]
+fn theme_table_search_row_labels_current_mode_themes() {
+    let mut state = super::test_support::ui();
+    state.key(Key::Char('t'));
+    state.key(Key::Char(' '));
+    assert!(state.layout(80, 15, false)[1].ends_with("Themes"));
 }

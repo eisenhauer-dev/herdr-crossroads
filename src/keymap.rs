@@ -134,6 +134,7 @@ impl Default for Keymap {
                     (Action::TogglePreview, "Space"),
                     (Action::Save, "Enter"),
                     (Action::Cancel, "Esc/q"),
+                    (Action::OpenHelp, "?"),
                 ][..],
             ),
         ] {

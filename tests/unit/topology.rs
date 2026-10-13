@@ -249,3 +249,96 @@ fn sanitizes_terminal_control_characters_in_labels() {
     let output = render(&unsafe_name, Some("p-self"), 100).unwrap();
     assert!(!output.contains('\u{1b}'));
 }
+
+#[cfg(unix)]
+#[test]
+fn linked_workspace_filter_preserves_annotation_order_and_remembered_selection() {
+    use std::os::unix::fs::PermissionsExt;
+    let fake = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-linked-filter-{}", std::process::id()));
+    let response = serde_json::json!({"result":{"type":"worktree_list","source":{"source_workspace_id":"w1"},"worktrees":[{"open_workspace_id":"w2","is_linked_worktree":true,"branch":"feature/demo"}]}});
+    std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", response)).unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut items = rows(SNAPSHOT, Some("p-self"), 160).unwrap();
+    annotate_worktrees(&mut items, fake.as_os_str(), false);
+    std::fs::remove_file(fake).unwrap();
+    let mut state = Ui::with_theme_choice(items, "catppuccin", None);
+    let whole_order = [
+        "p-b",
+        "p-a",
+        "p-untitled",
+        "p-untitled-2",
+        "p-second-tab",
+        "p-other",
+        "p-other-untitled",
+    ];
+    let linked_order = ["p-other", "p-other-untitled"];
+    for (query, expected) in [
+        ("", whole_order.as_slice()),
+        ("↳ Same", linked_order.as_slice()),
+        ("feature/demo", linked_order.as_slice()),
+        ("FTR/DM", linked_order.as_slice()),
+        ("no-such-workspace", [].as_slice()),
+    ] {
+        state.query = query.into();
+        assert_eq!(
+            state
+                .visible()
+                .iter()
+                .map(|&i| state.rows[i].id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "query {query:?}"
+        );
+    }
+
+    state.selected = Some("p-a".into());
+    state.query = "feature/demo".into();
+    assert_eq!(
+        state.selected_index(&state.visible()),
+        state.visible().first().copied()
+    );
+    let frame = state.layout(160, 20, true).join("\n");
+    let plain = state.layout(160, 20, false).join("\n");
+    let linked_line = frame
+        .lines()
+        .find(|line| selected_prefix(line))
+        .unwrap_or_else(|| panic!("{frame:?}"));
+    assert!(plain.contains("↳ Same (feature/demo)"), "{frame}");
+    assert!(linked_line.contains("codex"), "{frame}");
+    assert_eq!(plain.matches("↳ Same (feature/demo)").count(), 1, "{frame}");
+    assert!(
+        without_name_accent(linked_line).contains("↳ Same (\x1b[4mfeature/demo"),
+        "{frame}"
+    );
+    assert!(
+        !plain.contains("Claude") && !plain.contains("Second"),
+        "{frame}"
+    );
+    assert_eq!(state.selected.as_deref(), Some("p-a"));
+    state.key(Key::Char('r'));
+    assert!(state.query.is_empty());
+    assert_eq!(state.selected.as_deref(), Some("p-a"));
+    assert_eq!(
+        state.rows[state.selected_index(&state.visible()).unwrap()].id,
+        "p-a"
+    );
+
+    state.query = "feature/demo".into();
+    state.key(Key::Down);
+    assert_eq!(state.selected.as_deref(), Some("p-other-untitled"));
+    state.key(Key::Char('r'));
+    assert_eq!(state.selected.as_deref(), Some("p-other-untitled"));
+
+    state.query = "no-such-workspace".into();
+    assert!(state.selected_index(&state.visible()).is_none());
+    let empty = state.layout(160, 20, true).join("\n");
+    assert!(empty.contains("No matching panes"), "{empty}");
+    assert!(!empty.lines().any(selected_prefix), "{empty}");
+    assert_eq!(state.key(Key::Enter), None);
+    assert!(!state.closed);
+    state.key(Key::Char('r'));
+    state.query = "feature/demo".into();
+    state.selected = Some("p-a".into());
+    assert_eq!(state.key(Key::Enter).as_deref(), Some("p-other"));
+}

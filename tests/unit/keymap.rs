@@ -6,6 +6,77 @@ use crate::test_presentation::without_sgr;
 use crate::test_support::ui;
 
 #[test]
+fn configured_navigation_synonyms_wrap_without_changing_modes_or_focusing() {
+    use crate::selection::Mode;
+    for (context, action, previous, expected_pane) in [
+        ("select", "next_row", false, "p-b"),
+        ("select", "previous_row", true, "p-other-untitled"),
+        ("select", "next_tab", false, "p-b"),
+        ("select", "previous_tab", true, "p-other"),
+        ("select", "next_workspace", false, "p-b"),
+        ("select", "previous_workspace", true, "p-other"),
+        ("help", "next_category", false, "p-b"),
+        ("help", "previous_category", true, "p-b"),
+        ("themes", "next_theme", false, "p-b"),
+        ("themes", "previous_theme", true, "p-b"),
+    ] {
+        for key in [Key::Char('N'), Key::Char('Z')] {
+            let mut state = ui();
+            if context == "help" {
+                state.key(Key::Char('?'));
+                state.help.selected = Some(if previous {
+                    0
+                } else {
+                    state.help.entries.len() - 1
+                });
+            } else if context == "themes" {
+                state.key(Key::Char('t'));
+                state.theme_cursor = if previous {
+                    0
+                } else {
+                    crate::theme::NAMES.len() - 1
+                };
+            } else if !previous {
+                state.selected = state.rows.last().map(|row| row.id.clone());
+            }
+            let (map, errors) =
+                Keymap::parse(&serde_json::json!({context:{action:["N", "Z"]}}).to_string());
+            assert!(errors.is_empty(), "{errors:?}");
+            state.keymap = map;
+            assert!(state.key(key).is_none(), "{context}.{action}: {key:?}");
+            assert!(!state.closed);
+            assert_eq!(state.theme_index, 0);
+            assert_eq!(state.selected.as_deref(), Some(expected_pane));
+            match context {
+                "help" => {
+                    assert_eq!(state.mode, Mode::Help);
+                    assert_eq!(
+                        state.help.selected,
+                        Some(if previous {
+                            state.help.entries.len() - 1
+                        } else {
+                            0
+                        })
+                    );
+                }
+                "themes" => {
+                    assert_eq!(state.mode, Mode::Themes);
+                    assert_eq!(
+                        state.theme_cursor,
+                        if previous {
+                            crate::theme::NAMES.len() - 1
+                        } else {
+                            0
+                        }
+                    );
+                }
+                _ => assert_eq!(state.mode, Mode::Select),
+            }
+        }
+    }
+}
+
+#[test]
 fn every_action_resolves_only_in_its_declared_modes_with_stable_names() {
     let map = Keymap::default();
     for (action, name, contexts) in [
@@ -35,7 +106,11 @@ fn every_action_resolves_only_in_its_declared_modes_with_stable_names() {
             vec![Context::Select, Context::Help],
         ),
         (Action::OpenThemes, "open_themes", vec![Context::Select]),
-        (Action::OpenHelp, "open_help", vec![Context::Select]),
+        (
+            Action::OpenHelp,
+            "open_help",
+            vec![Context::Select, Context::Themes],
+        ),
         (Action::Close, "close", vec![Context::Select, Context::Help]),
         (Action::NextCategory, "next_category", vec![Context::Help]),
         (
@@ -185,7 +260,7 @@ fn conservative_allowed_characters_and_specials_roundtrip() {
     ] {
         let key = Key::parse(text).unwrap();
         assert_eq!(Key::parse(&key.label()), Some(key), "{text}");
-        let (map, errors) = Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text], "next_theme": ["A"], "previous_theme": ["B"], "save": ["C"], "cancel": ["D"]}}).to_string());
+        let (map, errors) = Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text], "next_theme": ["A"], "previous_theme": ["B"], "save": ["C"], "cancel": ["D"], "open_help": ["E"]}}).to_string());
         assert!(errors.is_empty(), "{text}: {errors:?}");
         assert_eq!(
             map.action(Context::Themes, key),
@@ -1728,7 +1803,7 @@ fn dynamic_help_exposes_both_replacements_footer_only_first_non_arrow() {
         !pages.contains("Z"),
         "second non-arrow belongs only in full help"
     );
-    assert!(pages.contains("Down") == false, "replaced Down is absent");
+    assert!(!pages.contains("Down"), "replaced Down is absent");
     assert!(
         pages.contains("Shift+Tab")
             && pages.contains("focus")
@@ -1977,4 +2052,28 @@ fn unreadable_jsonc_in_each_source_yields_only_io_without_legacy_fallback() {
         assert!(!visible.contains(".json"), "{visible}");
     }
     std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn themes_help_default_remap_and_collisions_follow_existing_validation() {
+    use crate::keymap::{Action, Context, Keymap};
+    assert_eq!(
+        Keymap::default().action(Context::Themes, crate::input::Key::Char('?')),
+        Some(Action::OpenHelp)
+    );
+    let (map, errors) = Keymap::parse(r#"{"themes":{"open_help":["H","Right"]}}"#);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(map.display_labels(Context::Themes, "open_help"), "H/→");
+    let (_, errors) = Keymap::parse(r#"{"themes":{"save":["?"]}}"#);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("themes | ?") && e.contains("save") && e.contains("open_help")),
+        "{errors:?}"
+    );
+    let (map, _) = Keymap::parse(r#"{"themes":{"open_help":["H"],"open_help":["?"]}}"#);
+    assert!(map
+        .diagnostic_blocks()
+        .iter()
+        .any(|(heading, details)| heading.contains("Duplicate")
+            && details.iter().any(|d| d.contains("open_help"))));
 }

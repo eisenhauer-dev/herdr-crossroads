@@ -54,7 +54,7 @@ impl Ui {
                 crate::theme::NAMES[self.theme_cursor]
             )));
         }
-        lines.push(aligned(&search));
+        lines.push(format!("  {search}"));
         {
             let table_limit = limit.saturating_sub(3);
             let inner = table_limit.saturating_sub(4);
@@ -114,11 +114,11 @@ impl Ui {
                 self.last_selected_at.set(selected_at);
             }
             let mut shown = Vec::new();
-            for at in start..visible.len() {
+            for (at, &index) in visible.iter().enumerate().skip(start) {
                 if ansi && (available == 0 || span(start, at) > available) {
                     break;
                 }
-                shown.push(visible[at]);
+                shown.push(index);
             }
             let full = inner >= 30 && (!visible.is_empty() || width >= 80);
             let context = inner >= 18 && (!visible.is_empty() || width >= 80);

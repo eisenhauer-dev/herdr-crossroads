@@ -9,6 +9,7 @@ use super::{Mode, Ui};
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum HelpContext {
     Select,
+    Themes,
 }
 
 pub(crate) struct HelpEntry {
@@ -19,8 +20,11 @@ pub(crate) struct HelpEntry {
 
 impl HelpContext {
     pub(crate) fn entries(&self, map: &Keymap) -> Vec<HelpEntry> {
-        SELECT_KEYS
-            .iter()
+        let (context, keys) = match self {
+            Self::Select => (Context::Select, &SELECT_KEYS[..]),
+            Self::Themes => (Context::Themes, &THEMES_KEYS[..]),
+        };
+        keys.iter()
             .map(|&(category, action, meaning)| HelpEntry {
                 category,
                 meaning,
@@ -31,12 +35,28 @@ impl HelpContext {
                         map.display_labels(Context::Select, "previous_workspace")
                     )
                 } else {
-                    map.display_labels(Context::Select, action)
+                    map.display_labels(context, action)
                 },
             })
             .collect()
     }
+
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::Select => "Select",
+            Self::Themes => "Themes",
+        }
+    }
 }
+
+const THEMES_KEYS: [(&str, &str, &str); 6] = [
+    ("Navigation", "next_theme", "next theme"),
+    ("Navigation", "previous_theme", "previous theme"),
+    ("Actions", "toggle_preview", "toggle list/table preview"),
+    ("Actions", "save", "save theme"),
+    ("Actions", "cancel", "cancel theme selection"),
+    ("Actions", "open_help", "show keys"),
+];
 
 const SELECT_KEYS: [(&str, &str, &str); 11] = [
     ("Navigation", "next_row", "next pane"),
@@ -53,6 +73,7 @@ const SELECT_KEYS: [(&str, &str, &str); 11] = [
 ];
 
 pub(crate) struct Help {
+    pub(crate) context: HelpContext,
     pub(crate) query: String,
     pub(crate) searching: bool,
     pub(crate) selected: Option<usize>,
@@ -61,13 +82,14 @@ pub(crate) struct Help {
 }
 
 impl Help {
-    pub(super) fn select(map: &Keymap) -> Self {
+    pub(super) fn new(context: HelpContext, map: &Keymap) -> Self {
         Self {
             query: String::new(),
             searching: false,
             selected: Some(0),
             viewport_start: Cell::new(0),
-            entries: HelpContext::Select.entries(map),
+            entries: context.entries(map),
+            context,
         }
     }
 
@@ -101,12 +123,15 @@ impl Ui {
                 _ => {}
             }
         } else {
-            let Some(action) = self.keymap.action(Context::Help, key) else {
-                return None;
-            };
+            let action = self.keymap.action(Context::Help, key)?;
             let visible = self.help.visible();
             match action {
-                Action::Close => self.mode = Mode::Select,
+                Action::Close => {
+                    self.mode = match self.help.context {
+                        HelpContext::Select => Mode::Select,
+                        HelpContext::Themes => Mode::Themes,
+                    };
+                }
                 Action::OpenSearch => self.help.searching = true,
                 Action::ResetSearch => {
                     self.help.selected = self.help.selected_index(&visible).or(self.help.selected);
@@ -119,9 +144,9 @@ impl Ui {
                         .and_then(|i| visible.iter().position(|v| *v == i))
                     {
                         let next = if action == Action::NextCategory {
-                            (at + 1).min(visible.len() - 1)
+                            (at + 1) % visible.len()
                         } else {
-                            at.saturating_sub(1)
+                            at.checked_sub(1).unwrap_or(visible.len() - 1)
                         };
                         self.help.selected = Some(visible[next]);
                     }

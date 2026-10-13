@@ -1,8 +1,20 @@
-use super::{columns, wrapped};
+use ratatui::buffer::CellWidth;
+
+use super::{clipped, columns, wrapped};
 use crate::keymap::Context;
-use crate::selection::Ui;
+use crate::selection::{Mode, Ui};
 
 impl Ui {
+    pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
+        let badge = match self.mode {
+            Mode::Select => "Select",
+            Mode::Search => "Search",
+            Mode::Help => "Help",
+            Mode::Themes => "Themes",
+        };
+        (badge, width.saturating_sub(4 + badge.len() + 1))
+    }
+
     pub(super) fn search_prompt(
         &self,
         context: Context,
@@ -10,18 +22,24 @@ impl Ui {
         searching: bool,
         width: usize,
     ) -> String {
-        if !query.is_empty() || searching {
-            return format!("Search: {query}");
-        }
-        let text = format!(
-            "Search: {} to search",
-            self.keymap.display_labels(context, "open_search")
-        );
-        let pages = wrapped(&text, width.saturating_sub(4));
-        if pages.len() > 1 {
-            self.hint_more.set(true);
-        }
-        pages[self.hint_scroll.get() % pages.len()].clone()
+        let (badge, available) = self.search_prompt_geometry(width);
+        let text = if !query.is_empty() || searching {
+            clipped(&format!("Search: {query}"), available)
+        } else {
+            let text = format!(
+                "Search: {} to search",
+                self.keymap.display_labels(context, "open_search")
+            );
+            let pages = wrapped(&text, available);
+            if pages.len() > 1 {
+                self.hint_more.set(true);
+            }
+            clipped(&pages[self.hint_scroll.get() % pages.len()], available)
+        };
+        format!(
+            "{text}{}{badge}",
+            " ".repeat(available.saturating_sub(text.cell_width() as usize) + 1)
+        )
     }
 
     fn hint_lines(&self, context: Context, width: usize) -> Vec<String> {

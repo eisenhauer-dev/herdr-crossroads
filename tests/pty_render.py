@@ -135,13 +135,22 @@ def assert_panel_background(raw, width, height):
     return lines
 
 
+def expected_search_row(width, text, mode):
+    # These ASCII queries fit without clipping; reserve the renderer's two-cell
+    # right margin and assert the entire row, not just the query or badge.
+    left = f"  Search: {text}"
+    assert left.isascii() and len(left) + len(mode) + 1 <= width - 2
+    return left + " " * (width - 2 - len(left) - len(mode)) + mode
+
+
 def assert_help_frame(raw, width=80, height=15, searching=False):
     lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
     assert wraps == 0 and cursor[0] == searching, (lines, wraps, cursor)
     border = "  " + "─" * (width - 4)
     footer = ["  Enter/Esc: return to keys · Backspace: erase"] if searching else default_footer_lines(width, "help")
-    assert lines[1] == border and lines[-len(footer) - 1] == border, lines
-    assert lines[0].startswith("  Search: "), lines
+    assert lines[2] == border and lines[-len(footer) - 1] == border, lines
+    assert lines[1] == "  Keys — Select", lines
+    assert lines[0].startswith("  Search: ") and lines[0].endswith("Help") and len(lines[0]) == width - 2, lines
     assert not any("Keys ·" in line or "Meaning" in line or "Agent/Pane Name" in line for line in lines), lines
     if searching:
         assert lines[-1] == "  Enter/Esc: return to keys · Backspace: erase", lines
@@ -197,7 +206,46 @@ def assert_notice_style(raw):
     assert "\x1b[0m" not in header.split("\x1b[K")[0], header
 
 
+def search_cursor_cases(binary):
+    from pty_keymaps import Popup
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cursor-") as temporary:
+        directory = Path(temporary)
+        fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        for width, height in ((80, 15), (142, 30)):
+            for mode in ("Help", "Search"):
+                budget = width - 4 - len(mode) - 1
+                for query, expected_x in (("", 10), ("abc", 13), ("abc  ", 15),
+                                          ("x" * 200, 2 + budget - 1),
+                                          ("界" * 100, 2 + 8 + 2 * ((budget - 2 - 8) // 2) + 1)):
+                    popup = Popup(binary, directory, width=width, height=height)
+                    try:
+                        if mode == "Help":
+                            popup.send(b"?")
+                        popup.send(b"/")
+                        # Empty search also needs a complete fresh draw for cursor checks.
+                        os.write(popup.master, query.encode() if query else b"\x7f")
+                        raw = frame(popup.master, b"\x1b[?25h")
+                        lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                        assert wraps == 0 and lines[0].endswith(mode), (lines, wraps)
+                        assert cursor == (True, expected_x, 0), (width, mode, query, cursor, expected_x, lines[0])
+                        if len(query) < 10:
+                            assert lines[0] == expected_search_row(width, query, mode), lines
+                        else:
+                            assert "…" in lines[0], lines
+                        popup.send(b"\r")
+                        if mode == "Help":
+                            popup.send(b"q")
+                        popup.finish(b"q")
+                    finally:
+                        popup.abort()
+
+
 def main(binary):
+    search_cursor_cases(binary)
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)
         fixture = Path(__file__).parent / "fixtures" / "topology.json"
@@ -224,7 +272,7 @@ def main(binary):
             assert "Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[38;2;205;214;244m" in selected_raw, raw
             assert selected_raw.endswith("\x1b[0m\x1b[48;2;24;24;37m\x1b[K"), selected_raw
             assert "codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[38;2;205;214;244m" in raw, raw
-            assert lines[0] == "  Search: / to search" and not any("Herdr Crossroads" in line for line in lines), lines
+            assert lines[0] == expected_search_row(80, "/ to search", "Select") and not any("Herdr Crossroads" in line for line in lines), lines
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[15-len(default_footer_lines(80))-1].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
             assert sum("┄" in line for line in lines) == 1, lines
@@ -238,15 +286,21 @@ def main(binary):
             os.write(master, b"?")
             raw = frame(master, b"Esc: close")
             lines = assert_help_frame(raw)
-            assert lines[0] == "  Search: / to search" and lines[2] == "  Navigation", lines
-            assert lines[3].startswith("  > j/↓") and "next pane" in lines[3], lines
-            assert lines[7].endswith("next/previous workspace") and lines[8] == "" and lines[9] == "  Actions", lines
+            assert lines[0] == expected_search_row(80, "/ to search", "Help") and lines[3] == "  Navigation", lines
+            assert lines[4].startswith("  > j/↓") and "next pane" in lines[4], lines
+            assert lines[8].endswith("next/previous workspace") and lines[9] == "" and lines[10] == "  Actions", lines
             _, _, backgrounds = screen(raw, 80, 15, track_bg=True)
-            assert [x for x, enabled in enumerate(backgrounds[3]) if enabled] == list(range(2, 78)), backgrounds[3]
-            assert not any(backgrounds[8]), backgrounds[8]
-            for _ in range(12):
+            assert [x for x, enabled in enumerate(backgrounds[4]) if enabled] == list(range(2, 78)), backgrounds[4]
+            assert not any(backgrounds[9]), backgrounds[9]
+            for _ in range(10):
                 os.write(master, b"\x1b[B")
                 lines = assert_help_frame(frame(master, b"Esc: close"))
+            assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            os.write(master, b"\x1b[B")
+            lines = assert_help_frame(frame(master, b"Esc: close"))
+            assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines
+            os.write(master, b"\x1b[A")
+            lines = assert_help_frame(frame(master, b"Esc: close"))
             assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
             os.write(master, b"\r")
             assert_help_frame(frame(master, b"Esc: close"))
@@ -254,21 +308,21 @@ def main(binary):
             os.write(master, b"/focus")
             raw = frame(master, b"\x1b[?25h")
             lines = assert_help_frame(raw, searching=True)
-            assert lines[0] == "  Search: focus" and lines[2] == "  Actions", lines
+            assert lines[0] == expected_search_row(80, "focus", "Help") and lines[3] == "  Actions", lines
             assert not any("Navigation" in line for line in lines), lines
             assert any("focus selected pane" in line for line in lines), lines
-            assert lines[3].startswith("  > Enter") and all(not line for line in lines[4:-2]), lines
+            assert lines[4].startswith("  > Enter") and all(not line for line in lines[5:-2]), lines
             assert "\x1b[38;2;180;190;254m\x1b[4m" in raw, raw
             os.write(master, b"\x1b")
             assert_help_frame(frame(master, b"Esc: close"))
             os.write(master, b"r/qr?")
             lines = assert_help_frame(frame(master, b"\x1b[?25h"), searching=True)
-            assert lines[0] == "  Search: qr?" and lines[2] == "  No matching keys", lines
+            assert lines[0] == expected_search_row(80, "qr?", "Help") and lines[3] == "  No matching keys", lines
             assert not any("Navigation" in line or "Actions" in line for line in lines), lines
-            assert all(not line for line in lines[3:-2]), lines
+            assert all(not line for line in lines[4:-2]), lines
             os.write(master, b"\x7f\r")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert lines[0] == "  Search: qr", lines
+            assert lines[0] == expected_search_row(80, "qr", "Help"), lines
             os.write(master, b"r")
             assert_help_frame(frame(master, b"Esc: close"))
             for width, height in ((120, 24), (162, 36), (109, 15), (110, 15), (80, 15)):
@@ -277,10 +331,16 @@ def main(binary):
                 assert any(line.startswith("  > Enter") for line in lines), lines
                 actions = lines.index("  Actions")
                 assert lines[actions - 1] == "" and lines[actions - 2].endswith("next/previous workspace"), lines
-            for _ in range(12):
+            for _ in range(5):
                 os.write(master, b"k")
                 lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert lines[3].startswith("  > j/↓"), lines
+            assert lines[4].startswith("  > j/↓"), lines
+            os.write(master, b"k")
+            lines = assert_help_frame(frame(master, b"Esc: close"))
+            assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            os.write(master, b"j")
+            lines = assert_help_frame(frame(master, b"Esc: close"))
+            assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines
             os.write(master, b"q")
             assert_selected_background(frame(master, b"  Search: "), 80, 15)
             os.write(master, b"\t")
@@ -321,7 +381,7 @@ def main(binary):
             before_help = screen(raw, 80, 15)[0]
             os.write(master, b"?")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert lines[0] == "  Search: / to search", lines
+            assert lines[0] == expected_search_row(80, "/ to search", "Help"), lines
             os.write(master, b"q")
             assert screen(frame(master, b"  Search: codex"), 80, 15)[0] == before_help
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
@@ -359,7 +419,7 @@ def main(binary):
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
             raw = frame(master, b"Search: codex")
             lines = assert_selected_background(raw, 80, 15)
-            assert lines[0] == "  Search: codex" and any(line.startswith("  > ") and "codex" in line for line in lines), lines
+            assert lines[0] == expected_search_row(80, "codex", "Select") and any(line.startswith("  > ") and "codex" in line for line in lines), lines
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
             raw = frame(master, NOTICE_END)
             assert [line for line in screen(raw, 79, 15)[0] if line] == notice_lines(79, 15)

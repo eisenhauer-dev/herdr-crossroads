@@ -137,7 +137,7 @@ pub(super) fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io:
     Ok(rows.into_iter().map(|(_, row)| row).collect())
 }
 
-pub(super) fn annotate_worktrees(rows: &mut Vec<Row>, executable: &std::ffi::OsStr, bounded: bool) {
+pub(super) fn annotate_worktrees(rows: &mut [Row], executable: &std::ffi::OsStr, bounded: bool) {
     let workspace_ids: Vec<String> = rows.iter().map(|row| row.workspace_id.clone()).collect();
     let mut covered = HashSet::new();
     let mut annotated = HashSet::new();

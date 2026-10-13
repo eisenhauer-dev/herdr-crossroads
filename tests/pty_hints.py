@@ -85,11 +85,19 @@ def main(binary):
             config = {"select": {"next_row": aliases, "previous_row": previous_aliases, "open_search": ["s"]},
                       "help": {"next_category": aliases, "previous_category": previous_aliases, "open_search": ["s"]},
                       "themes": {"next_theme": aliases, "previous_theme": previous_aliases}}
-            for context, open_key, final_hint in [("select", None, "?: keys"), ("help", b"?", "close keys"), ("themes", b"t", "Esc: cancel"), ("preview", b"t ", "Esc: cancel")]:
+            for context, open_key, final_hint in [("select", None, "?: keys"), ("help", b"?", "close keys"), ("themes", b"t", "Esc: cancel"), ("preview", b"t", "Esc: cancel")]:
                 popup = Popup(binary, directory, config)
                 lines = check_frame(popup.initial, 80)
                 if open_key:
                     lines = popup.send(open_key)
+                if context in ["themes", "preview"]:
+                    assert lines[0].startswith("  Themes · selected:") and "Space: table" in normalized(lines[-2:]), lines
+                    assert not any("Agent/Pane Name" in line for line in lines), lines
+                if context == "preview":
+                    lines = popup.send(b" ")
+                    assert lines[0].startswith("  Themes · saved:") and "Space: list" in normalized(lines[-2:]), lines
+                    assert any("Agent/Pane Name" in line for line in lines), lines
+                    assert any("Claude" in line and "working" in line for line in lines), lines
                 rows = 2 if context in ["select", "themes", "preview"] else 1
                 observed = normalized(lines[-rows:])
                 assert all(alias in observed for alias in ["'/'/↓", "K/↑"]) and final_hint in observed, (context, observed)

@@ -22,7 +22,7 @@ fn help_category_spacing_tracks_only_visible_groups() {
             let footer_len = state
                 .hints(crate::keymap::Context::Help, width, 1, false)
                 .len();
-            let body = &full[2..full.len() - footer_len - 1];
+            let body = &full[3..full.len() - footer_len - 1];
             assert!(!body.first().unwrap().trim().is_empty(), "{full:?}");
             assert!(!body.last().unwrap().trim().is_empty(), "{full:?}");
             assert_eq!(
@@ -45,6 +45,7 @@ fn help_category_spacing_tracks_only_visible_groups() {
             assert_eq!(lines.len(), height);
             assert_eq!(lines[0], full[0]);
             assert_eq!(lines[1], full[1]);
+            assert_eq!(lines[2], full[2]);
             let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
             assert_eq!(
                 lines[height - budget - 1],
@@ -61,7 +62,7 @@ fn help_category_spacing_tracks_only_visible_groups() {
             } else {
                 // Remaining blank viewport rows are padding, not content spacers.
                 assert!(
-                    lines[2..2 + body.len()]
+                    lines[3..3 + body.len()]
                         .iter()
                         .all(|line| !line.trim().is_empty()),
                     "{lines:?}"
@@ -87,23 +88,25 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
             assert_eq!(state.help.selected, Some(selected));
             assert_eq!(lines.iter().filter(|line| line.contains("> ")).count(), 1);
             assert!(
-                lines[2..height - budget - 1].iter().any(|line| {
+                lines[3..height - budget - 1].iter().any(|line| {
                     line.contains("> ") && line.contains(state.help.entries[selected].meaning)
                 }),
                 "{lines:?}"
             );
-            assert_eq!(lines[height - budget - 1], lines[1]);
+            assert_eq!(lines[height - budget - 1], lines[2]);
             assert_eq!(
                 lines[height - budget..],
                 state.hints(crate::keymap::Context::Help, width, budget, true)
             );
-            state.key(Key::Down);
+            if selected + 1 < entry_count {
+                state.key(Key::Down);
+            }
         }
         let bottom = state.layout(width, height, true);
         assert_eq!(state.help.selected, Some(entry_count - 1));
         assert_eq!(
             state.help.viewport_start.get(),
-            14usize.saturating_sub(height - 3 - budget)
+            14usize.saturating_sub(height - 4 - budget)
         );
         if height == 15 {
             assert!(
@@ -115,23 +118,23 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
             state.key(Key::Up);
             // Exercise heading restoration with a smaller internal content budget.
             let lines = state.layout(width, 8, true);
-            assert_eq!(lines[2], "  Actions", "{lines:?}");
-            assert!(lines[3].contains("> Enter"), "{lines:?}");
+            assert_eq!(lines[3], "  Actions", "{lines:?}");
+            assert!(lines[4].contains("> Enter"), "{lines:?}");
             state.key(Key::Up);
             let lines = state.layout(width, 8, true);
-            assert!(lines[2].contains("> → Tab | ← Shift+Tab"), "{lines:?}");
-            assert!(lines[3].trim().is_empty(), "{lines:?}");
-            assert_eq!(lines[4], "  Actions", "{lines:?}");
+            assert!(lines[3].contains("> → Tab | ← Shift+Tab"), "{lines:?}");
+            assert!(lines[4].trim().is_empty(), "{lines:?}");
+            assert_eq!(lines[5], "  Actions", "{lines:?}");
         }
-        for _ in 0..entry_count {
+        for _ in 0..state.help.selected.unwrap() {
             state.key(Key::Up);
             state.layout(width, height, true);
         }
         let top = state.layout(width, height, true);
         assert_eq!(state.help.selected, Some(0));
         assert_eq!(state.help.viewport_start.get(), 0);
-        assert_eq!(top[2], "  Navigation");
-        assert!(top[3].contains("> j/↓"));
+        assert_eq!(top[3], "  Navigation");
+        assert!(top[4].contains("> j/↓"));
     }
 }
 
@@ -163,13 +166,17 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 meaning_columns.iter().all(|&column| column == 25),
                 "{first:?}: {meaning_columns:?}"
             );
-            for _ in 0..15 {
+            for _ in 1..state.help.entries.len() {
                 let lines = state.layout(width, height, true);
                 assert_eq!(lines.len(), height, "{lines:?}");
-                assert_eq!(lines[0], "  Search: / to search");
-                assert_eq!(lines[1], "  ".to_owned() + &"─".repeat(width - 4));
+                assert_eq!(
+                    lines[0],
+                    format!("  Search: / to search{}Help", " ".repeat(width - 27))
+                );
+                assert_eq!(lines[1], "  Keys — Select");
+                assert_eq!(lines[2], "  ".to_owned() + &"─".repeat(width - 4));
                 let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
-                assert_eq!(lines[height - budget - 1], lines[1]);
+                assert_eq!(lines[height - budget - 1], lines[2]);
                 assert_eq!(
                     lines[height - budget..],
                     state.hints(crate::keymap::Context::Help, width, budget, true)
@@ -191,7 +198,7 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 .layout(width, height, true)
                 .iter()
                 .any(|line| line.contains("close Crossroads")));
-            for _ in 0..15 {
+            for _ in 1..state.help.entries.len() {
                 state.key(Key::Up);
                 state.layout(width, height, true);
             }
@@ -199,7 +206,7 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 .layout(width, height, true)
                 .iter()
                 .any(|line| line.contains("next pane")));
-            assert_eq!(state.layout(width, height, true)[2], "  Navigation");
+            assert_eq!(state.layout(width, height, true)[3], "  Navigation");
         }
         for query in ["DN", "focus", "e"] {
             state.help.query = query.into();
@@ -244,7 +251,7 @@ fn help_marks_first_positions_in_each_matching_column_only() {
         "{enter}"
     );
     assert_eq!(enter.matches("\x1b[4m").count(), 2, "{enter}");
-    assert_eq!(lines[2], "  Navigation");
+    assert_eq!(lines[3], "  Navigation");
     assert!(lines.iter().any(|line| line == "  Actions"));
     state.help.query = "?".into();
     let lines = state.layout(80, 15, true);
@@ -254,7 +261,7 @@ fn help_marks_first_positions_in_each_matching_column_only() {
         .unwrap();
     assert!(show.contains(&format!("{accent}?{end}")), "{show}");
     assert_eq!(show.matches("\x1b[4m").count(), 1);
-    assert_eq!(lines[2], "  Actions");
+    assert_eq!(lines[3], "  Actions");
 }
 #[test]
 fn directional_help_labels_keep_meaning_columns_aligned() {
@@ -356,18 +363,20 @@ fn assert_help_display_query_filters_and_highlights(query: char, custom: bool, w
         state.key(Key::Down);
         assert_eq!(state.help.selected, Some(entry));
     }
-    state.key(Key::Down); // Clamp at the last visible entry, including a single match.
+    state.key(Key::Down); // Wrap to the first visible entry, including a single match.
+    assert_eq!(state.help.selected, Some(expected[0]));
+    state.key(Key::Up);
     assert_eq!(state.help.selected, expected.last().copied());
     for &entry in expected.iter().rev().skip(1) {
         state.key(Key::Up);
         assert_eq!(state.help.selected, Some(entry));
     }
     state.key(Key::Up);
-    assert_eq!(state.help.selected, Some(expected[0]));
+    assert_eq!(state.help.selected, expected.last().copied());
     state.key(Key::Char('r'));
     assert!(state.help.query.is_empty());
     assert_eq!(state.help.visible(), (0..11).collect::<Vec<_>>());
-    assert_eq!(state.help.selected, Some(expected[0]));
+    assert_eq!(state.help.selected, expected.last().copied());
 }
 
 #[test]
