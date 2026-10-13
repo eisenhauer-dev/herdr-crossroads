@@ -34,6 +34,76 @@ the checkout. See [README installation](README.md#installation) for optional
 manual build-then-link testing; those Herdr examples were not executed during
 documentation verification.
 
+## Optional local pre-commit and pre-push checks
+
+The repository-owned `.githooks/pre-commit` runs `cargo fmt --check`, then
+`cargo clippy --locked --all-targets -- -D warnings` from the worktree root.
+Formatting failure stops before Clippy; either failure, including missing Cargo
+or tooling, blocks the commit. It does not autofix files or stage changes.
+The repository-owned `.githooks/pre-push` runs `cargo test --locked` from the
+worktree root; test failure or missing Cargo blocks the push. It does not modify
+the index or working files (Cargo may create build outputs).
+These checks use the **current working tree**, not a reconstructed staged
+snapshot: unstaged changes can cause failures or hide problems in staged content.
+Pre-push does not automatically check every pushed commit: the current working
+tree may differ from those commits, so passing tests does not prove their contents.
+Cargo may fetch uncached dependencies as with the manual commands above.
+
+Activation is explicit and optional; cloning does not activate either hook. From
+the repository root, first inspect and record any prior setting and its scope:
+
+```sh
+git config --show-origin --get-all core.hooksPath
+```
+
+No output and exit status 1 means no setting. The following setup refuses any
+existing effective `core.hooksPath`, including inherited settings, instead of
+silently replacing it. If one exists, leave it unchanged and run the checks
+manually; integrating with another hook setup is not covered here.
+
+```sh
+(
+    if git config --get-all core.hooksPath; then
+        printf '%s\n' 'Existing hooksPath: leave it unchanged; do not run setup.' >&2
+        exit 1
+    fi
+    git config --local core.hooksPath .githooks
+)
+```
+
+This changes only this repository's local Git configuration, never global Git
+configuration. Local configuration is shared by its linked worktrees, so this
+is not activation for just one worktree; the setting activates both hooks, and
+each worktree needs executable `.githooks/pre-commit` and `.githooks/pre-push`
+from this change. Git ignores non-executable hooks. Existing
+`.git/hooks` files are left untouched but are not used while this setting is active.
+
+To remove this opt-in, first confirm the local setting is still the `.githooks`
+value installed above (`git config --local --get-all core.hooksPath`). If it has
+changed since setup, do not unset someone else's replacement. Otherwise run:
+
+```sh
+git config --local --unset core.hooksPath
+```
+
+This restores the prior unset local setting and normal hook resolution, including
+any existing `.git/hooks` hooks. Inherited configuration remains untouched; any
+setting added elsewhere since activation will apply normally. No hook files need
+to be deleted or copied into `.git/hooks`.
+
+Run the isolated, standard-library regression tests with:
+
+```sh
+python3 tests/test_git_hooks.py
+```
+
+They exercise real Git commits and local pushes with fake Cargo in temporary
+repositories under `/tmp/opencode`, not this checkout's configuration, a network
+remote, or a real Herdr session.
+The hooks are early feedback only and can be bypassed with `git commit --no-verify`
+or `git push --no-verify`: CI remains mandatory. Pre-push runs Cargo tests, not the
+complete optimized-release PTY gates below; those remain separate requirements.
+
 ## Test layers and release gates
 
 - `tests/unit/`: module-level tests, included from `src/lib.rs`; keep test code
