@@ -71,20 +71,22 @@ and [synthetic previews](docs/media/README.md).
 ## Requirements and compatibility
 
 - Linux, a running Herdr session, and Herdr **0.9.1 or later** (manifest minimum).
-- Rust/Cargo and a system linker to build the plugin; `stty` on `PATH` at runtime.
+- For source builds: Rust/Cargo and a system linker. For local prebuilt installation:
+  trusted versioned assets and Python 3.11+ (standard library only); no Rust/Cargo.
+  `stty` is required on `PATH` at runtime.
 - A terminal popup with at least **80×15 content cells**, excluding host borders.
   Smaller popups show an error page instead of allowing pane focus.
-- Git to obtain/update a source checkout. Python 3.11+ is needed only for local
-  PTY tests, not plugin runtime.
+- Git to obtain/update a source checkout. Python 3.11+ is also used for local
+  tests, not plugin runtime.
 
 Crossroads 0.1.0 declares Linux only. Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
-host-command examples below were checked against v0.9.3 sources. The historical
-project capture exercised the plugin-launch route at 142×30 in an isolated
-v0.9.3 session, as well as search and navigation/focus. It did not verify the
-installation/update/uninstall workflow or the 90% dimensions in the example
-below. A manifest minimum is not a guarantee for every later
+host-command examples below were checked against v0.9.3 sources. On 2026-10-14,
+an isolated native Herdr 0.9.3 server/client test verified local managed
+installation, search/focus, replacement, version return, and uninstall at 160×40
+with a fixture-only 90% popup manifest. It did not test personal-host setup or
+public distribution. A manifest minimum is not a guarantee for every later
 Herdr release. See [terminal limitations](docs/keymaps.md#terminal-limits).
 
 ## Installation
@@ -109,21 +111,31 @@ Keep that checkout and its release binary in place. Linking registers a plugin
 globally for your user and creates its config/state directories; it is not a
 sandbox. Review the manifest and source before linking.
 
-There is currently **no manifest build hook**. Herdr's GitHub shorthand command
-`herdr plugin install owner/repo` clones and runs only declared build hooks; it
-does not automatically build this Rust binary. Use build-then-link rather than
-treating a source-only managed install as ready to run. No published binary
-distribution is assumed here.
+The manifest now has a Python **local-asset build hook**. It requires an absolute
+`CROSSROADS_ASSET_DIR` containing the exact versioned Linux x86_64 glibc tar and
+checksum; it does not download or compile anything. Linking does not execute this
+hook, so the source build-then-link route above is unchanged. See
+[local binary installation](docs/installation.md) for safety checks, requirements,
+and isolated tests. The selected future source is
+`SimonEisenhauer/herdr-crossroads`, but no public binary endpoint or published
+release is established; `herdr plugin install herdr-crossroads` is not valid
+shorthand. Native local managed installation was tested; see
+[its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
 
 From a shell in the running Herdr session, open the popup:
 
 ```sh
-herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 90% --height 90%
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
 
 The manifest's default placement is `popup`, with no explicit dimensions; Herdr
-defaults to a half-size popup. The example requests more space but still cannot
-guarantee 80×15 content cells on a small terminal. Enlarge the terminal if needed.
+defaults to a half-size popup. The installed Herdr 0.9.3 CLI help used for local
+acceptance does not list `--width`/`--height` for this command. To request more space
+in a trusted local checkout, add `width = "90%"` and `height = "90%"` to its
+`[[panes]]` table before registration; these are manifest fields, not CLI flags.
+The native acceptance fixture uses only its temporary manifest for that change.
+Neither the default nor 90% can guarantee 80×15 content cells on a small terminal;
+enlarge the terminal if needed. The fixture dimensions passed at 160×40 only.
 No host keybinding is installed or required; the commands do not rebind prefix
 `g`, `t`, or `x`. If another modal is open, Herdr may return `ui_busy`.
 
@@ -137,7 +149,7 @@ by `HERDR_CONFIG_PATH`):
 [[keys.command]]
 key = "prefix+f"
 type = "shell"
-command = '"${HERDR_BIN_PATH:-herdr}" plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 90% --height 90%'
+command = '"${HERDR_BIN_PATH:-herdr}" plugin pane open --plugin herdr-crossroads --entrypoint crossroads'
 description = "Open Crossroads"
 ```
 
@@ -160,15 +172,17 @@ remains a fallback. To remove the shortcut, delete only the added
 `[[keys.command]]` table and reload again. See [Herdr's versioned configuration
 guide][herdr-config].
 
-**Execution status:** installation, linking, launch-binding configuration,
-reload, configuration-directory, update, and uninstall examples in this guide
-remain unexecuted. Their syntax/lifecycle comes from Herdr's versioned
+**Execution status:** the source-build/link, launch-binding, reload and
+configuration-directory examples remain unexecuted on a personal host. Local
+managed install/reinstall/version-return/uninstall and popup search/focus passed
+in the isolated native sandbox; this does not validate public installation.
+Example syntax/lifecycle comes from Herdr's versioned
 [plugin guide][herdr-plugins], [configuration guide][herdr-config], and
 [v0.9.3 CLI implementation][herdr-cli]. The historical capture used
 the plugin-opening route with `--session film --width 142 --height 30` in a
 separate isolated environment. The current finishing cut compresses startup
 and begins native footage at the complete popup; it does not show CLI execution
-or validate this guide's 90% size example or general installation lifecycle.
+or validate personal-host configuration or general installation compatibility.
 
 ## Update and uninstall
 
@@ -188,8 +202,12 @@ If the checkout path changes, link the new root explicitly.
 
 Herdr itself is separate: use `herdr update` only for Herdr-installer-managed
 installations; otherwise update through the package manager. Herdr's plugin v1
-has no `plugin update` command: managed GitHub plugins are refreshed by reinstalling
-(which still will not build Crossroads without a build hook).
+has no `plugin update` command: managed GitHub plugins are refreshed by reinstalling.
+Crossroads has no automatic updater. Close it before reinstalling a reviewed ref
+with matching trusted local assets, or uninstalling. A return to a previous ref
+also requires that version's assets. The isolated native test verified replacement
+and return using a test-only version fixture, not compatibility with a newly
+released runtime. See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
 
 To uninstall **this local link only**:
 
@@ -199,7 +217,8 @@ herdr plugin uninstall herdr-crossroads
 
 For a local link, this unregisters Crossroads without deleting your checkout.
 `herdr plugin unlink herdr-crossroads` is the registration-only alternative.
-Plugin config/state files are retained; inspect and back up your own files before
+Managed uninstall instead removes Herdr's managed checkout. In both cases,
+plugin config/state files are retained; inspect and back up your own files before
 any manual cleanup. Do not remove other plugins or Herdr configuration.
 
 ## Configuration and complete defaults overview

@@ -4,6 +4,9 @@ version = "0.1.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux"]
 
+[[build]]
+command = ["python3", "scripts/install-binary.py"]
+
 [[panes]]
 id = "crossroads"
 title = "Herdr Crossroads"
