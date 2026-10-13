@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux gates
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare tooling and isolated test directory
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+          python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
+          test ! -L /tmp/opencode
+          mkdir -p -m 700 /tmp/opencode
+          test -O /tmp/opencode && test -w /tmp/opencode
+      - name: Check workflow contract
+        run: python3 tests/test_ci_workflow.py
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Check Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Run Cargo tests
+        run: cargo test --locked
+      - name: Check optional Git hooks
+        run: python3 tests/test_git_hooks.py
+      - name: Check Linux build helper
+        run: |
+          python3 tests/test_version.py
+          python3 tests/test_build_linux.py
+          python3 tests/test_install_binary.py
+          python3 tests/test_distribution_helpers.py
+      - name: Build, test, and package Linux binary
+        id: package
+        run: |
+          version=$(python3 scripts/check-version.py)
+          sh scripts/build-linux.sh
+          printf 'artifact=herdr-crossroads-%s-x86_64-unknown-linux-gnu\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Upload tested Linux build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: |
+            target/builds/${{ steps.package.outputs.artifact }}.tar.gz
+            target/builds/${{ steps.package.outputs.artifact }}.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 7

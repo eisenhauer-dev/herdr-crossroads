@@ -15,8 +15,8 @@ pinned in the manifest and `Cargo.lock`; do not add dependencies merely to write
 documentation or run the existing Python harnesses.
 
 The current local lint and test verification uses Rust/Cargo 1.99.0, with Clippy
-0.1.99 and rustfmt managed alongside the toolchain by rustup. This is a verified
-tooling version, not an MSRV or a toolchain pin.
+0.1.99 and rustfmt managed alongside the toolchain by rustup. CI explicitly selects
+1.99.0; this verified tooling version is not an MSRV or a local toolchain pin.
 
 From the repository root:
 
@@ -101,7 +101,7 @@ They exercise real Git commits and local pushes with fake Cargo in temporary
 repositories under `/tmp/opencode`, not this checkout's configuration, a network
 remote, or a real Herdr session.
 The hooks are early feedback only and can be bypassed with `git commit --no-verify`
-or `git push --no-verify`: CI remains mandatory. Pre-push runs Cargo tests, not the
+or `git push --no-verify`: they do not replace CI. Pre-push runs Cargo tests, not the
 complete optimized-release PTY gates below; those remain separate requirements.
 
 ## Test layers and release gates
@@ -134,12 +134,87 @@ live installation, host popup routing, SSH, every keyboard protocol, or cross-OS
 compatibility. Any manual host test should state the Herdr version, terminal,
 platform, setup changes, results, and cleanup performed.
 
+For the single supported native build-artifact target, use
+`sh scripts/build-linux.sh`. It performs the locked explicit-target release build,
+runs all four full PTYs against that exact binary, and packages a tar plus SHA256
+checksums only after success. See [tested Linux build artifacts](docs/builds.md)
+for prerequisites, versioned output paths, failure cleanup, and compatibility limits.
+See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
+the complete gate sequence, asset review, and separate remote approvals. This
+prepares versioned artifacts, not a published release. The separate
+[local-asset installer](docs/installation.md) uses Python 3.11+ standard library,
+without Rust/Cargo or a network fallback. Run its isolated tests with
+`python3 tests/test_install_binary.py`; they use synthetic ELF headers and never
+invoke Herdr. `tests/test_herdr_install.py` is a main-owned, explicit opt-in real
+Herdr 0.9.3 sandbox harness, not an ordinary automated/CI gate; see its isolation,
+approval requirements and execution status in the installation guide.
+`tests/test_distribution.py` separately tests the real native server/client PTY
+and managed lifecycle; it passed on Herdr 0.9.3 on 2026-10-14, including replacement
+and version return with a test-only fixture, not a newly released runtime.
+See [native evidence and limits](docs/installation.md#native-distribution-acceptance).
+Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its three
+pure helper tests do not launch Herdr or any subprocess. Both real-Herdr harnesses
+remain explicit opt-in, outside discovery and CI.
+
 Coverage has no numeric minimum initially. Record the baseline, explain decreases
 in review, and meaningfully test relevant changed paths and error paths rather
 than chasing a percentage. See [coverage](docs/coverage.md) for the source-only
 baseline and reproducible native LLVM measurement. Coverage supplements, never
 replaces, the hard formatting, Clippy, Cargo-test, and complete optimized-release
 PTY gates above.
+
+## Automated checks
+
+`.github/workflows/ci.yml` defines one stable **Linux gates** job for `push` and
+`pull_request` events, plus manual `workflow_dispatch` on an existing ref, on the
+standard Ubuntu 24.04 x86_64 runner. Every runner job is guarded by
+`github.event.repository.private == false`: private-repository
+events skip the job without executing runner steps. When the repository is public
+and Actions is enabled, these events automatically run formatting, Clippy with
+warnings denied, locked Cargo tests, isolated Git-hook tests, version-checker,
+build-helper, installer unit tests, and pure distribution helper tests,
+and the explicit `x86_64-unknown-linux-gnu` locked release build with all four
+complete PTY harnesses through `scripts/build-linux.sh`.
+
+The job uses rustup already on the runner to select Rust 1.99.0 with rustfmt and
+Clippy, verifies Python 3.11+, and creates/checks an owned writable `/tmp/opencode`
+directory. It has a 30-minute timeout, read-only contents permission, and a
+commit-pinned checkout with credential persistence disabled; no cache or Rust
+setup action is used. After successful gates, commit-pinned `actions/upload-artifact`
+v7.0.2 uploads only the successful current-run version-named tar and archive
+checksum from `target/builds/`, with seven-day retention and an error if files are
+missing. The tar preserves the
+binary's executable mode. A successful packaging step supplies the exact asset
+name via `GITHUB_OUTPUT`; no wildcard selects previous versions. These are CI
+build artifacts, not published release assets. Manual dispatch reuses the same
+gates; no tag trigger, publication job, or write permission is configured.
+
+Run the standard-library textual workflow regression checks locally with:
+
+```sh
+python3 tests/test_ci_workflow.py
+```
+
+These checks protect the agreed job guard, checkout settings, gate ordering,
+helper invocation, and exact versioned artifact upload; they are not a full YAML
+parser or GitHub Actions schema validator. `python3 tests/test_build_linux.py` separately
+checks full PTY ordering, exact binary selection, checksums/mode, and failure
+cleanup with fake tools and real tar/SHA256 in isolated temporary directories. It
+also executes the workflow's packaging step in isolation to check that exact-name
+metadata is emitted only after success.
+`python3 tests/test_version.py` checks agreement, malformed/missing data, and safe
+stable version names using isolated manifests and Python 3.11+ `tomllib`.
+`python3 tests/test_install_binary.py` is also a required helper-test gate locally
+and in CI; it uses synthetic assets without invoking Herdr or installing into the
+live checkout. `python3 tests/test_distribution_helpers.py` is also required
+locally and in CI; it checks fixture assets/versions and current-cell parsing
+without invoking Herdr. Both real-Herdr sandbox harnesses remain opt-in and outside CI.
+Static checks and successful local gate runs are not proof of a CI execution.
+Public CI run/artifact evidence and mandatory merge-check enforcement remain outstanding:
+no required-check ruleset is configured by this change. Once public CI is verified,
+configure the **Linux gates** check as required before merging; local hooks alone
+cannot enforce it. No private-repository Actions execution is claimed or required
+for this local preparation.
 
 ## Making a change
 

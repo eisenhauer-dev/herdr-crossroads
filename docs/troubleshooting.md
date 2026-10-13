@@ -6,12 +6,13 @@ Key names below are defaults; use your effective [keymaps](keymaps.md) if change
 
 ## Crossroads does not open: missing binary or host context
 
-The current installation is **build then link a source checkout**, not a prebuilt
-binary distribution. The manifest starts `./target/release/herdr-crossroads` from
-the linked root; a source-only clone is not ready to launch. There is no manifest
-build hook. Keep the linked checkout and executable in place; rebuild after
-updating the source. Prebuilt binaries are a future distribution goal, not an
-available installation method here.
+The manifest starts `./target/release/herdr-crossroads` from the plugin root;
+a source-only clone is not ready to launch. Either build from source or use the
+[local binary installer](installation.md) with matching trusted versioned assets.
+The manifest's Python build hook installs local assets without Rust/Cargo or
+downloads; linking does not execute that hook. Keep the plugin root and executable
+in place. The selected future source is `SimonEisenhauer/herdr-crossroads`, not an
+established public release or download endpoint.
 
 These read-only checks belong in the **linked checkout root**, in a shell inside
 the intended running Herdr session:
@@ -35,17 +36,31 @@ Building writes `target/`; linking registers the plugin globally for your user
 and creates plugin directories. Neither is a read-only diagnostic. Do not run
 install/update/uninstall commands merely to check registration.
 
+For managed installation, an absent `CROSSROADS_ASSET_DIR`, mismatched versions,
+missing archives/checksums, or rejected hashes/ELF headers prevents registration.
+Do not bypass validation or fall back to an untrusted download. Close Crossroads
+before reinstalling a reviewed ref or uninstalling: uninstall does not terminate
+an already running popup. Managed uninstall removes its checkout but retains
+plugin config/state; local-link uninstall leaves the source checkout intact.
+The isolated Herdr 0.9.3 install/search/focus/replacement/version-return/uninstall
+test [passed locally](installation.md#native-distribution-acceptance). It does
+not establish public installation or personal-host setup; the earlier fake-API
+CLI tests retain their narrower scope.
+
 ## The open command returns, but no popup is visible
 
 There is no established Crossroads-specific cause for this symptom. Record the
 host's exact error, if any; check the intended session, registration, linked root,
 and executable before changing anything. `herdr plugin list` is the host's
 registration inspection example. If the host reports `ui_busy`, close the other
-modal before trying again. The README's open command requests 90% width/height;
-the manifest itself supplies no dimensions and the host default is half-size.
+modal before trying again. The shipped manifest supplies no dimensions and the
+host default is half-size. The installed Herdr 0.9.3 CLI help used for local acceptance
+does not list sizing flags on `plugin pane open`; see the README's
+[manifest sizing guidance](../README.md#installation) instead.
 
-Host commands here and in the README were **statically checked against Herdr
-v0.9.3 sources, not executed in a live session**. Opening changes the host UI;
+Host commands here and in the README were statically checked against Herdr
+v0.9.3 sources. Managed lifecycle and popup commands also passed in an isolated
+native 0.9.3 sandbox, not a personal session. Opening changes the host UI;
 it is not a read-only probe. Do not infer that a missing popup is caused by size,
 theme, or terminal protocol without evidence. Include versions, the command,
 error text, and content dimensions in a report; omit private topology/config data.
@@ -108,7 +123,7 @@ Backspace erases; Enter/Esc leaves editing **and retains the filter**. Then `r`
 resets it in navigation mode. Enter with no matches focuses nothing. If the
 remembered pane is hidden, the first visible pane becomes the focus candidate.
 Keys help has an independent search; resetting it does not reset pane search.
-See the [captured demonstration](../README.md#preview).
+See the [captured demonstration](../README.md#navigation-and-search).
 
 ## Enter fails to focus a pane / the selected pane disappeared
 
