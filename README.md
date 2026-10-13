@@ -4,41 +4,9 @@ A keyboard-driven pane navigator for [Herdr](https://herdr.dev). Crossroads
 opens as a terminal popup, groups panes by workspace and tab, and lets you search
 and focus a pane without reorganizing your session.
 
-## Preview
+## Crossroads Demo - voiceover by elevenlabs.io
 
-![Native Herdr demo: browse a long pane list, search odx across pane, workspace, and tab names, and focus Codex Frontend in Harbor](docs/media/navigation-demo.gif)
-
-Real isolated Herdr 0.9.3 session, captured from its own native terminal window;
-the **24 panes across six workspaces** are ordinary shell panes with neutral names,
-not running agents. The initial list fills the popup, with more panes below the viewport.
-A **demo-only** Ctrl+B then `f` binding opens the binary in a 90% popup (not shipped plugin
-registration). `/odx` filters to four panes across three workspaces, matching
-pane names, workspace `Codex Lab`, and tab `Codex Tools` in `Workshop`, with
-`o`, `d`, and `x` underlined in matching fields. Enter leaves search, `j` selects Codex
-Frontend, and a **second Enter** focuses it and closes the popup. The final view
-is Harbor → Development, with the destination split pane focused; host snapshots
-confirm the pane/workspace/tab IDs. Tokyo Night was preselected in isolated
-plugin config; this clip does not open Themes or save a theme.
-See [native capture provenance and limits](docs/media/navigation-demo.md).
-
-The following previews instead rasterize actual Crossroads output using synthetic
-topology and a mock CLI/socket; they are not native Herdr screenshots.
-
-![Pane overview: actual Crossroads output with synthetic demo data; not live Herdr screenshot](docs/media/overview.png)
-
-Actual Crossroads output with synthetic demo data; not live Herdr screenshot.
-The 110×20 content-cell overview shows workspace/tab groups and agent statuses.
-
-![Theme list navigation, live colors, and saved theme: actual Crossroads output with synthetic demo data; not live Herdr screenshot](docs/media/theme-preview.gif)
-
-Actual Crossroads output with synthetic demo data; not live Herdr screenshot.
-The loop opens the Themes list with `t` and moves with `j` through Mocha, Latte,
-terminal, Tokyo Night, Tokyo Night Day, and Dracula; the theme cursor, preview
-name, and palette update live. Space briefly shows the pane-table preview, then
-returns to the list.
-Enter saves Dracula in isolated demo config and returns to the normal table
-using that theme. Pane selection is unchanged; no pane focus is demonstrated.
-See [synthetic capture provenance and rendering limits](docs/media/README.md).
+https://github.com/user-attachments/assets/c86b3c7c-718b-4033-82f8-8910d97d7278
 
 ## Features
 
@@ -60,6 +28,46 @@ local CLI/socket access and local files, not network requests. They do not insta
 or update anything. Crossroads does not change Herdr's native prefix `g`/`t`
 bindings, other plugins, or Herdr configuration.
 
+### Navigation and search
+
+Pane, tab, and workspace movement wraps in both directions through the filtered
+rows and blocks. Browse without changing host focus; only confirming a pane
+focuses it. Search matches workspace, tab, pane, or agent names without reordering
+the topology. See [navigation controls](docs/keymaps.md#actions-and-defaults).
+
+![Native navigation and live search, followed by a second Enter focusing Codex Frontend](docs/media/native-navigation.gif)
+
+This older native clip uses Atlas/Welcome and Codex Frontend with an `odx` search;
+it does not demonstrate current wrapping or contextual help. The three GIFs here
+are retained historical captures with independently named ordinary shells and
+editorial key captions below the UI, not recaptures for the current movie.
+See [navigation/theme loop provenance](docs/media/recordings/native-loops.md).
+
+### Linked worktrees
+
+See linked workspaces beside their source workspace, with a `↳` marker and branch
+context when available. Search and navigation retain that context even when the
+source workspace is filtered out. See [linked workspaces and filtering](docs/worktrees.md).
+
+![Native linked-worktree selection: Tab selects Atlas Review and Shift+Tab returns to Atlas without changing host focus](docs/media/linked-worktrees.gif)
+
+This older clip selects Atlas Review and returns to Atlas without changing host
+focus; its names differ from the movie's Atlas Shop and Atlas Checkout.
+
+### Themes and help
+
+Preview a theme in the list or pane table before saving. Contextual Keys help
+shows the effective bindings for Select or Themes and has its own search filter.
+See [themes](docs/themes.md) and [keys and help](docs/keymaps.md).
+
+![Native theme previews and Dracula save, with unchanged pane selection](docs/media/native-themes.gif)
+
+This older clip previews and saves Dracula while keeping Welcome selected; it
+does not show the current contextual help.
+
+Additional historical previews and their limits: [earlier native navigation](docs/media/navigation-demo.md)
+and [synthetic previews](docs/media/README.md).
+
 ## Requirements and compatibility
 
 - Linux, a running Herdr session, and Herdr **0.9.1 or later** (manifest minimum).
@@ -72,11 +80,11 @@ bindings, other plugins, or Herdr configuration.
 Crossroads 0.1.0 declares Linux only. Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
-host-command examples below were checked against v0.9.3 sources, not exercised
-in a live Herdr session. The native preview separately verifies search and
-navigation/focus in one isolated v0.9.3 session with a custom popup binding,
-not those installation
-or plugin-link examples. A manifest minimum is not a guarantee for every later
+host-command examples below were checked against v0.9.3 sources. The historical
+project capture exercised the plugin-launch route at 142×30 in an isolated
+v0.9.3 session, as well as search and navigation/focus. It did not verify the
+installation/update/uninstall workflow or the 90% dimensions in the example
+below. A manifest minimum is not a guarantee for every later
 Herdr release. See [terminal limitations](docs/keymaps.md#terminal-limits).
 
 ## Installation
@@ -117,13 +125,50 @@ The manifest's default placement is `popup`, with no explicit dimensions; Herdr
 defaults to a half-size popup. The example requests more space but still cannot
 guarantee 80×15 content cells on a small terminal. Enlarge the terminal if needed.
 No host keybinding is installed or required; the commands do not rebind prefix
-`g` or `t`. If another modal is open, Herdr may return `ui_busy`.
+`g`, `t`, or `x`. If another modal is open, Herdr may return `ui_busy`.
 
-**Execution status:** installation, linking, opening, configuration-directory,
-update, and uninstall commands in this guide are unexecuted examples. Their
-syntax/lifecycle comes from [Herdr's versioned plugin guide][herdr-plugins] and
-[v0.9.3 CLI implementation][herdr-cli]. The native preview used a separate isolated
-session and custom binary-launch binding; it did not exercise these commands.
+### Optional launch binding
+
+For a keyboard shortcut, preserve your existing Herdr configuration and append
+one command table to `~/.config/herdr/config.toml` on Linux (or the file selected
+by `HERDR_CONFIG_PATH`):
+
+```toml
+[[keys.command]]
+key = "prefix+f"
+type = "shell"
+command = '"${HERDR_BIN_PATH:-herdr}" plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 90% --height 90%'
+description = "Open Crossroads"
+```
+
+`prefix+f` is unbound in Herdr 0.9.3 defaults. Check your active bindings with
+`prefix+?` first; if you already use `f`, replace the key above with an unused
+`prefix+` single key, for example `prefix+a`. Leave existing `g`/`t` navigation
+and `x`/`shift+x` close bindings unchanged. Reload after editing:
+
+```sh
+herdr server reload-config
+```
+
+With the default prefix, press Ctrl+b, then f (not simultaneously). The detached
+`shell` command uses Herdr's injected binary path, falling back to `herdr` on
+`PATH`, and opens the registered plugin pane with its plugin environment.
+`type = "pane"` runs a shell command, not a plugin entrypoint. Crossroads'
+`keymaps.jsonc` controls only its internal UI, not this host launch shortcut;
+the manifest does not install a default binding. The direct command above
+remains a fallback. To remove the shortcut, delete only the added
+`[[keys.command]]` table and reload again. See [Herdr's versioned configuration
+guide][herdr-config].
+
+**Execution status:** installation, linking, launch-binding configuration,
+reload, configuration-directory, update, and uninstall examples in this guide
+remain unexecuted. Their syntax/lifecycle comes from Herdr's versioned
+[plugin guide][herdr-plugins], [configuration guide][herdr-config], and
+[v0.9.3 CLI implementation][herdr-cli]. The historical capture used
+the plugin-opening route with `--session film --width 142 --height 30` in a
+separate isolated environment. The current finishing cut compresses startup
+and begins native footage at the complete popup; it does not show CLI execution
+or validate this guide's 90% size example or general installation lifecycle.
 
 ## Update and uninstall
 
@@ -209,8 +254,9 @@ and JSON string examples.
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
 
-Movement stops at the ends and visits only visible rows/blocks. If the remembered
-pane is filtered out, the first visible pane is the focus candidate. With no
+Movement wraps in both directions and visits only visible rows/blocks. Tab and
+workspace jumps select the first visible pane of the next/previous block. If the
+remembered pane is filtered out, the first visible pane is the focus candidate. With no
 matches, Enter does not focus anything. Focus failures do not retry a different pane.
 
 ### Help and Themes defaults
@@ -219,13 +265,25 @@ matches, Enter does not focus anything. Focus failures do not retry a different 
 | --- | --- | --- |
 | Help | Next / previous entry | `j` / `k`, or Down / Up |
 | Help | Search / reset independent help filter | `/` / `r` |
-| Help | Return to pane table | Esc or `q` |
+| Help | Return to calling Select or Themes view | Esc or `q` |
 | Themes | Next / previous theme | `j` / `k`, or Down / Up |
 | Themes | Toggle list / pane-table preview | Space |
 | Themes | Save / cancel | Enter / Esc or `q` |
+| Themes | Keys help (list or table preview) | `?` |
 
-In pane/help **search editing**, printable characters (including `q` and `t`) are
+Keys help shows the caller's effective bindings under `Keys — Select` or
+`Keys — Themes`. Help cycles through matching entries only; Themes cycles through
+all offered themes in both list and table preview, without saving. Returning
+preserves pane search, selection and viewport, and the pending theme cursor/preview
+without saving or canceling. Existing search
+rows show the current mode right-aligned (`Select`, `Search`, `Help`, `Themes`),
+reserving query width for the label. Theme table preview remains `Themes`; the
+theme list identifies itself with its existing Themes heading instead.
+
+In pane/help **search editing**, printable characters (including `q`, `t` and `?`) are
 text; Backspace erases, and Enter/Esc leaves editing while retaining the filter.
+Help search is independent: Esc ends editing first; a subsequent default Esc
+returns to the caller. Its mode label remains `Help` while editing.
 Search editing is fixed, not configurable. Recognized Ctrl/Alt input is ignored;
 classical terminals cannot distinguish physical Ctrl+i from Tab or Ctrl+m from
 Enter. Standalone raw Esc has a 100-ms ambiguity delay. On error pages, fixed
@@ -296,3 +354,4 @@ Licensed under [MIT](LICENSE), copyright 2026 SimonEisenhauer.
 [herdr-install]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/install.mdx
 [herdr-plugins]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/plugins.mdx
 [herdr-cli]: https://github.com/herdrdev/herdr/blob/v0.9.3/src/cli/plugin.rs
+[herdr-config]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx

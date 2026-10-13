@@ -14,10 +14,15 @@ interpret that verification version as an established MSRV. Dependencies are
 pinned in the manifest and `Cargo.lock`; do not add dependencies merely to write
 documentation or run the existing Python harnesses.
 
+The current local lint and test verification uses Rust/Cargo 1.99.0, with Clippy
+0.1.99 and rustfmt managed alongside the toolchain by rustup. This is a verified
+tooling version, not an MSRV or a toolchain pin.
+
 From the repository root:
 
 ```sh
 cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --release --locked
 ```
@@ -43,7 +48,7 @@ documentation verification.
   checks match counts and underlining, and requires ≤100 ms per measured update.
 
 Before release, run all four complete harnesses against a freshly built release
-binary, in addition to formatting and Cargo tests:
+binary, in addition to formatting, Clippy, and Cargo tests:
 
 ```sh
 python3 tests/pty_latency.py target/release/herdr-crossroads
@@ -59,6 +64,13 @@ live installation, host popup routing, SSH, every keyboard protocol, or cross-OS
 compatibility. Any manual host test should state the Herdr version, terminal,
 platform, setup changes, results, and cleanup performed.
 
+Coverage has no numeric minimum initially. Record the baseline, explain decreases
+in review, and meaningfully test relevant changed paths and error paths rather
+than chasing a percentage. See [coverage](docs/coverage.md) for the source-only
+baseline and reproducible native LLVM measurement. Coverage supplements, never
+replaces, the hard formatting, Clippy, Cargo-test, and complete optimized-release
+PTY gates above.
+
 ## Making a change
 
 1. Read the affected module, tests, and [architecture](docs/architecture.md).
@@ -71,8 +83,9 @@ platform, setup changes, results, and cleanup performed.
 3. Reconcile user-facing docs with final implementation and tests. Put detailed
    behavior in `docs/`, not a per-function API catalog. Avoid speculative options,
    compatibility promises, or unmeasured performance claims.
-4. Run formatting, Cargo tests, and applicable PTY gates. Review your diff for
-   unrelated changes and unintended generated/config files.
+4. Run formatting, Clippy with warnings denied, Cargo tests, and applicable PTY
+   gates. Review your diff for unrelated changes and unintended generated/config
+   files.
 5. In a contribution, explain the problem, scope, source evidence, test commands
    and results, limitations, and any unexecuted examples. Report toolchain and
    platform details for input/rendering regressions.
