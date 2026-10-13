@@ -9,3 +9,4 @@ Thumbs.db
 .idea/
 .vscode/
 target/
+__pycache__/

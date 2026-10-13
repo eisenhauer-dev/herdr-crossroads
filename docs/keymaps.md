@@ -65,6 +65,13 @@ For example, this replaces pane movement while retaining arrows explicitly:
 | `focus_pane` | `Enter` | Focus the selected visible pane and close |
 | `close` | `Esc`, `q` | Close without focusing a pane |
 
+Pane, tab and workspace movement wraps in both directions through visible rows
+or blocks, retaining topology order. Tab/workspace jumps select the first visible
+pane of the adjacent block, including when wrapping from any row in the last
+block. A single visible pane remains selected; a single block stays the target
+block, with jumps selecting its first visible pane. No visible rows means no
+movement. Navigation never focuses a pane.
+
 ### `help` — Keys navigation, not search input
 
 | Action | Default keys | Effect |
@@ -73,9 +80,9 @@ For example, this replaces pane movement while retaining arrows explicitly:
 | `previous_category` | `k`, `Up` | Move backward through visible help entries |
 | `open_search` | `/` | Edit the independent help search |
 | `reset_search` | `r` | Clear the help filter |
-| `close` | `Esc`, `q` | Return to the pane table |
+| `close` | `Esc`, `q` | Return to the calling Select or Themes view |
 
-`?` opens help from Select; it no longer closes Help by default. All close/cancel
+`?` opens help from Select or Themes (list or table preview); it does not close Help by default. All close/cancel
 lists remain replaceable with one or two custom keys.
 
 ### `themes` — list and pane-table preview
@@ -87,8 +94,24 @@ lists remain replaceable with one or two custom keys.
 | `toggle_preview` | `Space` | Toggle list/table preview |
 | `save` | `Enter` | Persist the choice and return to the table |
 | `cancel` | `Esc`, `q` | Discard the preview and return to the table |
+| `open_help` | `?` | Open Keys help for Themes without saving or canceling |
 
-Keys help shows the effective pane-navigation lists, not hard-coded defaults.
+Keys help shows only the calling context's actions and effective bindings, not
+hard-coded defaults. Its header is `Keys — Select` or `Keys — Themes`; navigation
+and search within help use the configured `help` bindings in either case.
+Closing help restores the caller, including the exact pane query, selection and
+viewport and the theme cursor, list/table preview and saved choice. Opening or
+closing help neither focuses a pane nor saves or cancels a pending theme.
+
+Existing search rows show a right-aligned current-mode label: `Select`, `Search`,
+`Help` or `Themes`. Query text clips to reserve space for the complete label.
+While editing pane or help search, the visible cursor follows the displayed
+query (including typed trailing spaces), before padding and the mode label.
+Theme table preview shows `Themes`, not `Select`; independent help search still
+shows `Help`, separately from its caller header. The theme list has no search
+row and identifies itself with its existing Themes heading. Error and undersized
+pages have no search-row mode label.
+
 Footers show only the first effective key per displayed action. Navigation
 actions additionally show a configured arrow binding if it is not already first,
 including custom workspace arrows. No arrow is added to the
@@ -136,6 +159,11 @@ Keys help filters and highlights the displayed key labels and meanings with the
 same case-insensitive subsequence search. Direction markers (`→`, `←`), the `|`
 group separator, and quotes around literal separator keys are searchable too,
 including in wrapped custom-binding entries. Entries retain their original order.
+Help navigation wraps from the first matching entry to the last and vice versa,
+with the viewport following selection. No matches leaves selection remembered
+without moving; one matching entry remains selected. Themes navigation also wraps
+through all offered themes in either view, changing only the unsaved preview.
+Configured navigation keys have the same wrapping behavior as the defaults.
 
 ## Key syntax
 
@@ -163,10 +191,12 @@ including in wrapped custom-binding entries. Entries retain their original order
   No F-keys, other modified keys, or sequences are supported.
 
 In both pane and help search, bindings do **not** run. Unmodified printable
-characters, including `q`, become text; Backspace erases. Enter or Esc returns to
+characters, including `q` and `?`, become text; Backspace erases. Enter or Esc returns to
 the respective navigation mode, retaining the text/filter. Ctrl/Alt input is ignored, including
 an entire Alt-letter input. `Ctrl+j` (LF) does not end search and `Ctrl+h` (BS)
 does not erase; neither is an artificial alias of Enter (CR) or Backspace (DEL).
+In help search, the first Esc ends editing; a subsequent default Esc closes help
+and returns to its caller. Help search never changes the pane filter.
 
 ## Conflicts and error page
 
@@ -346,4 +376,6 @@ python3 tests/pty_hints.py target/release/herdr-crossroads
 
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks
-stable default/custom footers, grouping, and sanitized notices separately.
+stable default/custom footers, grouping, and sanitized notices separately. For
+theme-table preview it sends and awaits theme opening and Space separately,
+asserting list and table content before checking footer stability.
