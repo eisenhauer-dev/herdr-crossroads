@@ -287,7 +287,7 @@ fn separator_characters_are_quoted_only_for_display() {
 }
 
 #[test]
-fn a10c_footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
+fn footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
     use crate::keymap::{Context, Keymap};
     let mut state = super::test_support::ui();
     let (map, errors) = Keymap::parse(
@@ -324,7 +324,7 @@ fn a10c_footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
 }
 
 #[test]
-fn a10c_footer_never_splits_default_action_units() {
+fn footer_never_splits_default_action_units() {
     use crate::keymap::Context;
     let state = super::test_support::ui();
     let units = state.hints(Context::Select, 240, 3, false).join(" ");

@@ -137,7 +137,7 @@ complete optimized-release PTY gates below; those remain separate requirements.
 
 - `tests/unit/`: module-level tests, included from `src/lib.rs`; keep test code
   and fixtures under `tests/`, not alongside production modules.
-- `tests/a10c.rs`: startup/configuration integration checks using fake Herdr.
+- `tests/configuration.rs`: startup/configuration integration checks using fake Herdr.
 - `tests/startup.rs`: snapshot, focus, live-status, reconnection, and process
   behavior checks. On Linux it invokes the latency/render PTYs and the
   **input-protocol subset** of the keymap PTY.

@@ -356,7 +356,7 @@ only), and the pre-created `/tmp/opencode` directory. These isolated harnesses
 use fake Herdr executables and sockets, not real Herdr processes or plugin activation.
 
 `cargo test` covers the keymap, input, action, search, selection, theme, runtime-status
-and other unit suites under `tests/unit/`, `tests/a10c.rs`, and startup tests.
+and other unit suites under `tests/unit/`, `tests/configuration.rs`, and startup tests.
 The Linux startup tests run the latency/render PTYs and **only the input-protocol
 subset** of `pty_keymaps.py` (`--input-protocol`). They do not run the complete
 keymap PTY or `pty_hints.py`. The complete keymap and hint PTYs are separate
