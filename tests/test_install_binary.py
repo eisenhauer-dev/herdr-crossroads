@@ -28,7 +28,9 @@ class InstallBinaryTests(unittest.TestCase):
             source = ROOT / "scripts" / name
             if source.exists():
                 shutil.copy2(source, self.repo / "scripts" / name)
-        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            if not (ROOT / name).exists():
+                continue
             shutil.copy2(ROOT / name, self.repo / name)
         self.assets = self.base / "assets"
         self.assets.mkdir()
@@ -44,6 +46,9 @@ class InstallBinaryTests(unittest.TestCase):
         if members is None:
             members = [("herdr-crossroads", data, tarfile.REGTYPE),
                        ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)]
+            members += [(name, (self.repo / name).read_bytes() if (self.repo / name).exists()
+                         else b"missing notices", tarfile.REGTYPE)
+                        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]]
         archive = self.assets / ARCHIVE
         with tarfile.open(archive, "w:gz") as package:
             for name, contents, kind in members:
@@ -83,6 +88,37 @@ class InstallBinaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.binary.read_bytes(), ELF, "validated binary must replace previous runtime file")
         self.assertEqual(self.binary.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(result.stdout, f"Installed {ARCHIVE} at target/release/herdr-crossroads\n")
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
+            self.assertEqual((self.binary.parent / name).stat().st_mode & 0o777, 0o644)
+
+    def test_missing_tampered_or_nonregular_notices_preserve_binary(self):
+        checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
+        good = [("herdr-crossroads", ELF, tarfile.REGTYPE),
+                ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)]
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            other = "LICENSE" if name != "LICENSE" else "THIRD-PARTY-NOTICES.html"
+            base = good + [(other, (ROOT / other).read_bytes() if (ROOT / other).exists()
+                            else b"missing notices", tarfile.REGTYPE)]
+            for additions in [[], [(name, b"tampered", tarfile.REGTYPE)],
+                              [(name, b"\xff\x00<broken", tarfile.REGTYPE)],
+                              [(name, b"", tarfile.SYMTYPE)],
+                              [(name, b"", tarfile.LNKTYPE)],
+                              [("../" + name, b"bad", tarfile.REGTYPE)]]:
+                with self.subTest(name=name, additions=additions):
+                    self.package(members=base + additions)
+                    self.reject()
+
+    def test_notice_destination_symlinks_rejected_before_binary_replacement(self):
+        victim = self.base / "victim"
+        victim.write_bytes(b"keep")
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            path = self.binary.parent / name
+            path.symlink_to(victim)
+            self.reject()
+            self.assertEqual(victim.read_bytes(), b"keep")
+            path.unlink()
 
     def test_fresh_destination_created_and_manifest_hook_matches(self):
         self.binary.unlink()
@@ -147,11 +183,13 @@ class InstallBinaryTests(unittest.TestCase):
     def test_exact_regular_members_only(self):
         checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
         good = [("herdr-crossroads", ELF, tarfile.REGTYPE),
-                ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)]
+                ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
+                ("LICENSE", (ROOT / "LICENSE").read_bytes(), tarfile.REGTYPE),
+                ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes(), tarfile.REGTYPE)]
         cases = [good[:1], good + [good[0]], good + [("extra", b"", tarfile.REGTYPE)],
-                 [("../escape", ELF, tarfile.REGTYPE), good[1]],
-                 [("/escape", ELF, tarfile.REGTYPE), good[1]]]
-        cases.extend([[("herdr-crossroads", b"", kind), good[1]]
+                 [("../escape", ELF, tarfile.REGTYPE), *good[1:]],
+                 [("/escape", ELF, tarfile.REGTYPE), *good[1:]]]
+        cases.extend([[("herdr-crossroads", b"", kind), *good[1:]]
                       for kind in [tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.DIRTYPE, tarfile.FIFOTYPE]])
         for members in cases:
             with self.subTest(members=[(name, kind) for name, _, kind in members]):
@@ -171,7 +209,9 @@ class InstallBinaryTests(unittest.TestCase):
     def test_special_contiguous_member_is_not_a_regular_release_member(self):
         checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
         self.package(members=[("herdr-crossroads", ELF, tarfile.CONTTYPE),
-                              ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)])
+                              ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
+                              ("LICENSE", (ROOT / "LICENSE").read_bytes(), tarfile.REGTYPE),
+                              ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes(), tarfile.REGTYPE)])
         self.reject()
 
     def test_unsupported_hosts_fail_before_installation(self):
@@ -209,6 +249,15 @@ class InstallBinaryTests(unittest.TestCase):
         result = self.reject("import os; os.fsync=lambda *a: (_ for _ in ()).throw(OSError('forced staging failure')); ")
         self.assertEqual(result.stderr, "Local binary installation failed: forced staging failure\n")
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_failed_binary_replace_keeps_notices_and_previous_binary(self):
+        patch = ("import os; replace=os.replace; "
+                 "os.replace=lambda src, dst, **kw: "
+                 "(_ for _ in ()).throw(OSError('forced binary failure')) "
+                 "if dst == 'herdr-crossroads' else replace(src, dst, **kw); ")
+        self.reject(patch)
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
 
 
 if __name__ == "__main__":

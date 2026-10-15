@@ -2,10 +2,10 @@
 
 ## Current guided edition — 2026-10-13
 
-The [primary candidate](crossroads-circular-tour.mp4) is **101.20 seconds**,
-2,530 frames at 25 fps. The user accepted the preceding cut after independent
-review. Technical checks passed for this closing-credit removal; fresh independent
-review and acceptance of the modified movie remain pending. See
+The [current accepted movie](crossroads-circular-tour.mp4) is **101.20 seconds**,
+2,530 frames at 25 fps. Independent final-film review passed and the user accepted
+the current closing-credit removal revision on 2026-10-13, with privacy acceptance
+also explicitly confirmed. See [acceptance and narration terms](README.md) and
 [guided-tour provenance](recordings/guided-tour.md) for measured native events,
 source hashes, audio timing and preservation evidence.
 
@@ -26,9 +26,11 @@ one Brian / `eleven_multilingual_v2` Free request each, with sufficient free quo
 and paid overages disabled confirmed by the user. Metadata records single attempts;
 the earlier six calm requests remain historical provenance. No TTS, API, network, billing change or dependency
 operation occurred during this composition. The accepted cut's audio is unchanged.
-Any further generation requires separate approval. Current permitted use and
-attribution must be checked before separately authorized publication; the
-existing Free noncommercial-use constraint is not waived.
+Any further generation requires separate approval. The
+[2026-10-15 provider-terms check](README.md#narration-use-and-attribution) confirms
+Free noncommercial-only use and title attribution; publication still requires
+separate authorization. Historical pending gates below are not the current
+movie's acceptance status.
 
 ### Introduction — voice starts at 0.20 seconds
 

@@ -22,6 +22,7 @@ if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
     exit 1
 fi
 
+python3 scripts/third-party-notices.py --check
 # Never let a stale binary stand in for this build's output.
 rm -f "$binary" "$binary.sha256"
 cargo build --release --locked --target "$target"
@@ -35,7 +36,7 @@ done
     cd "$binary_dir"
     sha256sum herdr-crossroads > herdr-crossroads.sha256
     tar --owner=0 --group=0 --numeric-owner -czf "$output/$archive.tmp" \
-        herdr-crossroads herdr-crossroads.sha256
+        herdr-crossroads herdr-crossroads.sha256 -C "$root" LICENSE THIRD-PARTY-NOTICES.html
 )
 mv "$output/$archive.tmp" "$output/$archive"
 (

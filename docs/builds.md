@@ -32,6 +32,11 @@ Before building, the helper checks that `Cargo.toml`, the `herdr-crossroads`
 package entry in `Cargo.lock`, and `herdr-plugin.toml` agree on a canonical stable
 `X.Y.Z` version. Missing, malformed, mismatched, or unsafe version data stops before
 Cargo or the PTYs; prerelease and build-metadata suffixes are not supported.
+It also checks the checked-in notice inventory's manifest/lock fingerprint and
+exact `rustc --version`. Dependency, feature, or toolchain changes require notice
+review and regeneration; changing only the project's version does not. Missing
+license files or stale inventory stop before Cargo and remove current-version
+artifact outputs. See [notice maintenance and final link-map verification](releases.md#license-inventory-and-verification).
 
 The helper rejects other native operating systems/architectures, fixes Cargo's
 output directory to this checkout's `target/`, and builds with
@@ -53,8 +58,13 @@ helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
 
-The tar contains only `herdr-crossroads` (with its executable mode preserved)
-and `herdr-crossroads.sha256` (the binary's SHA256). Archive ownership is normalized
+The tar contains exactly four regular files: `herdr-crossroads` (with its executable
+mode preserved), `herdr-crossroads.sha256` (the binary's SHA256), `LICENSE`
+(the project's full MIT terms), and `THIRD-PARTY-NOTICES.html` (full dependency
+license/attribution texts, Rust standard-library notices, and installed system
+startup/runtime copyright/full-license records and exact glibc startup linking
+exception headers). Keep the notices
+with redistributed binaries. Archive ownership is normalized
 to numeric root, rather than recording the builder's username. The adjacent file
 checksums the tar. Checksum entries contain filenames, not checkout paths.
 Checksums detect corruption, not authenticity or publisher identity.
@@ -93,6 +103,10 @@ Local verification on 2026-10-13 used Linux x86_64, Rust/Cargo 1.99.0, and glibc
 2.43. The exact target binary passed all four complete isolated PTYs; tar contents,
 executable mode, and both checksums were checked locally. This is fake-host test
 evidence; that build run did not test native Herdr installation.
+Those historical artifacts predate the four-member notice contract. A fresh
+2026-10-15 build passed all four full PTYs with the current notices; archive
+membership, preserved executable mode, notice byte identity and both checksums
+were verified. Its binary matches the [checked local link map](releases.md#installed-system-provenance-and-verified-startup-exceptions).
 
 Separately, on 2026-10-14 the unchanged local 0.1.0 artifact passed the isolated
 [native Herdr 0.9.3 managed lifecycle test](installation.md#native-distribution-acceptance),
@@ -100,6 +114,12 @@ including search/focus, replacement with a test-only trailer fixture, return to
 the original version, and uninstall. No Rust/Cargo ran in that installation
 sandbox. This is local runtime evidence, not public distribution or compatibility
 with a genuinely new runtime version.
+
+On 2026-10-15 the current four-member artifact also passed all five isolated
+real-Herdr 0.9.5 CLI install cases and the real-server/client managed lifecycle:
+installation, search/focus, test-fixture replacement, return, uninstall and
+shutdown. See [current hashes and scope](installation.md#native-distribution-acceptance).
+This does not test Herdr's separate update command or delayed generation reclamation.
 
 `readelf` inspection showed ELF64 AMD x86-64, the interpreter
 `/lib64/ld-linux-x86-64.so.2`, and dynamic dependencies `libc.so.6`, `libgcc_s.so.1`,

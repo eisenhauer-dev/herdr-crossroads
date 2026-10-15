@@ -30,8 +30,12 @@ class BuildLinuxTests(unittest.TestCase):
         checker = ROOT / "scripts/check-version.py"
         if checker.exists():
             shutil.copy2(checker, self.repo / "scripts/check-version.py")
-        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            if not (ROOT / name).exists():
+                continue
             shutil.copy2(ROOT / name, self.repo / name)
+        if (ROOT / "scripts/third-party-notices.py").exists():
+            shutil.copy2(ROOT / "scripts/third-party-notices.py", self.repo / "scripts/third-party-notices.py")
         self.bin = Path(self.temporary.name) / "bin"
         self.bin.mkdir()
         self.log = Path(self.temporary.name) / "calls"
@@ -50,8 +54,9 @@ mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release"
 printf 'fresh binary\n' > "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/herdr-crossroads"
 chmod "${BINARY_MODE:-755}" "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/herdr-crossroads"
 ''')
+        self.tool("rustc", '#!/bin/sh\nprintf "%s\\n" "rustc 1.99.0 (b940084d7 2026-09-28)"\n')
         self.tool("python3", f'''#!/bin/sh
-if [ "$1" = scripts/check-version.py ]; then exec "{sys.executable}" "$@"; fi
+case "$1" in scripts/check-version.py|scripts/third-party-notices.py) exec "{sys.executable}" "$@";; esac
 printf 'pty|%s\n' "$*" >> "$CALL_LOG"
 test "$(cat "$2")" = 'fresh binary' || exit 98
 test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
@@ -103,7 +108,9 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         archive = self.output / ARCHIVE
         self.assertEqual(archive.read_bytes()[:2], b"\x1f\x8b", "successful build must replace the versioned archive")
         with tarfile.open(archive) as package:
-            self.assertEqual(package.getnames(), ["herdr-crossroads", "herdr-crossroads.sha256"])
+            self.assertEqual(package.getnames(), ["herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"])
+            for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                self.assertEqual(package.extractfile(name).read(), (ROOT / name).read_bytes())
             binary = package.getmember("herdr-crossroads")
             self.assertEqual(binary.mode & 0o111, 0o111)
             self.assertEqual((binary.uid, binary.gid, binary.uname, binary.gname),
@@ -125,6 +132,32 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         self.assertEqual(self.calls(), [], "version mismatch must fail before Cargo")
         self.assertIn("version", result.stderr.lower())
 
+    def test_stale_or_missing_notices_block_packaging(self):
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            with self.subTest(name=name):
+                path = self.repo / name
+                if path.exists():
+                    path.unlink()
+                self.assertNotEqual(self.build().returncode, 0)
+                self.assert_no_artifact()
+                if (ROOT / name).exists():
+                    shutil.copy2(ROOT / name, path)
+        lock = self.repo / "Cargo.lock"
+        lock.write_text(lock.read_text().replace('version = "0.34.0"', 'version = "0.34.1"'))
+        self.assertNotEqual(self.build().returncode, 0)
+        self.assert_no_artifact()
+
+    def test_manifest_and_toolchain_changes_require_notice_review(self):
+        manifest = self.repo / "Cargo.toml"
+        original = manifest.read_text()
+        manifest.write_text(original + '\n[features]\nnotice-review = []\n')
+        self.assertNotEqual(self.build().returncode, 0)
+        self.assert_no_artifact()
+        manifest.write_text(original)
+        self.tool("rustc", '#!/bin/sh\necho "rustc 1.99.1 (different toolchain)"\n')
+        self.assertNotEqual(self.build().returncode, 0)
+        self.assert_no_artifact()
+
     def test_prior_versions_are_not_reused_or_removed(self):
         self.assertEqual(self.build().returncode, 0)
         self.assertEqual((self.output / f"herdr-crossroads-0.0.9-{TARGET}.tar.gz").read_text(), "prior version\n")
@@ -132,7 +165,13 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
     def test_agreed_version_determines_artifact_name_without_workflow_side_effects(self):
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
             path = self.repo / name
-            path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "2.3.4"'))
+            text = path.read_text()
+            if name == "Cargo.lock":
+                text = text.replace('name = "herdr-crossroads"\nversion = "0.1.0"',
+                                    'name = "herdr-crossroads"\nversion = "2.3.4"')
+            else:
+                text = text.replace('version = "0.1.0"', 'version = "2.3.4"')
+            path.write_text(text)
         metadata = self.repo / "workflow-output"
         metadata.write_text("keep\n")
         self.env["GITHUB_OUTPUT"] = str(metadata)

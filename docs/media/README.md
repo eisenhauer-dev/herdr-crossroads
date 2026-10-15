@@ -1,5 +1,102 @@
 # Media provenance
 
+## Current movie acceptance
+
+The current [guided demo](crossroads-circular-tour.mp4), SHA-256
+`5497401d6dc418ae6bb0d7069fd397f90a2dd60d9447728bc5d86940ad4ed054`,
+has passed independent final-film review and received final user acceptance on
+2026-10-13. The user has also explicitly accepted the current movie for privacy.
+These are supplied review/acceptance decisions, not a fresh movie review by this
+documentation writer. They include the closing-credit removal, not just the
+preceding cut. See [current export provenance](recordings/guided-tour.md).
+Publication authorization remains separate; no publication was performed here.
+Missing original external captures and evidence remain missing; acceptance does
+not recreate native capture, topology or persistence proof.
+
+## Narration use and attribution
+
+The user confirms that **all narration used in the movie was generated on the
+ElevenLabs Free plan**, and that the planned use is noncommercial: no monetization
+or marketing of commercial goods or services. Free/open-source software is not,
+by itself, evidence that a particular use of its demo is noncommercial.
+
+Primary sources checked on **2026-10-15**:
+
+- [Publication guidance](https://help.elevenlabs.io/hc/en-us/articles/13313564601361-Can-I-publish-the-content-I-generate-on-the-platform)
+  says Free output has no commercial license and requires `elevenlabs.io` or
+  `11.ai` **in the title** when shared noncommercially. It also says output made
+  outside a paid subscription cannot be used commercially; a later upgrade does
+  not establish commercial rights to these existing Free generations.
+- Both [EEA/Switzerland/UK terms](https://elevenlabs.io/terms-of-use-eu) and
+  [non-EEA terms](https://elevenlabs.io/terms-of-use), last updated **2026-10-09**,
+  restrict Free use to noncommercial purposes in §1(c), require a personal email
+  address for noncommercial use, and preserve content rights subject to the terms
+  in §4(a), §4(c) and §4(g). Applicable terms depend on the account holder's
+  residence, not the repository location. The EEA version includes country-specific
+  amendment/notice rules, including Germany; fetching today's terms does not prove
+  which revision the account holder accepted for an earlier generation. Residence,
+  account email and contract notices were not inspected here.
+- [Service-Specific Terms](https://elevenlabs.io/service-specific-terms) and
+  [ElevenAPI Terms](https://elevenlabs.io/elevenapi-terms), both dated **2026-10-09**,
+  retain applicable service/model terms; API use is not an exception to the Free
+  restriction. [Beta Services Addendum](https://elevenlabs.io/bsa), updated
+  **2024-11-13**, §3 forbids commercial purposes and production-environment use
+  of Beta Services, including on paid plans.
+- The historical generation record identifies Brian, premade voice ID
+  `nPczCjzI2devNBz1zQrb`, and `eleven_multilingual_v2`, not a custom voice clone.
+  The [current model documentation](https://elevenlabs.io/docs/overview/models#multilingual-v2)
+  lists Multilingual v2 as a regular previous-generation TTS model, without a beta
+  designation. That supports the recorded model choice, but is not account-level
+  proof of generation-time entitlements. The [Voice Library Addendum](https://elevenlabs.io/vla),
+  dated **2026-03-06**, distinguishes provider voices from user voices; terms
+  §4(g) still requires necessary rights to inputs and outputs. No new voice lookup,
+  account access or generation was performed, and no blanket voice-rights guarantee
+  is made.
+
+The README video heading retains **Crossroads Demo - voiceover by elevenlabs.io**;
+the local MP4 title metadata is **Crossroads Demo — voiceover by elevenlabs.io**.
+Both contain the required title credit. Keep that credit in the actual title of
+any separately authorized upload or redistribution; metadata alone is not a
+substitute for the hosting platform's visible title. The remote README attachment
+was not downloaded or hash-verified during this check.
+
+The software remains MIT-licensed. That license must not be read as a grant of
+commercial reuse rights to the Free-generated narration. This records provider
+conditions, not a new media license or legal guarantee. Commercial reuse of this
+narration is outside the confirmed scope and needs separate rights clearance;
+recheck terms if the use, model, voice or distribution context changes.
+
+## Retained image privacy inspection — 2026-10-15
+
+All frames of the five GIFs were decoded with existing Pillow. Exact RGB duplicates
+were deduplicated by SHA-256; every distinct decoded frame was visually inspected
+in labeled half-size contact sheets, and `overview.png` was inspected directly.
+The inspection covered the host UI, popup, pane labels, shell text and captions,
+not just file metadata or representative animation timestamps.
+
+| Asset | Decoded frames | Distinct RGB frames inspected |
+| --- | ---: | ---: |
+| `linked-worktrees.gif` | 168 | 69 |
+| `native-navigation.gif` | 237 | 178 |
+| `native-themes.gif` | 144 | 10 |
+| `navigation-demo.gif` | 9 | 9 |
+| `theme-preview.gif` | 11 | 10 |
+| `overview.png` | 1 | 1 |
+
+No apparent personal names, email addresses, personal home paths, credentials or
+private workload content were found in the readable visuals. Visible names and
+branches are neutral demo context; synthetic previews include example agent names
+and statuses. This is a visual assessment, not OCR, hidden-metadata forensics or a
+guarantee that no sensitive data exists. Contact sheets are local inspection aids
+under `/tmp/opencode/herdr-crossroads-media-privacy/inspection-2026-10-15/`, not a
+permanent reproduction package. No image or movie bytes were changed. This image
+inspection does not recreate the unavailable original capture evidence or replace
+the user's separate movie acceptance. Git author/committer names and emails were
+explicitly accepted for public visibility by the user; that decision is separate
+from inspection of image content.
+
+## Earlier native and synthetic previews
+
 The [native navigation demo](navigation-demo.gif) captures a **real isolated
 Herdr 0.9.3 session**: 24 shell panes across six workspaces, `/odx` matching four
 panes by pane/workspace/tab fields, and confirmed focus after popup dismissal.

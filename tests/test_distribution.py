@@ -1,8 +1,10 @@
-"""Main-owned opt-in native Herdr 0.9.3 distribution acceptance; not discovery/CI.
+"""Main-owned opt-in native Herdr 0.9.3/0.9.5 distribution acceptance; not discovery/CI.
 
 Contracts: herdrdev/herdr tag v0.9.3 src/session.rs:161-184,
 src/app/api/session.rs:16-60, src/app/api/plugins/panes.rs:11-41,
 src/app/popup.rs:116-117,273-289 and src/cli/plugin.rs.
+Herdr v0.9.5 src/cli/plugin.rs, src/app/api/plugins/mod.rs and
+src/plugin_installations.rs define direct registration and generation leases.
 No fake server, public downloads, personal session, or Rust/Cargo is used.
 """
 
@@ -46,7 +48,7 @@ def prepare_fixture(base, asset_dir):
     repo, assets = base / "source", base / "assets"
     (repo / "scripts").mkdir(parents=True)
     assets.mkdir()
-    for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+    for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
         shutil.copy2(ROOT / name, repo / name)
     for name in ["check-version.py", "install-binary.py"]:
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
@@ -60,9 +62,13 @@ def prepare_fixture(base, asset_dir):
     assert (assets / (name + ".sha256")).read_text() == f"{digest(archive.read_bytes())}  {name}\n"
     with tarfile.open(archive) as package:
         members = package.getmembers()
-        assert len(members) == 2 and {m.name for m in members} == {
-            "herdr-crossroads", "herdr-crossroads.sha256"}
+        assert len(members) == 4 and {m.name for m in members} == {
+            "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}
         assert all(m.isfile() and not m.sparse for m in members)
+        notices = {name: package.extractfile(name).read()
+                   for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]}
+        for name, data in notices.items():
+            assert data == (repo / name).read_bytes()
         original = package.extractfile("herdr-crossroads").read()
         assert package.extractfile("herdr-crossroads.sha256").read() == (
             f"{digest(original)}  herdr-crossroads\n".encode())
@@ -72,7 +78,7 @@ def prepare_fixture(base, asset_dir):
     name = ARCHIVE.format("0.1.1")
     with tarfile.open(assets / name, "w:gz") as package:
         for filename, data in [("herdr-crossroads", variant), ("herdr-crossroads.sha256",
-                               f"{digest(variant)}  herdr-crossroads\n".encode())]:
+                               f"{digest(variant)}  herdr-crossroads\n".encode()), *notices.items()]:
             entry = tarfile.TarInfo(filename)
             entry.size = len(data)
             entry.mode = 0o755 if filename == "herdr-crossroads" else 0o644
@@ -127,6 +133,8 @@ class Screen:
                     continue  # Terminal-size queries do not paint cells.
                 if code == "u" and not intermediate and re.fullmatch(r"[?<>=][0-9;]*", raw):
                     continue  # Kitty keyboard negotiation does not paint cells.
+                if code == "p" and intermediate == "$" and raw == "?1016":
+                    continue  # Pixel-mouse mode query does not paint cells.
                 if code in "mhl" or code == "q" and intermediate == " ":
                     continue  # Colors, terminal modes, cursor style do not paint cells.
                 assert not intermediate and not raw.startswith(("?", ">", "=")), match.group()
@@ -257,12 +265,12 @@ def run_case(herdr, asset_dir):
             '[protocol]\n    allow = never\n[protocol "file"]\n    allow = always\n'
             '[core]\n    hooksPath = /dev/null\n'
             '[user]\n    name = Distribution Fixture\n    email = fixture@example.invalid\n')
-        name = "distribution"
-        session_dir = Path(env["XDG_CONFIG_HOME"]) / "herdr/sessions" / name
+        session_name = "distribution"
+        session_dir = Path(env["XDG_CONFIG_HOME"]) / "herdr/sessions" / session_name
         api_path = session_dir / "herdr.sock"
         client_path = session_dir / "herdr-client.sock"
         assert api_path.resolve().is_relative_to(base) and client_path.resolve().is_relative_to(base)
-        argv = [str(herdr), "--session", name]
+        argv = [str(herdr), "--session", session_name]
         server = client = None
         master = slave = None
 
@@ -381,7 +389,8 @@ def run_case(herdr, asset_dir):
         with (base / "server.log").open("wb") as log:
             try:
                 version = command([str(herdr), "--version"])
-                assert version.returncode == 0 and re.fullmatch(r"herdr 0\.9\.3\s*", version.stdout), version
+                assert version.returncode == 0 and re.fullmatch(r"herdr 0\.9\.(?:3|5)\s*", version.stdout), version
+                runtime_version = version.stdout.strip().split()[1]
                 commits = {}
                 for args in [["init", "--quiet"], ["add", "."], ["commit", "--quiet", "-m", "Local distribution fixture"],
                              ["tag", "v0.1.0"]]:
@@ -399,7 +408,7 @@ def run_case(herdr, asset_dir):
                                           stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
                 wait_for(lambda: api_path.exists() and client_path.exists(), "owned server sockets")
                 assert stat.S_ISSOCK(api_path.stat().st_mode) and stat.S_ISSOCK(client_path.stat().st_mode)
-                assert result("ping")["version"] == "0.9.3"
+                assert result("ping")["version"] == version.stdout.strip().split()[1]
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
                 client = subprocess.Popen([*argv, "client"], cwd=base, env=env, stdin=slave,
@@ -426,7 +435,9 @@ def run_case(herdr, asset_dir):
                     assert len(installed) == 1, plugins
                     plugin = installed[0]
                     assert plugin["version"] == version
+                    assert plugin["min_herdr_version"] == "0.9.1" and plugin["enabled"] is True
                     source = plugin["source"]
+                    assert source["kind"] == "github"
                     assert source["owner"] == "SimonEisenhauer" and source["repo"] == "herdr-crossroads"
                     assert source["requested_ref"] == "v" + version and source["resolved_commit"] == commits[version]
                     managed = Path(source["managed_path"]).resolve(strict=True)
@@ -434,6 +445,14 @@ def run_case(herdr, asset_dir):
                     binary = managed / "target/release/herdr-crossroads"
                     assert not binary.is_symlink() and binary.resolve(strict=True).is_relative_to(managed)
                     assert binary.read_bytes() == payloads[version] and binary.stat().st_mode & 0o777 == 0o755
+                    for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                        notice = binary.parent / name
+                        assert not notice.is_symlink() and notice.resolve(strict=True).is_relative_to(managed)
+                        assert notice.read_bytes() == (repo / name).read_bytes()
+                        assert notice.stat().st_mode & 0o777 == 0o644
+                    if runtime_version == "0.9.5":
+                        registry = Path(env["XDG_CONFIG_HOME"]) / "herdr/plugins.json"
+                        assert json.loads(registry.read_text()) == plugins
                     assert not denied.exists(), "Rust/Cargo attempted"
                     if not retained:
                         # Discover only fixture-owned per-plugin roots; never invent
@@ -455,7 +474,15 @@ def run_case(herdr, asset_dir):
                                       "focused_pane_id": roots[1], "native_navigation": "passed"}), flush=True)
                 cli("plugin", "uninstall", "herdr-crossroads")
                 assert not any(p["plugin_id"] == "herdr-crossroads" for p in result("plugin.list")["plugins"])
-                assert not managed.exists()
+                if runtime_version == "0.9.3":
+                    assert not managed.exists()
+                else:
+                    # 0.9.5 servers pin generations until shutdown; unlink does
+                    # not reclaim a checkout that a server could still be using.
+                    assert json.loads(registry.read_text()) == []
+                    assert binary.read_bytes() == payloads["0.1.0"]
+                    for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                        assert (binary.parent / name).read_bytes() == (repo / name).read_bytes()
                 assert all(p.read_text() == "owned fixture data\n" for p in retained)
                 assert not denied.exists()
                 assert artifact_before == {p.name: digest(p.read_bytes()) for p in assets.iterdir()}
@@ -470,7 +497,7 @@ def run_case(herdr, asset_dir):
                 # or inherited sessions. Fallback signals only owned Popen groups.
                 try:
                     if server is not None and server.poll() is None:
-                        stopped = command([str(herdr), "session", "stop", name])
+                        stopped = command([str(herdr), "session", "stop", session_name])
                         assert stopped.returncode == 0, (stopped.stdout, stopped.stderr)
                 finally:
                     try:

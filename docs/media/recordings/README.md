@@ -1,6 +1,6 @@
 # Native recording provenance
 
-The primary current candidate is the approximately 1:40
+The current accepted movie is the approximately 1:40
 [Crossroads demo](../crossroads-circular-tour.mp4), documented in
 [guided-tour.md](guided-tour.md). Speech-matched title, pane cards and hierarchy
 animate once into the hierarchy, then blend into the complete native popup,
@@ -15,9 +15,12 @@ section gaps are 1–2 seconds. It contains no burned-in subtitles, subtitle str
 editorial band. The user accepted the preceding cut after independent review;
 the current minor revision removes only the visible closing-card voiceover credit
 and its fade-in. Attribution remains in the README video link title and movie
-metadata. Fresh independent review and acceptance of this modified movie remain
-pending. This finishing revision uses the previous repository export because
-the original external raw footage, graphics and evidence are missing. It adds
+metadata. Independent final-film review passed and the user accepted this current
+revision on 2026-10-13, with privacy acceptance also explicitly confirmed. See
+[current acceptance and narration-use conditions](../README.md); publication
+authorization remains separate. This finishing revision uses the previous
+repository export because the original external raw footage, graphics and
+evidence are missing. It adds
 0.52-second editorial blends (25 fps quantization of 0.5 seconds), a 0.702857-second
 fully visible popup hold before navigation speech, and advances the Themes opening
 before its preview phrase. Its AAC stream is copied unchanged, not re-encoded.
@@ -390,8 +393,10 @@ The retained older silent [navigation and theme loops](native-loops.md) are
 rendered and technically validated: 19.75 seconds and 12 seconds respectively,
 both 1656×896, without audio. The theme loop holds chronological stable native
 frames and omits Help detours; both disclose off-screen resets at the loop seam.
-Retained assets remain preserved. The preceding full movie was user-accepted;
-fresh review and acceptance remain pending for its closing-credit removal.
+Retained assets remain preserved. The current movie, including closing-credit
+removal, has passed independent final-film review and received user acceptance.
+The [2026-10-15 image privacy inspection](../README.md#retained-image-privacy-inspection--2026-10-15)
+covers all distinct decoded frames of the retained GIFs and the overview PNG.
 The dated production gates below describe historical exports, not the current
 movie's acceptance status; see [current provenance](guided-tour.md).
 

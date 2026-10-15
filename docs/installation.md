@@ -53,19 +53,27 @@ The selected archive and its adjacent checksum must exist. Checksum records must
 be exactly lowercase SHA256, two spaces, the portable expected filename, and a
 newline. Both archive and internal binary hashes are checked.
 
-The gzip tar must contain exactly two regular, non-sparse members named
-`herdr-crossroads` and `herdr-crossroads.sha256`. Duplicates, unexpected members,
+The gzip tar must contain exactly four regular, non-sparse members named
+`herdr-crossroads`, `herdr-crossroads.sha256`, `LICENSE`, and
+`THIRD-PARTY-NOTICES.html`. Both notice files must match the trusted checkout's
+bytes exactly; missing, tampered or malformed notice payloads fail even if the
+outer checksum was recomputed. Older two-member assets are no longer accepted.
+Duplicates, unexpected members,
 path traversal, absolute names, directories, symlinks, and hardlinks fail. No tar
 paths are extracted. The binary must have a little-endian ELF64 x86-64 executable
 header; this sanity check is not proof that it runs, is trustworthy, or supports
 a particular glibc version.
 
-After validation, only the binary bytes are written into an exclusive temporary
-file in `target/release/`, set to mode 0755, flushed/synced, then atomically
-replaced. Existing symlink/nonregular destinations and symlink directory ancestors
+After validation, all three payload files are staged in exclusive temporary
+files in `target/release/`, flushed/synced, then individually atomically replaced:
+`LICENSE` and `THIRD-PARTY-NOTICES.html` (mode 0644) first, then
+`herdr-crossroads` (mode 0755). Keep both notice files with the installed binary
+when copying or redistributing it. Existing symlink/nonregular destinations for
+any payload and symlink directory ancestors
 are rejected; directory operations are anchored to no-follow open directory
 descriptors. Handled failures preserve the previous binary and clean only the
-helper's own staging file. Newly created empty `target/release` directories may
+helper's own staging files. A later replacement failure may leave updated notices
+beside the previous binary: this is not a three-file transaction. Newly created empty `target/release` directories may
 remain after an I/O failure. Forced termination can leave a staging file; this is
 not a power-loss durability or rollback guarantee.
 
@@ -73,11 +81,17 @@ Checksums detect corruption, **not publisher authenticity**. Trust both the
 checkout (its hook executes code) and asset source. Local artifact evidence is
 Linux x86_64 glibc 2.43; no older/public Ubuntu runtime or minimum glibc is proven.
 See [build verification limits](builds.md#runtime-and-verification-limits).
+The [license inventory](releases.md#license-inventory-and-verification)
+covers the active Cargo graph, Rust's upstream standard-library notices, and
+exact installed system package copyright/full-license records, plus verified
+glibc 2.43-2ubuntu2.4 startup linking exception headers. Final matching binary/link-map
+review and repackaged-asset verification remain release gates; those exceptions
+do not extend to other sources or versions merely because linkage is dynamic.
 
 ## Herdr source resolution
 
-Herdr v0.9.3 (also verified in v0.9.1) accepts `OWNER/REPO[/SUBDIR]`, generates
-`https://github.com/OWNER/REPO.git`, and fetches the supplied `--ref` before
+Herdr v0.9.3 and v0.9.5 (also verified in v0.9.1) accept `OWNER/REPO[/SUBDIR]`, generate
+`https://github.com/OWNER/REPO.git`, and fetch the supplied `--ref` before
 checking out `FETCH_HEAD`. A single slug such as `herdr-crossroads` fails usage;
 it does not resolve from a plugin registry.
 
@@ -87,9 +101,15 @@ For the selected source, the intended pinned syntax is
 existing public release.** Noninteractive callers additionally need `--yes`; review the
 source, manifest, and assets before approving hook execution.
 
-Herdr executes build argv in the manifest root before moving the checkout or
-registering with `plugin.link`. A build failure prevents registration; changing
-the manifest during the build also aborts installation. The local asset input is
+Herdr v0.9.3 executes build argv in the manifest root before moving the checkout
+and registering with the live `plugin.link` API. In v0.9.5, install moves the
+checkout into a managed generation first, builds there, then directly persists
+registration in the XDG configuration's `herdr/plugins.json`, even with
+a live server. This is the normal v0.9.5 install mechanism, not a connection-error
+fallback; installed-plugin lookup still uses `plugin.list`. The registry is a
+JSON array of installed-plugin records including enabled state and GitHub source
+metadata. A build failure prevents registration and removes the failed managed
+checkout; changing the manifest during the build also aborts installation. The local asset input is
 the complete current distribution mechanism, not a future download endpoint.
 
 Primary source contracts (Herdr **v0.9.3**, checked 2026-10-13):
@@ -100,6 +120,15 @@ Primary source contracts (Herdr **v0.9.3**, checked 2026-10-13):
 - [Protocol version 22](https://github.com/herdrdev/herdr/blob/v0.9.3/src/protocol/wire.rs)
 - [XDG configuration/state roots](https://github.com/herdrdev/herdr/blob/v0.9.3/src/config/io.rs)
 
+Additional primary contracts (Herdr **v0.9.5**, checked 2026-10-15):
+
+- [Install ordering, direct persistence and uninstall](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs)
+- [Registry JSON array serialization and strict reads](https://github.com/herdrdev/herdr/blob/v0.9.5/src/persist/plugin_registry.rs)
+- [Installed-plugin and GitHub source record schema](https://github.com/herdrdev/herdr/blob/v0.9.5/src/api/schema/plugins.rs)
+- [Live registry refresh](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/mod.rs)
+- [Upstream managed-installation and shared-registry fixtures](https://github.com/herdrdev/herdr/blob/v0.9.5/tests/cli/plugins.rs)
+- [Managed generation leases and reclamation](https://github.com/herdrdev/herdr/blob/v0.9.5/src/plugin_installations.rs)
+
 ## Focused verification
 
 From the repository root, `python3 tests/test_install_binary.py` runs isolated
@@ -108,9 +137,14 @@ version selection, checksums, malformed/member attacks, host/ELF rejection,
 symlink rejection, and prior-binary preservation on validation/staging/replace
 failures. No Herdr or Rust command is invoked and nothing is installed in the
 live checkout. Synthetic success is not actual executable verification.
+Notice retention, missing/tampered/malformed notice members and notice-destination
+symlinks are included. The historical 0.9.3 results below used earlier two-member
+assets. On 2026-10-15 both real-Herdr harnesses passed with Herdr 0.9.5 and the
+current four-member contract, checking delivered notice bytes and mode 0644.
 
 The separate **main-owned, opt-in** harness requires approval and an explicit real
-Herdr 0.9.3 executable and actual trusted release assets:
+Herdr **0.9.3 or 0.9.5** executable and actual trusted release assets; other
+versions are rejected:
 
 ```sh
 python3 tests/test_herdr_install.py --herdr-bin /absolute/path/to/herdr --asset-dir /absolute/path/to/trusted/assets
@@ -120,10 +154,16 @@ It is not part of ordinary test discovery or CI. It creates only temporary local
 Git repos/tags under `/tmp/opencode`, rewrites one fixture GitHub URL to `file://`,
 denies every non-file Git protocol, isolates HOME/XDG/config/socket paths, and
 inherits no runtime/session/plugin credentials. Its restricted PATH exposes real
-Git/Python and denies Cargo/Rust. A fake protocol-22 API verifies the installed
-actual binary bytes/mode and echoes source metadata at `plugin.link`; it never
-opens a pane or registers with the current session. Negative asset/checksum/hash/
-ELF-target cases must fail before registration. Only session-created fixtures
+Git/Python and denies Cargo/Rust. With 0.9.3, a fake protocol-22 API verifies the
+installed binary and notices and echoes source metadata at exactly one
+`plugin.link`; no registry file is permitted. With 0.9.5, the API must still
+receive `plugin.list` and must not receive `plugin.link`. Instead, the harness
+requires exactly one persisted plugin record with the expected ID/version,
+minimum Herdr version, enabled state, GitHub owner/repository/ref/resolved commit,
+and managed paths within isolated XDG storage, plus exact binary/notice bytes and
+modes. It never opens a pane or registers with the current session. Negative asset/checksum/hash/
+ELF-target cases must fail before registration, leave no registry file, and leave
+no installed runtime. Only session-created fixtures
 are cleaned. This tests the real CLI install lifecycle, not a real Herdr server or
 plugin runtime, and cannot substitute for live runtime/release gates.
 
@@ -138,9 +178,16 @@ install, and host-link examples above remain unexecuted against the personal
 environment. This fake-API run alone does not establish native installation;
 the later native run below supplies that separately scoped evidence.
 
+**0.9.5 status (2026-10-15):** all five cases passed with the current four-member
+assets: success, missing asset, missing checksum, bad hash and wrong ELF target.
+The old no-registry assumption was replaced with the upstream version-specific
+contract, not with permission to skip registration checks. The real CLI used
+only the isolated fake API/local Git fixtures and did not invoke Rust/Cargo or
+change the personal installation.
+
 ## Native distribution acceptance
 
-`tests/test_distribution.py` is a separate, opt-in **real Herdr 0.9.3 server and
+`tests/test_distribution.py` is a separate, opt-in **real Herdr 0.9.3 or 0.9.5 server and
 client PTY** test in an isolated named session under `/tmp/opencode`. Only the
 owning main session may execute it with explicit approval:
 
@@ -157,15 +204,21 @@ tool PATH isolate the server and client. The client uses a 160×40 PTY; only the
 temporary plugin manifest requests 90% popup dimensions. Cleanup stops only its
 owned named session and waits for its owned client/server before fixture removal.
 
-The test verifies exact manifest version, installed binary bytes/mode and source ref/commit,
+The test verifies exact manifest version, installed binary and notice bytes/modes and source ref/commit,
 rendered opening and search, first Enter retaining the filter without host focus,
 second Enter focusing the exact stable target pane ID and closing the popup,
 replacement and return to the original version, and native uninstall. Close the
 popup before replacement or uninstall: uninstall does not stop running plugin
-panes. Managed uninstall removes its checkout but retains plugin config/state;
-remove only fixture-owned retained data after shutting down the owned session.
+panes. On 0.9.3, managed uninstall must remove its checkout. On 0.9.5, the test
+requires an empty persisted registry after uninstall and verifies that the
+server-pinned checkout still contains the expected binary and notices. Herdr
+0.9.5 retains generation leases until consumers exit; later cleanup can reclaim
+unused generations. This harness does not exercise that later reclamation. Both
+versions must retain plugin config/state markers; remove only fixture-owned
+retained data after shutting down the owned session.
 
-There is no automatic updater or `plugin update` command. Managed replacement
+Crossroads supplies no automatic updater. Herdr 0.9.3 has no `plugin update`
+command; 0.9.5 has one, but it is not exercised by this harness. Managed replacement
 uses `plugin install OWNER/REPO --ref <reviewed-ref>` again with matching trusted
 local assets; returning to a previous ref needs its matching assets too. The
 pinned syntax above is still not a public installation instruction.
@@ -183,7 +236,9 @@ Rendering checks read current cursor/erase-updated PTY cells, not historical
 transcript substrings, and restrict evidence to the popup query and its first
 12 table lines (the fixture allows at most three ordinary root shells). They are
 text checks, not screenshots, glyph-fidelity tests or a general terminal emulator.
-Unsupported painting controls fail. Popup opening returns no pane ID: the harness
+Unsupported painting controls fail. The known `CSI ? 1016 $ p` pixel-mouse mode
+query is non-painting and preserves cells/cursor; an unknown mode-query regression
+still fails. Popup opening returns no pane ID: the harness
 does not try to read it through ordinary pane APIs. A duplicate open must fail
 after the first Enter with structured `ui_busy` and `popup pane is already open`.
 After confirmed target focus, a single native `popup.close`
@@ -195,8 +250,23 @@ Risk-free helper validation is `PYTHONDONTWRITEBYTECODE=1 python3
 tests/test_distribution_helpers.py` from the repository root. It tests fixture
 archive/checksum preparation, fixture-only version changes and the current-cell
 reader, without invoking Herdr, Git or Rust. Header-only bytes in these helper
-tests do not prove executable behavior. These three pure helper tests are a CI
+tests do not prove executable behavior. These four pure helper tests are a CI
 gate; neither real-Herdr harness is included in CI or ordinary discovery.
+
+**0.9.5 execution evidence (2026-10-15):** the real server/client test passed
+`0.1.0 → test-only 0.1.1 → 0.1.0` with the current four-member assets. Opening,
+search/filter retention, exact target focus, duplicate-open/closed-popup checks,
+unfiltered reopening, replacement/return, delivered notice bytes/modes, retained
+config/state markers, registration removal and owned-session shutdown all passed.
+The server-pinned checkout remained valid after uninstall as required by 0.9.5;
+later generation reclamation was not tested. No Rust/Cargo or network ran in the
+sandbox, and the personal session was untouched. Four pure helper tests passed
+before execution. The remaining older table records historical 0.9.3 evidence.
+
+| Current local fixture | Binary SHA256 | Archive SHA256 |
+| --- | --- | --- |
+| 0.1.0 | `146d556e5afee59c61b0664b85457b16b31764d0662062ce553edc4374248c1c` | `0cad14db7343b87b633e54b4ada40036b4ade613dafffe8f89b07719997a0616` |
+| 0.1.1 (test-only trailer) | `b93fd1d4087f185e8799a79838485cfd2ba103349a5e8e1f9a7b62a5bb99dff6` | `94a4fa9107ee71e2919b7ef4228dfa17d2da7613ce00c779ed5c3c39e1a2383b` |
 
 **Execution evidence (2026-10-14):** the owning main session successfully ran
 `PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin <absolute-real-herdr> --asset-dir <absolute-trusted-assets>`
