@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use std::io ::Write;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
