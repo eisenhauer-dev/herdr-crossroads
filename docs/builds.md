@@ -35,7 +35,13 @@ package entry in `Cargo.lock`, and `herdr-plugin.toml` agree on a canonical stab
 `X.Y.Z` version. Missing, malformed, mismatched, or unsafe version data stops before
 Cargo or the PTYs; prerelease and build-metadata suffixes are not supported.
 It also checks the checked-in notice inventory's manifest/lock fingerprint and
-exact `rustc --version`. Dependency, feature, or toolchain changes require notice
+exact `rustc --version`, then requires an exact match to one of the two reviewed
+system profiles under `LICENSES/`: local glibc 2.43 or actual Ubuntu 24.04 CI.
+Resolved GCC candidate paths, object hashes, binary/source package versions and
+full installed copyright/common-license bytes must match. Both profiles and their
+matching source-header evidence must be present and internally hash-consistent;
+the canonical notice's system section must reproduce exactly from those records.
+Dependency, feature, toolchain, or builder changes require notice
 review and regeneration; changing only the project's version does not. Missing
 license files or stale inventory stop before Cargo and remove current-version
 artifact outputs. See [notice maintenance and final link-map verification](releases.md#license-inventory-and-verification).
@@ -120,12 +126,23 @@ installer inputs. A missing/empty map or collection error blocks packaging; fail
 gates remove current-version sidecars alongside the archive/checksum. Do not reuse
 historical evidence for a new binary or builder.
 
-The checked-in system notices still describe the reviewed local glibc 2.43 builder.
-The inexpensive notice gate does not validate a CI runner's system provenance.
-Before distribution, obtain the actual Ubuntu 24.04 run's sidecars, reconcile its
-final map, obtain exact matching glibc source headers, and review/update the
-canonical notices in a separately scoped change. Collection alone does not make
-this package distribution-ready or establish a license violation.
+The canonical notices conservatively include both reviewed builders in stable
+order, not just the current host. The Ubuntu profile was reconciled against exact
+official package payloads matching the actual PR run's candidate hashes; it is not
+a relabeled local inventory. [Source/package provenance and limits](releases.md#ubuntu-2404-system-profile)
+include the exact patched glibc headers. The mandatory pre-build system check has
+passed locally; its actual Ubuntu-runner execution remains pending a fresh CI run.
+Neither a profile match nor collection proves linked contributions or distribution
+readiness: retain the manual matching raw-map/ELF release gate.
+
+On 2026-10-16 the offline local dual-profile build passed the mandatory notice gate,
+a fresh final link, all four full PTYs and packaging. Separate archive checking
+confirmed four regular members, preserved executable mode, both checksums, exact
+canonical notice bytes, binary/map hash binding and normalized private prefixes.
+The binary remained byte-identical to the earlier local executable. Both isolated
+real-Herdr 0.9.5 harnesses subsequently passed against this repackaged asset; see
+[dual-profile native acceptance](installation.md#dual-profile-local-acceptance).
+Actual CI execution of the new notice gate is still pending.
 
 Local collector verification on 2026-10-15 used the offline helper invocation
 above: a fresh link, all four full PTYs, packaging, binary/map SHA256 binding,
@@ -160,7 +177,7 @@ Local verification on 2026-10-13 used Linux x86_64, Rust/Cargo 1.99.0, and glibc
 executable mode, and both checksums were checked locally. This is fake-host test
 evidence; that build run did not test native Herdr installation.
 Those historical artifacts predate the four-member notice contract. A fresh
-2026-10-15 build passed all four full PTYs with the current notices; archive
+2026-10-15 build passed all four full PTYs with its then-current local-only notices; archive
 membership, preserved executable mode, notice byte identity and both checksums
 were verified. Its binary matches the [checked local link map](releases.md#installed-system-provenance-and-verified-startup-exceptions).
 
@@ -176,6 +193,9 @@ real-Herdr 0.9.5 CLI install cases and the real-server/client managed lifecycle:
 installation, search/focus, test-fixture replacement, return, uninstall and
 shutdown. See [current hashes and scope](installation.md#native-distribution-acceptance).
 This does not test Herdr's separate update command or delayed generation reclamation.
+Those recorded native results precede dual-profile notice regeneration; the
+[separate repeated acceptance](installation.md#dual-profile-local-acceptance)
+covers the newly repackaged archive.
 
 `readelf` inspection showed ELF64 AMD x86-64, the interpreter
 `/lib64/ld-linux-x86-64.so.2`, and dynamic dependencies `libc.so.6`, `libgcc_s.so.1`,

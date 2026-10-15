@@ -38,6 +38,7 @@ class BuildLinuxTests(unittest.TestCase):
             shutil.copy2(ROOT / name, self.repo / name)
         if (ROOT / "scripts/third-party-notices.py").exists():
             shutil.copy2(ROOT / "scripts/third-party-notices.py", self.repo / "scripts/third-party-notices.py")
+        shutil.copytree(ROOT / "LICENSES", self.repo / "LICENSES")
         self.bin = Path(self.temporary.name) / "bin"
         self.bin.mkdir()
         self.log = Path(self.temporary.name) / "calls"
@@ -66,7 +67,7 @@ for arg in "$@"; do
 done
 printf 'cc -Wl,-Map=fixture\nLLD fixture\n'
 ''')
-        self.tool("gcc", '#!/bin/sh\ncase "$1" in --version) echo "gcc fixture";; *) echo "${1#-print-file-name=}";; esac\n')
+        self.tool("gcc", '#!/bin/sh\ncase "$1" in --version) echo "gcc fixture";; *) exec /usr/bin/gcc "$@";; esac\n')
         self.tool("rustc", '#!/bin/sh\nprintf "%s\\n" "rustc 1.99.0 (b940084d7 2026-09-28)"\n')
         self.tool("python3", f'''#!/bin/sh
 case "$1" in scripts/check-version.py|scripts/third-party-notices.py|scripts/build-provenance.py) exec "{sys.executable}" "$@";; esac
@@ -258,9 +259,17 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         self.assert_no_artifact()
 
     def test_provenance_collection_failure_blocks_ptys_and_packaging(self):
-        self.tool("gcc", "#!/bin/sh\nexit 31\n")
+        self.tool("gcc", '#!/bin/sh\ntest "$1" != --version || exit 31\nexec /usr/bin/gcc "$@"\n')
         self.assertEqual(self.build().returncode, 31)
         self.assertEqual(self.calls(), self.expected_calls()[:1])
+        self.assert_no_artifact()
+
+    def test_unreviewed_system_builder_stops_before_cargo_and_ptys(self):
+        self.tool("dpkg-query", '#!/bin/sh\ncase "$1" in -W) printf "unknown glibc unknown\\n";; *) exec /usr/bin/dpkg-query "$@";; esac\n')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reviewed system builder", result.stderr)
+        self.assertEqual(self.calls(), [])
         self.assert_no_artifact()
 
     def test_success_without_new_binary_cannot_test_stale_binary(self):

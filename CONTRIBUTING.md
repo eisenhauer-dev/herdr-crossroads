@@ -168,6 +168,12 @@ For the single supported native build-artifact target, use
 runs all four full PTYs against that exact binary, and packages a tar plus SHA256
 checksums only after success. See [tested Linux build artifacts](docs/builds.md)
 for prerequisites, versioned output paths, failure cleanup, and compatibility limits.
+Packaging additionally requires one of the two exact reviewed system builders
+under `LICENSES/` (local glibc 2.43 or actual Ubuntu 24.04 CI): object hashes,
+package/source versions and installed notice/license bytes are mandatory build
+inputs. Canonical notices conservatively include both profiles. Unknown or changed
+builders fail rather than generating host-specific distribution notices; see
+[notice maintenance and source provenance](docs/releases.md#license-inventory-and-verification).
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts, not a published release. The separate
