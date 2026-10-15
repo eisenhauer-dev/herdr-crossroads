@@ -1,5 +1,7 @@
 # Contributing
 
+<!-- Temporary required-check verification; remove after the isolated PR test. -->
+
 ## Public contribution workflow
 
 Repository write access is limited to the owner and collaborators explicitly
