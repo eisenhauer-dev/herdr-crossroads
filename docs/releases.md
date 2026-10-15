@@ -14,15 +14,19 @@ fields, duplicate/missing lock entries, mismatches, and non-string versions fail
 Only canonical stable `X.Y.Z` with ASCII digits and no leading zeroes is supported;
 prereleases and build-metadata suffixes are deliberately excluded. These checks
 prevent version data from becoming shell commands or traversing artifact paths.
-The separate [local-asset installation hook](installation.md) reuses this checker
-without downloading or invoking Rust/Cargo. It requires Python 3.11+ standard
-library only and an explicit trusted local asset directory.
+The separate [binary installation hook](installation.md) reuses this checker
+without invoking Rust/Cargo. It requires Python 3.11+ standard library only;
+an explicit trusted local asset directory selects offline installation, otherwise
+the prepared route downloads the exact version from GitHub Releases. Publication
+and public acceptance remain pending.
 
 For `0.1.0`, the only supported target produces:
 
 ```text
 target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
 target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
 ```
 
 The tar contains the exact tested executable, preserving its executable mode,
@@ -47,6 +51,7 @@ cargo test --locked
 python3 tests/test_git_hooks.py
 python3 tests/test_version.py
 python3 tests/test_build_linux.py
+python3 tests/test_build_provenance.py
 python3 tests/test_install_binary.py
 python3 tests/test_distribution_helpers.py
 python3 tests/test_notices.py
@@ -62,6 +67,18 @@ gate results, tar membership/mode/ownership, and both checksums before requestin
 release approval. A file left by an earlier build is not fresh success evidence.
 Run `sha256sum -c herdr-crossroads.sha256` after extraction into a separate empty
 directory. Do not run concurrent builds in the same checkout.
+
+The JSON/map sidecars are evidence outside the unchanged four-member tar and are
+uploaded with the archive/checksum by CI using explicit versioned filenames.
+They bind the final map to the exact tested binary, record tool/link command output,
+and preserve installed package/source versions and file hashes where available.
+See [builder evidence and limits](builds.md#builderlink-evidence-not-distribution-approval).
+Review the normalized raw map rather than treating every traced file or GCC
+candidate as an actual contribution. The public run recorded below predates this
+collector: fresh actual-runner evidence and matching glibc source-header review
+are still required. Do not regenerate canonical notices from this local host as
+a substitute for Ubuntu 24.04 evidence, or claim distribution readiness from a
+successful collection/build alone.
 
 ## License inventory and verification
 
@@ -232,12 +249,13 @@ local preparation, not publication or final release approval.
 The existing **Linux gates** job accepts `push`, `pull_request`, and manual
 `workflow_dispatch` on an existing ref. Every invocation remains public-only,
 read-only, and uses the same gates and helper. Only successful packaging writes
-the exact versioned name to step outputs; upload selects just its tar and
-checksum, never a `target/builds/` wildcard. There is no tag trigger or release
+the exact versioned name to step outputs; upload selects its tar, archive
+checksum, provenance JSON and link map, never a `target/builds/` wildcard. There is no tag trigger or release
 publication job.
 
 The helper-test step includes `python3 tests/test_version.py`,
-`python3 tests/test_build_linux.py`, `python3 tests/test_install_binary.py`, and
+`python3 tests/test_build_linux.py`, `python3 tests/test_build_provenance.py`,
+`python3 tests/test_install_binary.py`, and
 `python3 tests/test_distribution_helpers.py`,
 also present in the local preflight list above. Full notice reproduction is an
 additional local-builder check, not an existing CI helper step. Installer unit tests use synthetic assets
@@ -245,22 +263,29 @@ and isolated destinations, not a live installation or real Herdr integration.
 Distribution helper tests validate fixture preparation and current PTY cells
 without launching Herdr; the native opt-in harness remains outside CI.
 
-Prepared CI release-preflight is not an executed CI run or a dry-run publication.
-Public CI and downloaded pipeline-artifact verification require a later public
-run and their own remote approvals. Before any tag, push, or publication, obtain
+The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
+passed the gates, explicit-target build, all four full isolated PTYs, packaging,
+and upload on Ubuntu 24.04. This is not a dry-run release publication.
+Independent [downloaded pipeline-artifact verification](builds.md#downloaded-public-pipeline-verification)
+passed on 2026-10-15, including all four full local PTYs against the downloaded
+binary. The public release-procedure trial and matching CI system/link provenance
+remain outstanding. Before any tag, push, or publication, obtain
 explicit approval for that action and the reviewed version/ref/assets. A proposed
 tag convention is `v<version>` (for example `v0.1.0`); no tag is created here.
 
-Local Linux x86_64 evidence uses glibc 2.43. It does not prove the intended Ubuntu
-24.04 CI runtime, a minimum glibc version, or another distribution. The separate
+Local Linux x86_64 evidence uses glibc 2.43. The public CI run separately verifies
+its Ubuntu 24.04 isolated test environment, not live Herdr integration there,
+a minimum glibc version, or another distribution. The separate
 [native Herdr 0.9.3 local managed lifecycle test](installation.md#native-distribution-acceptance)
 passed on 2026-10-14, including replacement and return with a test-only version
 fixture. The current four-member asset passed both 0.9.5 native harnesses on
 2026-10-15, including notice retention and version-specific registration/uninstall
 checks. Neither run proves new-runtime upgrade compatibility or the separate
-Herdr update command. The local-only installer is separate from public distribution;
+Herdr update command. The public installer route is prepared, not yet accepted;
 no public installer readiness or actual GitHub release automation is claimed.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
 The selected future source is `eisenhauer-dev/herdr-crossroads`; public repository
-access was verified on 2026-10-15. Release tag/asset availability,
-run/upload/download evidence and final release approval remain open.
+access was verified on 2026-10-15. Public CI execution and upload are verified;
+release tag/asset availability, the public release-procedure trial, and final
+release approval remain open. Downloaded pipeline-artifact verification is
+recorded in the build guide; it is not a released-asset installation test.

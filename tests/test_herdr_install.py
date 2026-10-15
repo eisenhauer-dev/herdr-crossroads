@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -20,11 +21,17 @@ import tarfile
 import tempfile
 import threading
 
+from test_distribution import SOURCE, digest, enable_public_downloads, install_public, public_version
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_case(herdr, asset_dir, archive_name, case):
+def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commit=None):
+    version_number = public_version(public_ref, public_commit) if public_ref else "0.1.0"
+    requested_ref = public_commit if public_ref else "v0.1.0"
+    owner, repository = SOURCE.split("/") if public_ref else ("fixture", "crossroads")
+    source_slug = owner + "/" + repository
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cli-") as temporary:
         base = Path(temporary)
         repo = base / "source"
@@ -38,6 +45,9 @@ def run_case(herdr, asset_dir, archive_name, case):
         for name in [archive_name, archive_name + ".sha256"]:
             shutil.copy2(asset_dir / name, assets / name)
         archive = assets / archive_name
+        if public_ref:
+            assert (assets / (archive_name + ".sha256")).read_text() == (
+                f"{digest(archive.read_bytes())}  {archive_name}\n")
         with tarfile.open(archive) as package:
             expected = package.extractfile("herdr-crossroads").read()
         if case == "missing-asset":
@@ -88,21 +98,37 @@ def run_case(herdr, asset_dir, archive_name, case):
         (base / "gitconfig").write_text(
             f'[url "{repo.as_uri()}"]\n    insteadOf = https://github.com/fixture/crossroads.git\n'
             '[protocol]\n    allow = never\n[protocol "file"]\n    allow = always\n')
+        if public_ref:
+            enable_public_downloads(env)
 
         def command(argv, cwd=base):
-            return subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                  text=True, capture_output=True, timeout=30)
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       text=True, start_new_session=True)
+            try:
+                stdout, stderr = process.communicate(timeout=180 if public_ref else 30)
+            except BaseException:
+                # Kill only this command's group, including its Git/build descendants.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=3)
+                raise
+            return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
 
         version = command([str(herdr), "--version"])
         assert version.returncode == 0 and re.fullmatch(r"herdr 0\.9\.(?:3|5)\s*", version.stdout), version
         runtime_version = version.stdout.strip().split()[1]
-        for args in [["init", "--quiet"], ["add", "."],
+        if public_ref:
+            assert runtime_version == "0.9.5", "public acceptance requires Herdr 0.9.5"
+        for args in ([] if public_ref else [["init", "--quiet"], ["add", "."],
                      ["-c", "user.name=Installer Fixture", "-c", "user.email=fixture@example.invalid",
                       "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Installer fixture"],
-                     ["tag", "v0.1.0"]]:
+                     ["tag", "v0.1.0"]]):
             result = command([git, *args], cwd=repo)
             assert result.returncode == 0, result.stderr
-        commit = command([git, "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        commit = public_commit if public_ref else command([git, "rev-parse", "HEAD"], cwd=repo).stdout.strip()
         requests = []
         linked = []
         failures = []
@@ -167,8 +193,11 @@ def run_case(herdr, asset_dir, archive_name, case):
             short = command([str(herdr), "plugin", "install", "herdr-crossroads", "--yes"])
             assert short.returncode == 2 and "usage:" in short.stderr, short
             assert requests == [], "single slug must fail before API access"
-            result = command([str(herdr), "plugin", "install", "fixture/crossroads",
-                              "--yes", "--ref", "v0.1.0"])
+            if public_ref:
+                result = install_public(command, [str(herdr)], public_ref, public_commit)
+            else:
+                result = command([str(herdr), "plugin", "install", source_slug,
+                                  "--yes", "--ref", requested_ref])
         finally:
             stop.set()
             server.join(timeout=6)
@@ -193,13 +222,13 @@ def run_case(herdr, asset_dir, archive_name, case):
                 plugins = json.loads(registry.read_text())
                 assert isinstance(plugins, list) and len(plugins) == 1, plugins
                 plugin = plugins[0]
-                assert plugin["plugin_id"] == "herdr-crossroads" and plugin["version"] == "0.1.0"
+                assert plugin["plugin_id"] == "herdr-crossroads" and plugin["version"] == version_number
                 assert plugin["name"] == "Herdr Crossroads" and plugin["min_herdr_version"] == "0.9.1"
                 assert plugin["enabled"] is True and not plugin.get("warnings")
                 source = plugin["source"]
                 assert source["kind"] == "github" and source.get("subdir") is None
-                assert source["owner"] == "fixture" and source["repo"] == "crossroads"
-                assert source["requested_ref"] == "v0.1.0" and source["resolved_commit"] == commit
+                assert source["owner"] == owner and source["repo"] == repository
+                assert source["requested_ref"] == requested_ref and source["resolved_commit"] == commit
                 assert type(source["installed_unix_ms"]) is int and source["installed_unix_ms"] > 0
                 managed = Path(source["managed_path"]).resolve(strict=True)
                 assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"])) and managed.is_relative_to(base)
@@ -211,27 +240,38 @@ def run_case(herdr, asset_dir, archive_name, case):
                     installed = managed / "target/release" / name
                     assert not installed.is_symlink() and installed.resolve(strict=True).is_relative_to(managed)
                     assert installed.read_bytes() == data and installed.stat().st_mode & 0o777 == mode
-                assert "Installed herdr-crossroads from fixture/crossroads." in result.stdout
+                assert f"Installed herdr-crossroads from {source_slug}." in result.stdout
         else:
             assert result.returncode != 0 and "plugin build failed" in result.stderr, result.stderr
             assert "plugin.link" not in requests and not linked
             assert not list(Path(env["XDG_CONFIG_HOME"]).rglob("target/release/herdr-crossroads"))
-        print(f"PASS real {version.stdout.strip()} local install: {case}")
+        print(f"PASS real {version.stdout.strip()} {'public download' if public_ref else 'local'} install: {case}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--herdr-bin", type=Path, required=True)
     parser.add_argument("--asset-dir", type=Path, required=True)
+    parser.add_argument("--public-ref", help="OPT IN to public GitHub checkout and Release downloads (vX.Y.Z)")
+    parser.add_argument("--public-commit", help="reviewed full commit SHA required with --public-ref")
     args = parser.parse_args()
+    if args.public_ref is not None or args.public_commit is not None:
+        try:
+            public_version(args.public_ref, args.public_commit)
+        except ValueError as error:
+            parser.error(str(error))
+    if sys.flags.optimize:
+        parser.error("assertions must remain enabled (no python -O)")
     if not args.herdr_bin.is_absolute() or not args.asset_dir.is_absolute():
         parser.error("explicit absolute real Herdr executable and trusted asset directory required")
     herdr = args.herdr_bin.resolve(strict=True)
     with herdr.open("rb") as executable:
         if executable.read(4) != b"\x7fELF" or not os.access(herdr, os.X_OK):
             parser.error("Herdr must be a real executable ELF, not a PATH shim")
-    for case in ["success", "missing-asset", "missing-checksum", "bad-hash", "wrong-target"]:
-        run_case(herdr, args.asset_dir, "herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz", case)
+    version = args.public_ref[1:] if args.public_ref else "0.1.0"
+    for case in (["success"] if args.public_ref else ["success", "missing-asset", "missing-checksum", "bad-hash", "wrong-target"]):
+        run_case(herdr, args.asset_dir, f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz",
+                 case, args.public_ref, args.public_commit)
 
 
 if __name__ == "__main__":
