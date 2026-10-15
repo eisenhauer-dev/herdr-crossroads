@@ -1,4 +1,4 @@
-"""Isolated A10c protocol, search, error-page and long-binding PTY regressions."""
+"""Isolated protocol, search, error-page and long-binding PTY regressions."""
 import errno
 import fcntl
 import json
@@ -184,7 +184,7 @@ def main(binary):
         fake.chmod(0o700)
         input_protocol_cases(binary, directory)
         if "--input-protocol" in sys.argv[2:]:
-            print("A10c package 1 PTY: repeated Esc, delayed Esc/q, Alt+q, late Kitty reply, buffered probe input passed")
+            print("Input protocol PTY: repeated Esc, delayed Esc/q, Alt+q, late Kitty reply, buffered probe input passed")
             return
         binding_policy_cases(binary, directory)
         themes_help_cases(binary, directory)
@@ -334,7 +334,7 @@ def main(binary):
         finally:
             if popup:
                 popup.abort()
-    print("A10c PTY: classic/Kitty, searches, Esc/Alt timing, oversized-list errors, cleanup passed")
+    print("Keymaps PTY: classic/Kitty, searches, Esc/Alt timing, oversized-list errors, cleanup passed")
 
 
 def binding_policy_cases(binary, directory):
@@ -614,7 +614,7 @@ def input_protocol_cases(binary, directory):
                         popup.send(b"r")
                 popup.finish(b"q")
 
-                # F1/F4: the first Esc returns from search; the second starts the arrow.
+                # The first Esc returns from search; the second starts the arrow.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 popup.send(b"j/Same")
                 start = time.monotonic()
@@ -627,7 +627,7 @@ def input_protocol_cases(binary, directory):
                 # Both Esc keys must run without closing stdin or the PTY master.
                 popup.finish(b"\x1b\x1b")
 
-                # F3: rapid Esc+q is Alt+q, not return/close; q cannot become search text.
+                # Rapid Esc+q is Alt+q, not return/close; q cannot become search text.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 popup.send(b"/codex")
                 lines = popup.send(b"\x1bq")
@@ -645,7 +645,7 @@ def input_protocol_cases(binary, directory):
                 assert popup.child.poll() is None, "Esc must return to navigation, not close"
                 popup.finish(b"q")
 
-            # F4: a reply after the opening probe must not enable Kitty or remove configuration errors.
+            # A reply after the opening probe must not enable Kitty or remove configuration errors.
             popup = Popup(binary, directory, {"select": {"close": ["Ctrl+i"]}}, focus_socket=address)
             assert "Unsupported keymap keys - select mode" in popup.initial and "Ctrl+i" in popup.initial, popup.initial
             os.write(popup.master, b"\x1b[?1u")
@@ -673,7 +673,7 @@ def input_protocol_cases(binary, directory):
                 assert "Backspace: erase" not in initial[-1], initial
                 popup.finish(b"q")
 
-                # F4: preserve input preceding the probe response, including a pending Esc.
+                # Preserve input preceding the probe response, including a pending Esc.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[B/codex\x1b", initial_frame=searching_codex)
                 initial, wraps = screen(popup.initial, 80, 15)
                 assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in initial[-1], initial

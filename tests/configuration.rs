@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 fn case(files: &[(&str, &str)], input: &[u8]) -> std::process::Output {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let dir = std::path::Path::new("/tmp/opencode").join(format!(
-        "crossroads-a10c-{}-{}",
+        "crossroads-configuration-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -50,7 +50,7 @@ fn diagnostics_without_source_rows(output: &std::process::Output) -> String {
                 lines[at + 1]
                     .split_once("  ")
                     .is_some_and(|(filename, path)| path
-                        .starts_with("/tmp/opencode/crossroads-a10c-")
+                        .starts_with("/tmp/opencode/crossroads-configuration-")
                         && std::path::Path::new(path)
                             .file_name()
                             .unwrap()
