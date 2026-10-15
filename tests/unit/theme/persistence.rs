@@ -3,10 +3,10 @@ use crate::theme::{load, save, Theme};
 use std::path::PathBuf;
 
 #[test]
-fn r2_theme_file_notices_sanitize_decoded_controls_before_styling_and_clipping() {
+fn theme_file_notices_sanitize_decoded_controls_before_styling_and_clipping() {
     use ratatui::buffer::CellWidth;
     let dir = PathBuf::from(format!(
-        "/tmp/opencode/crossroads-r2-notice-{}",
+        "/tmp/opencode/crossroads-theme-notice-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
@@ -75,9 +75,9 @@ fn r2_theme_file_notices_sanitize_decoded_controls_before_styling_and_clipping()
 }
 
 #[test]
-fn r2_theme_and_status_duplicate_messages_use_structured_locations_without_root_markers() {
+fn theme_and_status_duplicate_messages_use_structured_locations_without_root_markers() {
     let dir = PathBuf::from(format!(
-        "/tmp/opencode/crossroads-r2-duplicates-{}",
+        "/tmp/opencode/crossroads-config-duplicates-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
@@ -135,7 +135,7 @@ fn r2_theme_and_status_duplicate_messages_use_structured_locations_without_root_
 }
 
 #[test]
-fn a10c_jsonc_theme_precedes_legacy_and_accepts_comments_and_trailing_comma() {
+fn jsonc_theme_precedes_legacy_and_accepts_comments_and_trailing_comma() {
     let dir = PathBuf::from(format!(
         "/tmp/opencode/crossroads-jsonc-red-{}",
         std::process::id()
@@ -157,7 +157,7 @@ fn a10c_jsonc_theme_precedes_legacy_and_accepts_comments_and_trailing_comma() {
 }
 
 #[test]
-fn a10c_explicit_save_keeps_legacy_and_auto_removes_both_without_start_migration() {
+fn explicit_save_keeps_legacy_and_auto_removes_both_without_start_migration() {
     let dir = PathBuf::from(format!(
         "/tmp/opencode/crossroads-auto-both-{}",
         std::process::id()

@@ -1,4 +1,4 @@
-"""Isolated footer stability, grouping and two-key PTY regressions (A10c)."""
+"""Isolated footer stability, grouping and two-key PTY regressions."""
 import os
 import select
 import sys
@@ -113,7 +113,7 @@ def main(binary):
         finally:
             if popup:
                 popup.abort()
-    print("A10c PTY hints: stable defaults, sanitized notices, atomic units, quoted slash and configured arrows passed")
+    print("Footer hints PTY: stable defaults, sanitized notices, atomic units, quoted slash and configured arrows passed")
 
 
 if __name__ == "__main__":
