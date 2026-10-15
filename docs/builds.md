@@ -94,8 +94,9 @@ binary is not automatically placed at that path by the build helper. The separat
 that binary at the manifest path without Rust/Cargo; it requires an explicit
 trusted asset directory. The [source build-then-link route](../README.md#installation)
 also remains available. The selected future source is
-`SimonEisenhauer/herdr-crossroads`; no public repository/tag/asset availability
-or download endpoint is established.
+`eisenhauer-dev/herdr-crossroads`; public repository access was verified on
+2026-10-15. No release tag, published binary asset or download endpoint is
+established.
 
 ## Runtime and verification limits
 

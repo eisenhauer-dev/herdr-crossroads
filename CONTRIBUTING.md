@@ -2,19 +2,25 @@
 
 ## Public contribution workflow
 
-The required public-launch policy is owner-only repository write access. Other
-contributors work in forks and submit pull requests. Updates to `main` must use
+Repository write access is limited to the owner and collaborators explicitly
+designated by the owner; currently only the owner is a collaborator. Other
+contributors work in forks and submit pull requests. Anyone may clone the public
+repository. Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
-force pushes and branch deletion must be disabled. No independent approval is
+force pushes and branch deletion are disabled. No independent approval is
 required solely to let the owner merge their own pull request. Verified public
 CI checks will be added as mandatory merge checks separately.
 
-These protections are not yet active: the repository is private, and GitHub
-currently requires a plan upgrade or public visibility for its protection APIs.
-Enable and verify the protections immediately after separately authorized public
-activation; do not enable paid services. The owner retains administrative power
-to change settings. Audit collaborators, app access, deploy keys and automation
-permissions rather than assuming branch protection alone establishes who can write.
+The repository became public on 2026-10-15. Branch protection was enabled
+immediately afterwards and read back: pull requests are required with zero
+mandatory approvals, administrator enforcement, no bypass actors, and no force
+pushes or deletion of `main`. No paid service was enabled. The owner retains
+administrative power to change settings. No pending invitations or deploy keys
+were present; Actions defaults to read-only access and cannot approve pull
+requests. Installed GitHub App access still requires owner verification because
+the current token cannot list installations. Continue auditing collaborators,
+app access, deploy keys and automation permissions rather than assuming branch
+protection alone establishes who can write.
 See GitHub's [personal repository permissions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository)
 and [protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
 
