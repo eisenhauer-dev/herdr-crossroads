@@ -1,6 +1,8 @@
-"""Install one trusted local release asset; no downloads, builds, or activation."""
+"""Install a pinned GitHub Release (or explicit local asset); never build/activate."""
 
+import gzip
 import hashlib
+import http.client
 import io
 import os
 from pathlib import Path
@@ -11,6 +13,34 @@ import secrets
 import stat
 import sys
 import tarfile
+import urllib.parse
+import urllib.request
+import zlib
+
+
+def require_https(url):
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.scheme != "https" or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None):
+        raise ValueError("release downloads require uncredentialed HTTPS URLs")
+
+
+class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_https(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download(url, limit):
+    require_https(url)
+    # No inherited proxy credentials or alternate proxy transport; use system TLS trust.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTPSRedirectHandler())
+    with opener.open(url, timeout=30) as response:
+        require_https(response.geturl())
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("release download exceeds size limit")
+    return data
 
 
 def verify_checksum(data, checksum, name):
@@ -53,13 +83,23 @@ def install():
         raise ValueError("installer must not be a symlink")
     version = runpy.run_path(str(root / "scripts/check-version.py"))["release_version"]()
     asset_dir = os.environ.get("CROSSROADS_ASSET_DIR")
-    if not asset_dir or not Path(asset_dir).is_absolute():
+    if asset_dir is not None and (not asset_dir or not Path(asset_dir).is_absolute()):
         raise ValueError("CROSSROADS_ASSET_DIR must name an absolute trusted local asset directory")
     archive_name = f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz"
-    assets = Path(asset_dir)
-    archive = (assets / archive_name).read_bytes()
-    verify_checksum(archive, (assets / (archive_name + ".sha256")).read_bytes(), archive_name)
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
+    if asset_dir is None:
+        source = f"https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v{version}/"
+        archive = download(source + archive_name, 64 * 1024 * 1024)
+        checksum = download(source + archive_name + ".sha256", 1024)
+    else:
+        assets = Path(asset_dir)
+        archive = (assets / archive_name).read_bytes()
+        checksum = (assets / (archive_name + ".sha256")).read_bytes()
+    verify_checksum(archive, checksum, archive_name)
+    with gzip.GzipFile(fileobj=io.BytesIO(archive)) as compressed:
+        expanded = compressed.read(128 * 1024 * 1024 + 1)
+    if len(expanded) > 128 * 1024 * 1024:
+        raise ValueError("expanded archive exceeds size limit")
+    with tarfile.open(fileobj=io.BytesIO(expanded), mode="r:") as package:
         members = package.getmembers()
         if (len(members) != 4 or {member.name for member in members}
                 != {"herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}
@@ -115,6 +155,7 @@ def install():
 if __name__ == "__main__":
     try:
         install()
-    except (OSError, ValueError, KeyError, UnicodeError, tarfile.TarError) as error:
-        print(f"Local binary installation failed: {error}", file=sys.stderr)
+    except (OSError, ValueError, KeyError, UnicodeError, EOFError,
+            tarfile.TarError, http.client.HTTPException, zlib.error) as error:
+        print(f"Binary installation failed: {error}", file=sys.stderr)
         sys.exit(1)

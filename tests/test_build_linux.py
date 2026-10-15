@@ -1,6 +1,7 @@
 """Exercise fixed-target packaging with fake build/PTY tools and real tar/SHA256."""
 
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -27,6 +28,7 @@ class BuildLinuxTests(unittest.TestCase):
         source = ROOT / "scripts/build-linux.sh"
         if source.exists():
             shutil.copy2(source, self.repo / "scripts/build-linux.sh")
+        shutil.copy2(ROOT / "scripts/build-provenance.py", self.repo / "scripts/build-provenance.py")
         checker = ROOT / "scripts/check-version.py"
         if checker.exists():
             shutil.copy2(checker, self.repo / "scripts/check-version.py")
@@ -47,16 +49,27 @@ class BuildLinuxTests(unittest.TestCase):
         }
         self.tool("uname", '#!/bin/sh\ncase "$1" in -s) echo "${HOST_OS:-Linux}";; -m) echo "${HOST_ARCH:-x86_64}";; esac\n')
         self.tool("cargo", '''#!/bin/sh
+test "$1" != --version || { echo 'cargo fixture'; exit 0; }
+test "$1" != clean || exit "${CLEAN_STATUS:-0}"
 printf 'cargo|%s\n' "$*" >> "$CALL_LOG"
 test "${BUILD_STATUS:-0}" = 0 || exit "$BUILD_STATUS"
 test "${OMIT_BINARY:-0}" = 0 || exit 0
 mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release"
 printf 'fresh binary\n' > "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/herdr-crossroads"
 chmod "${BINARY_MODE:-755}" "$CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/release/herdr-crossroads"
+for arg in "$@"; do
+    case "$arg" in link-arg=-Wl,-Map=*)
+        test "${OMIT_MAP:-0}" = 0 || continue
+        map=${arg#link-arg=-Wl,-Map=}
+        printf 'map for %s /usr/lib/Scrt1.o\n' "$PWD" > "$map"
+    ;; esac
+done
+printf 'cc -Wl,-Map=fixture\nLLD fixture\n'
 ''')
+        self.tool("gcc", '#!/bin/sh\ncase "$1" in --version) echo "gcc fixture";; *) echo "${1#-print-file-name=}";; esac\n')
         self.tool("rustc", '#!/bin/sh\nprintf "%s\\n" "rustc 1.99.0 (b940084d7 2026-09-28)"\n')
         self.tool("python3", f'''#!/bin/sh
-case "$1" in scripts/check-version.py|scripts/third-party-notices.py) exec "{sys.executable}" "$@";; esac
+case "$1" in scripts/check-version.py|scripts/third-party-notices.py|scripts/build-provenance.py) exec "{sys.executable}" "$@";; esac
 printf 'pty|%s\n' "$*" >> "$CALL_LOG"
 test "$(cat "$2")" = 'fresh binary' || exit 98
 test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
@@ -68,7 +81,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         self.binary.parent.mkdir(parents=True)
         self.binary.write_text("stale binary\n")
         self.binary.chmod(0o755)
-        for name in [ARCHIVE, ARCHIVE + ".sha256"]:
+        for name in [ARCHIVE, ARCHIVE + ".sha256", ARCHIVE.removesuffix('.tar.gz') + '.provenance.json', ARCHIVE.removesuffix('.tar.gz') + '.link.map']:
             (self.output / name).write_text("stale artifact\n")
         (self.output / "unrelated.txt").write_text("keep\n")
         (self.output / f"herdr-crossroads-0.0.9-{TARGET}.tar.gz").write_text("prior version\n")
@@ -90,13 +103,16 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         return self.log.read_text().splitlines() if self.log.exists() else []
 
     def expected_calls(self):
-        return [f"cargo|build --release --locked --target {TARGET}", *[
+        stem = self.output / ARCHIVE.removesuffix('.tar.gz')
+        return [f"cargo|rustc --release --locked --bin herdr-crossroads --target {TARGET} -- --print link-args -C link-arg=-Wl,-Map={stem}.link.map -C link-arg=-Wl,--trace -C link-arg=-Wl,-v", *[
             f"pty|tests/pty_{gate}.py {self.binary}" for gate in GATES
         ]]
 
     def assert_no_artifact(self):
         self.assertFalse((self.output / ARCHIVE).exists(), "failed build must remove stale archive")
         self.assertFalse((self.output / (ARCHIVE + ".sha256")).exists())
+        for suffix in ['.provenance.json', '.link.map']:
+            self.assertFalse((self.output / (ARCHIVE.removesuffix('.tar.gz') + suffix)).exists())
         self.assertEqual(list(self.output.glob("*.tmp")), [])
         self.assertEqual((self.output / "unrelated.txt").read_text(), "keep\n")
 
@@ -123,6 +139,17 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
                          f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {ARCHIVE}\n")
         self.assertIn(ARCHIVE, result.stdout)
         self.assertNotIn(str(self.repo), (self.output / (ARCHIVE + ".sha256")).read_text())
+
+    def test_exact_build_has_fresh_binary_bound_provenance_outside_archive(self):
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stem = ARCHIVE.removesuffix('.tar.gz')
+        evidence = self.output / f"{stem}.provenance.json"
+        self.assertTrue(evidence.exists(), "successful packaging requires current-build provenance")
+        data = json.loads(evidence.read_text())
+        self.assertEqual(data["binary"]["sha256"], hashlib.sha256(self.binary.read_bytes()).hexdigest())
+        self.assertEqual(data["map"]["sha256"], hashlib.sha256((self.output / f"{stem}.link.map").read_bytes()).hexdigest())
+        self.assertNotIn(str(self.repo), evidence.read_text())
 
     def test_version_mismatch_blocks_build_and_all_gates(self):
         plugin = self.repo / "herdr-plugin.toml"
@@ -224,8 +251,26 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         self.assert_no_artifact()
         self.assertNotIn(ARCHIVE, result.stdout)
 
+    def test_package_clean_failure_cannot_replay_cached_provenance(self):
+        self.env["CLEAN_STATUS"] = "29"
+        self.assertEqual(self.build().returncode, 29)
+        self.assertEqual(self.calls(), [])
+        self.assert_no_artifact()
+
+    def test_provenance_collection_failure_blocks_ptys_and_packaging(self):
+        self.tool("gcc", "#!/bin/sh\nexit 31\n")
+        self.assertEqual(self.build().returncode, 31)
+        self.assertEqual(self.calls(), self.expected_calls()[:1])
+        self.assert_no_artifact()
+
     def test_success_without_new_binary_cannot_test_stale_binary(self):
         self.env["OMIT_BINARY"] = "1"
+        self.assertNotEqual(self.build().returncode, 0)
+        self.assertEqual(self.calls(), self.expected_calls()[:1])
+        self.assert_no_artifact()
+
+    def test_success_without_new_map_cannot_reuse_stale_provenance(self):
+        self.env["OMIT_MAP"] = "1"
         self.assertNotEqual(self.build().returncode, 0)
         self.assertEqual(self.calls(), self.expected_calls()[:1])
         self.assert_no_artifact()

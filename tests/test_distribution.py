@@ -5,7 +5,8 @@ src/app/api/session.rs:16-60, src/app/api/plugins/panes.rs:11-41,
 src/app/popup.rs:116-117,273-289 and src/cli/plugin.rs.
 Herdr v0.9.5 src/cli/plugin.rs, src/app/api/plugins/mod.rs and
 src/plugin_installations.rs define direct registration and generation leases.
-No fake server, public downloads, personal session, or Rust/Cargo is used.
+Default mode is offline. Explicit --public-ref/--public-commit enables public
+GitHub checkout/download acceptance on 0.9.5; never uses a personal session.
 """
 
 import argparse
@@ -43,8 +44,46 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def prepare_fixture(base, asset_dir):
-    """Copy original artifacts unchanged; create only a test-only trailer variant."""
+def public_version(ref, commit):
+    """Require a reviewed release tag and exact commit, never a floating branch."""
+    if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", ref or ""):
+        raise ValueError("public mode requires a canonical vX.Y.Z release ref")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit or ""):
+        raise ValueError("public mode requires the reviewed full lowercase commit SHA")
+    return ref[1:]
+
+
+def enable_public_downloads(env):
+    """Only called by explicit public mode; no inherited credentials/config."""
+    env.pop("CROSSROADS_ASSET_DIR", None)
+    env["GIT_ALLOW_PROTOCOL"] = "https"
+    Path(env["GIT_CONFIG_GLOBAL"]).write_text(
+        '[protocol]\n    allow = never\n[protocol "https"]\n    allow = always\n'
+        '[core]\n    hooksPath = /dev/null\n[credential]\n    helper =\n')
+
+
+def install_public(command, herdr_argv, ref, commit):
+    """Verify the exact release tag, then run hooks only from the approved SHA."""
+    public_version(ref, commit)
+    tag = "refs/tags/" + ref
+    lookup = command(["git", "ls-remote", "--exit-code", f"https://github.com/{SOURCE}.git",
+                      tag, tag + "^{}"])
+    if lookup.returncode != 0:
+        raise ValueError("public release tag lookup failed")
+    refs = {}
+    for line in lookup.stdout.splitlines():
+        fields = line.split("\t")
+        if (len(fields) != 2 or not re.fullmatch(r"[0-9a-f]{40}", fields[0])
+                or fields[1] not in [tag, tag + "^{}"] or fields[1] in refs):
+            raise ValueError("ambiguous or malformed public release tag lookup")
+        refs[fields[1]] = fields[0]
+    if tag not in refs or refs.get(tag + "^{}", refs[tag]) != commit:
+        raise ValueError("public release tag does not resolve to the approved commit")
+    return command([*herdr_argv, "plugin", "install", SOURCE, "--yes", "--ref", commit])
+
+
+def prepare_fixture(base, asset_dir, public=None):
+    """Copy reference artifacts unchanged; add a trailer variant only offline."""
     repo, assets = base / "source", base / "assets"
     (repo / "scripts").mkdir(parents=True)
     assets.mkdir()
@@ -54,8 +93,9 @@ def prepare_fixture(base, asset_dir):
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
     # Dimensions belong only to the temporary fixture, not the project manifest.
     manifest = repo / "herdr-plugin.toml"
-    manifest.write_text(manifest.read_text() + '\nwidth = "90%"\nheight = "90%"\n')
-    name = ARCHIVE.format("0.1.0")
+    if public is None:
+        manifest.write_text(manifest.read_text() + '\nwidth = "90%"\nheight = "90%"\n')
+    name = ARCHIVE.format(public or "0.1.0")
     for filename in [name, name + ".sha256"]:
         shutil.copy2(asset_dir / filename, assets / filename)
     archive = assets / name
@@ -73,6 +113,8 @@ def prepare_fixture(base, asset_dir):
         assert package.extractfile("herdr-crossroads.sha256").read() == (
             f"{digest(original)}  herdr-crossroads\n".encode())
     assert original[:4] == b"\x7fELF"
+    if public is not None:
+        return repo, assets, {public: original}
     # Same validated runtime, NOT a newly built/released version or update feature.
     variant = original + b"\nCrossroads test-only distribution fixture 0.1.1\n"
     name = ARCHIVE.format("0.1.1")
@@ -229,10 +271,11 @@ def stop_owned(process):
         process.wait(timeout=3)
 
 
-def run_case(herdr, asset_dir):
+def run_case(herdr, asset_dir, public_ref=None, public_commit=None):
+    public = public_version(public_ref, public_commit) if public_ref else None
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-native-") as temporary:
         base = Path(temporary)
-        repo, assets, payloads = prepare_fixture(base, asset_dir)
+        repo, assets, payloads = prepare_fixture(base, asset_dir, public)
         tools = base / "bin"
         tools.mkdir()
         for name, executable in [("herdr", herdr), ("python3", Path(sys.executable)),
@@ -265,6 +308,8 @@ def run_case(herdr, asset_dir):
             '[protocol]\n    allow = never\n[protocol "file"]\n    allow = always\n'
             '[core]\n    hooksPath = /dev/null\n'
             '[user]\n    name = Distribution Fixture\n    email = fixture@example.invalid\n')
+        if public:
+            enable_public_downloads(env)
         session_name = "distribution"
         session_dir = Path(env["XDG_CONFIG_HOME"]) / "herdr/sessions" / session_name
         api_path = session_dir / "herdr.sock"
@@ -279,7 +324,7 @@ def run_case(herdr, asset_dir):
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                        text=True, start_new_session=True)
             try:
-                stdout, stderr = process.communicate(timeout=30)
+                stdout, stderr = process.communicate(timeout=180 if public else 30)
             except BaseException:
                 # CLI hooks/Git descendants share this owned group. Do not leave
                 # them writing into a fixture after its directory is removed.
@@ -316,7 +361,8 @@ def run_case(herdr, asset_dir):
         def snapshot():
             return result("session.snapshot")["snapshot"]
 
-        screen = Screen()
+        rows, cols = (50, 200) if public else (40, 160)
+        screen = Screen(rows=rows, cols=cols)
 
         def drain(duration=0.15):
             deadline = time.monotonic() + duration
@@ -391,18 +437,24 @@ def run_case(herdr, asset_dir):
                 version = command([str(herdr), "--version"])
                 assert version.returncode == 0 and re.fullmatch(r"herdr 0\.9\.(?:3|5)\s*", version.stdout), version
                 runtime_version = version.stdout.strip().split()[1]
+                if public:
+                    assert runtime_version == "0.9.5", "public acceptance requires Herdr 0.9.5"
                 commits = {}
-                for args in [["init", "--quiet"], ["add", "."], ["commit", "--quiet", "-m", "Local distribution fixture"],
-                             ["tag", "v0.1.0"]]:
+                for args in ([] if public else [["init", "--quiet"], ["add", "."], ["commit", "--quiet", "-m", "Local distribution fixture"],
+                             ["tag", "v0.1.0"]]):
                     outcome = command([str(tools / "git"), *args], cwd=repo)
                     assert outcome.returncode == 0, outcome.stderr
-                commits["0.1.0"] = command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
-                fixture_next_version(repo)
-                for args in [["add", "."], ["commit", "--quiet", "-m", "Test-only trailer fixture"], ["tag", "v0.1.1"]]:
+                if not public:
+                    commits["0.1.0"] = command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+                    fixture_next_version(repo)
+                for args in ([] if public else [["add", "."], ["commit", "--quiet", "-m", "Test-only trailer fixture"], ["tag", "v0.1.1"]]):
                     outcome = command([str(tools / "git"), *args], cwd=repo)
                     assert outcome.returncode == 0, outcome.stderr
-                commits["0.1.1"] = command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
-                source_before = command([str(tools / "git"), "status", "--porcelain"], cwd=repo).stdout
+                if public:
+                    commits[public] = public_commit
+                else:
+                    commits["0.1.1"] = command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+                    source_before = command([str(tools / "git"), "status", "--porcelain"], cwd=repo).stdout
                 artifact_before = {p.name: digest(p.read_bytes()) for p in assets.iterdir()}
                 server = subprocess.Popen([*argv, "server"], cwd=base, env=env,
                                           stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
@@ -410,7 +462,7 @@ def run_case(herdr, asset_dir):
                 assert stat.S_ISSOCK(api_path.stat().st_mode) and stat.S_ISSOCK(client_path.stat().st_mode)
                 assert result("ping")["version"] == version.stdout.strip().split()[1]
                 master, slave = pty.openpty()
-                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 160, 0, 0))
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
                 client = subprocess.Popen([*argv, "client"], cwd=base, env=env, stdin=slave,
                                           stdout=slave, stderr=slave, start_new_session=True,
                                           preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
@@ -428,8 +480,13 @@ def run_case(herdr, asset_dir):
                 assert roots[0] != roots[1]
                 assert len(snapshot()["panes"]) <= 3, "fixture table crop assumes at most three root shells"
                 retained = []
-                for version in ["0.1.0", "0.1.1", "0.1.0"]:
-                    cli("plugin", "install", SOURCE, "--yes", "--ref", "v" + version)
+                for version in ([public] if public else ["0.1.0", "0.1.1", "0.1.0"]):
+                    requested_ref = public_commit if public else "v" + version
+                    if public:
+                        installed_result = install_public(command, argv, public_ref, public_commit)
+                        assert installed_result.returncode == 0, (installed_result.stdout, installed_result.stderr)
+                    else:
+                        cli("plugin", "install", SOURCE, "--yes", "--ref", requested_ref)
                     plugins = result("plugin.list")["plugins"]
                     installed = [p for p in plugins if p["plugin_id"] == "herdr-crossroads"]
                     assert len(installed) == 1, plugins
@@ -439,7 +496,7 @@ def run_case(herdr, asset_dir):
                     source = plugin["source"]
                     assert source["kind"] == "github"
                     assert source["owner"] == "eisenhauer-dev" and source["repo"] == "herdr-crossroads"
-                    assert source["requested_ref"] == "v" + version and source["resolved_commit"] == commits[version]
+                    assert source["requested_ref"] == requested_ref and source["resolved_commit"] == commits[version]
                     managed = Path(source["managed_path"]).resolve(strict=True)
                     assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"])) and managed.is_relative_to(base)
                     binary = managed / "target/release/herdr-crossroads"
@@ -469,8 +526,11 @@ def run_case(herdr, asset_dir):
                     navigate(*roots)
                     print(json.dumps({"version": version, "ref": source["requested_ref"],
                                       "commit": source["resolved_commit"], "binary_sha256": digest(binary.read_bytes()),
-                                      "archive_sha256": digest((assets / ARCHIVE.format(version)).read_bytes()),
-                                      "test_only_version": version == "0.1.1",
+                                      "reference_archive_sha256" if public else "archive_sha256":
+                                          digest((assets / ARCHIVE.format(version)).read_bytes()),
+                                      "test_only_version": not public and version == "0.1.1",
+                                      "public_download": bool(public),
+                                      **({"verified_release_tag": public_ref} if public else {}),
                                       "focused_pane_id": roots[1], "native_navigation": "passed"}), flush=True)
                 cli("plugin", "uninstall", "herdr-crossroads")
                 assert not any(p["plugin_id"] == "herdr-crossroads" for p in result("plugin.list")["plugins"])
@@ -480,14 +540,15 @@ def run_case(herdr, asset_dir):
                     # 0.9.5 servers pin generations until shutdown; unlink does
                     # not reclaim a checkout that a server could still be using.
                     assert json.loads(registry.read_text()) == []
-                    assert binary.read_bytes() == payloads["0.1.0"]
+                    assert binary.read_bytes() == payloads[public or "0.1.0"]
                     for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
                         assert (binary.parent / name).read_bytes() == (repo / name).read_bytes()
                 assert all(p.read_text() == "owned fixture data\n" for p in retained)
                 assert not denied.exists()
                 assert artifact_before == {p.name: digest(p.read_bytes()) for p in assets.iterdir()}
-                assert source_before == command([str(tools / "git"), "status", "--porcelain"], cwd=repo).stdout
-                assert commits["0.1.1"] == command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+                if not public:
+                    assert source_before == command([str(tools / "git"), "status", "--porcelain"], cwd=repo).stdout
+                    assert commits["0.1.1"] == command([str(tools / "git"), "rev-parse", "HEAD"], cwd=repo).stdout.strip()
             except BaseException:
                 log.flush()
                 print((base / "server.log").read_text(errors="replace")[-8000:], file=sys.stderr)
@@ -519,14 +580,22 @@ def run_case(herdr, asset_dir):
                         assert error.errno in [errno.ENOENT, errno.ECONNREFUSED], error
                     else:
                         raise AssertionError(f"owned socket still reachable: {path}")
-        print("PASS native local installation, search/focus, replacement, version return, uninstall and shutdown")
+        print("PASS native public installation, search/focus, uninstall and shutdown; no second-runtime upgrade tested"
+              if public else "PASS native local installation, search/focus, replacement, version return, uninstall and shutdown")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--herdr-bin", type=Path, required=True)
     parser.add_argument("--asset-dir", type=Path, required=True)
+    parser.add_argument("--public-ref", help="OPT IN to public GitHub checkout and Release downloads (vX.Y.Z)")
+    parser.add_argument("--public-commit", help="reviewed full commit SHA required with --public-ref")
     args = parser.parse_args()
+    if args.public_ref is not None or args.public_commit is not None:
+        try:
+            public_version(args.public_ref, args.public_commit)
+        except ValueError as error:
+            parser.error(str(error))
     if not args.herdr_bin.is_absolute() or not args.asset_dir.is_absolute():
         parser.error("explicit absolute real Herdr binary and trusted assets required")
     herdr = args.herdr_bin.resolve(strict=True)
@@ -536,7 +605,7 @@ def main():
             parser.error("Herdr must be a real executable ELF, not a PATH shim")
     if not assets.is_dir() or sys.flags.optimize:
         parser.error("asset directory required; assertions must remain enabled (no python -O)")
-    run_case(herdr, assets)
+    run_case(herdr, assets, args.public_ref, args.public_commit)
 
 
 if __name__ == "__main__":

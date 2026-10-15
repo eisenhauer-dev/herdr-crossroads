@@ -60,6 +60,7 @@ jobs:
             "python3 tests/test_git_hooks.py",
             "python3 tests/test_version.py",
             "python3 tests/test_build_linux.py",
+            "python3 tests/test_build_provenance.py",
             "python3 tests/test_install_binary.py",
             "python3 tests/test_distribution_helpers.py",
             "sh scripts/build-linux.sh",
@@ -88,6 +89,8 @@ jobs:
           path: |
             target/builds/${{ steps.package.outputs.artifact }}.tar.gz
             target/builds/${{ steps.package.outputs.artifact }}.tar.gz.sha256
+            target/builds/${{ steps.package.outputs.artifact }}.provenance.json
+            target/builds/${{ steps.package.outputs.artifact }}.link.map
           if-no-files-found: error
           retention-days: 7
 ''')

@@ -1,14 +1,18 @@
-"""Local installer tests: synthetic ELF bytes, no Herdr or Rust invocation."""
+"""Installer tests: synthetic ELF and mocked HTTP, no network, Herdr or Rust."""
 
 import hashlib
 import io
+import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
+import urllib.error
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,8 +156,8 @@ class InstallBinaryTests(unittest.TestCase):
         (self.assets / ARCHIVE).rename(self.assets / ARCHIVE.replace("0.1.0", "0.0.9"))
         self.reject()
 
-    def test_environment_and_each_asset_are_required(self):
-        del self.env["CROSSROADS_ASSET_DIR"]
+    def test_explicit_empty_directory_and_each_asset_are_required(self):
+        self.env["CROSSROADS_ASSET_DIR"] = ""
         self.assertIn("CROSSROADS_ASSET_DIR", self.reject().stderr)
         self.env["CROSSROADS_ASSET_DIR"] = str(self.assets)
         for name in [ARCHIVE, ARCHIVE + ".sha256"]:
@@ -161,6 +165,126 @@ class InstallBinaryTests(unittest.TestCase):
                 self.package()
                 (self.assets / name).unlink()
                 self.reject()
+
+    def public_install(self, failure=None, response_url=None, fail_checksum=False):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        requests = []
+
+        def open_url(url, timeout):
+            requests.append((url, timeout))
+            if failure and (not fail_checksum or url.endswith(".sha256")):
+                raise failure
+            name = url.rsplit("/", 1)[1]
+            response = io.BytesIO((self.assets / name).read_bytes())
+            response.geturl = lambda: response_url or url
+            return response
+
+        with patch.dict(os.environ, {"PATH": ""}, clear=True), patch(
+                "urllib.request.OpenerDirector.open", side_effect=open_url):
+            module["install"]()
+        return requests
+
+    def test_public_default_downloads_only_pinned_archive_and_checksum(self):
+        requests = self.public_install()
+        base = "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v0.1.0/"
+        self.assertEqual([url for url, _ in requests], [base + ARCHIVE, base + ARCHIVE + ".sha256"])
+        self.assertTrue(all(0 < timeout <= 30 for _, timeout in requests))
+        self.assertEqual(self.binary.read_bytes(), ELF)
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
+
+    def test_public_default_uses_agreed_version_not_latest_or_older_asset(self):
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = self.repo / name
+            path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "2.3.4"'))
+        name = ARCHIVE.replace("0.1.0", "2.3.4")
+        data = (self.assets / ARCHIVE).read_bytes()
+        (self.assets / name).write_bytes(data)
+        (self.assets / (name + ".sha256")).write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+        requests = self.public_install(response_url="https://release-assets.githubusercontent.com/asset?signature=fixture")
+        self.assertEqual([url for url, _ in requests], [
+            "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v2.3.4/" + name,
+            "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v2.3.4/" + name + ".sha256"])
+        self.assertEqual(self.binary.read_bytes(), ELF)
+
+    def test_public_network_failures_and_missing_assets_preserve_previous_binary(self):
+        for error in [urllib.error.HTTPError("https://github.com/asset", 404, "missing", {}, None),
+                      urllib.error.URLError("offline"), TimeoutError("timed out")]:
+            if isinstance(error, urllib.error.HTTPError):
+                self.addCleanup(error.close)
+            with self.subTest(error=error), self.assertRaises((OSError, ValueError)):
+                self.public_install(failure=error)
+            self.assertEqual(self.binary.read_bytes(), b"previous binary")
+        missing_checksum = urllib.error.HTTPError("https://github.com/checksum", 404, "missing checksum", {}, None)
+        self.addCleanup(missing_checksum.close)
+        with self.assertRaisesRegex(OSError, "missing checksum"):
+            self.public_install(failure=missing_checksum, fail_checksum=True)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_public_unsupported_host_and_invalid_local_input_never_download(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        for asset in [None, "", "relative"]:
+            env = {} if asset is None else {"CROSSROADS_ASSET_DIR": asset}
+            with patch.dict(os.environ, env, clear=True), patch(
+                    "urllib.request.OpenerDirector.open") as network:
+                if asset is None:
+                    with patch("platform.machine", return_value="aarch64"), self.assertRaisesRegex(ValueError, "hosts"):
+                        module["install"]()
+                else:
+                    with self.assertRaisesRegex(ValueError, "CROSSROADS_ASSET_DIR"):
+                        module["install"]()
+                network.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_explicit_local_directory_never_uses_public_download(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        with patch.dict(os.environ, self.env, clear=True), patch(
+                "urllib.request.OpenerDirector.open") as network:
+            module["install"]()
+            network.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), ELF)
+
+    def test_public_invalid_checksum_preserves_previous_binary(self):
+        (self.assets / (ARCHIVE + ".sha256")).write_bytes(b"bad hash\n")
+        with self.assertRaisesRegex(ValueError, "malformed checksum"):
+            self.public_install()
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_public_download_size_limits_and_redirect_boundaries(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        for url in ["http://github.com/asset", "https://user:password@github.com/asset",
+                    "file:///asset"]:
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "HTTPS"):
+                self.public_install(response_url=url)
+            self.assertEqual(self.binary.read_bytes(), b"previous binary")
+        response = io.BytesIO(b"too large")
+        response.geturl = lambda: "https://release-assets.githubusercontent.com/asset?signature=fixture"
+        with patch("urllib.request.OpenerDirector.open", return_value=response):
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                module["download"]("https://github.com/asset", 4)
+        handler = module["HTTPSRedirectHandler"]()
+        import urllib.request
+        request = urllib.request.Request("https://github.com/asset")
+        for url in ["http://example.invalid/asset", "https://user@example.invalid/asset"]:
+            with self.subTest(redirect=url), self.assertRaisesRegex(ValueError, "HTTPS"):
+                handler.redirect_request(request, None, 302, "Found", {}, url)
+        redirected = handler.redirect_request(request, None, 302, "Found", {},
+                                             "https://release-assets.githubusercontent.com/asset?signature=fixture")
+        self.assertTrue(redirected.full_url.startswith("https://release-assets.githubusercontent.com/"))
+
+    def test_oversized_expanded_archive_preserves_previous_binary(self):
+        import gzip
+        (self.assets / ARCHIVE).write_bytes(gzip.compress(bytes(128 * 1024 * 1024 + 1)))
+        self.archive_checksum()
+        result = self.reject()
+        self.assertIn("expanded archive exceeds size limit", result.stderr)
+
+    def test_truncated_downloaded_gzip_is_handled_without_traceback(self):
+        archive = self.assets / ARCHIVE
+        archive.write_bytes(archive.read_bytes()[:-5])
+        self.archive_checksum()
+        result = self.reject()
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_archive_hash_and_canonical_checksum_required(self):
         for text in ["0" * 64 + f"  {ARCHIVE}\n", "bad\n",
@@ -242,12 +366,12 @@ class InstallBinaryTests(unittest.TestCase):
 
     def test_failed_atomic_replace_preserves_previous_and_cleans_staging(self):
         result = self.reject("import os; os.replace=lambda *a, **k: (_ for _ in ()).throw(OSError('forced replace failure')); ")
-        self.assertEqual(result.stderr, "Local binary installation failed: forced replace failure\n")
+        self.assertEqual(result.stderr, "Binary installation failed: forced replace failure\n")
         self.assertNotIn("Traceback", result.stderr)
 
     def test_failed_staging_sync_preserves_previous(self):
         result = self.reject("import os; os.fsync=lambda *a: (_ for _ in ()).throw(OSError('forced staging failure')); ")
-        self.assertEqual(result.stderr, "Local binary installation failed: forced staging failure\n")
+        self.assertEqual(result.stderr, "Binary installation failed: forced staging failure\n")
         self.assertNotIn("Traceback", result.stderr)
 
     def test_failed_binary_replace_keeps_notices_and_previous_binary(self):
