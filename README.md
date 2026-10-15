@@ -125,7 +125,7 @@ checksum; it does not download or compile anything. Linking does not execute thi
 hook, so the source build-then-link route above is unchanged. See
 [local binary installation](docs/installation.md) for safety checks, requirements,
 and isolated tests. The selected future source is
-`SimonEisenhauer/herdr-crossroads`, but no public binary endpoint or published
+`eisenhauer-dev/herdr-crossroads`, but no public binary endpoint or published
 release is established; `herdr plugin install herdr-crossroads` is not valid
 shorthand. Native local managed installation was tested; see
 [its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
