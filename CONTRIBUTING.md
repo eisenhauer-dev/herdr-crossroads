@@ -8,8 +8,13 @@ contributors work in forks and submit pull requests. Anyone may clone the public
 repository. Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
 force pushes and branch deletion are disabled. No independent approval is
-required solely to let the owner merge their own pull request. Verified public
-CI checks will be added as mandatory merge checks separately.
+required solely to let the owner merge their own pull request. The `Linux gates`
+check from the GitHub Actions app is mandatory for all pull requests targeting
+`main`, including fork contributions and the owner's own branches. Branches must
+be up to date with `main` before merging. Pending, missing or failed required
+checks block merging, including for administrators. GitHub also treats `skipped`
+and `neutral` check conclusions as passing; do not weaken the public CI job with
+conditions that skip its gates. See [required status checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging).
 
 The repository became public on 2026-10-15. Branch protection was enabled
 immediately afterwards and read back: pull requests are required with zero
@@ -234,11 +239,15 @@ live checkout. `python3 tests/test_distribution_helpers.py` is also required
 locally and in CI; it checks fixture assets/versions and current-cell parsing
 without invoking Herdr. Both real-Herdr sandbox harnesses remain opt-in and outside CI.
 Static checks and successful local gate runs are not proof of a CI execution.
-Public CI run/artifact evidence and mandatory merge-check enforcement remain outstanding:
-no required-check ruleset is configured by this change. Once public CI is verified,
-configure the **Linux gates** check as required before merging; local hooks alone
-cannot enforce it. No private-repository Actions execution is claimed or required
-for this local preparation.
+On 2026-10-15, the public [push run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38764985641)
+and [pull-request run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38765043636)
+passed their Linux gates, including binary packaging and artifact upload.
+Downloading and independently verifying those uploaded artifacts remains a
+separate check. Branch protection now requires **Linux gates** from GitHub Actions
+and an up-to-date branch before merging into `main`, including for administrators;
+see the [contribution workflow](#public-contribution-workflow) for the accepted
+check-conclusion limits. Local hooks alone cannot enforce this protection.
+No private-repository Actions execution is claimed or required.
 
 ## Making a change
 
