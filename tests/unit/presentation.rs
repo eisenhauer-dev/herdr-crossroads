@@ -306,7 +306,7 @@ fn all_contexts_keep_defaults_stable_and_oversized_custom_lists_are_errors() {
 }
 
 #[test]
-fn a10c_all_displayed_arrows_are_symbols_but_identity_is_canonical() {
+fn all_displayed_arrows_are_symbols_but_identity_is_canonical() {
     use crate::keymap::{Context, Keymap};
     for (syntax, display) in [("Up", "↑"), ("Down", "↓"), ("Left", "←"), ("Right", "→")] {
         let (map, errors) = Keymap::parse(&format!(

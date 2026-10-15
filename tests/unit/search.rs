@@ -4,7 +4,7 @@ use crate::selection::Mode;
 use crate::test_support::ui;
 
 #[test]
-fn a10c_alt_text_is_ignored_in_both_searches() {
+fn alt_text_is_ignored_in_both_searches() {
     for help in [false, true] {
         let mut state = ui();
         if help {
@@ -29,7 +29,7 @@ fn a10c_alt_text_is_ignored_in_both_searches() {
 }
 
 #[test]
-fn a10c_ctrl_j_and_h_are_not_search_enter_or_backspace() {
+fn ctrl_j_and_h_are_not_search_enter_or_backspace() {
     for help in [false, true] {
         let mut state = ui();
         if help {

@@ -613,7 +613,7 @@ fn source_row_preserves_filename_dims_only_path_and_clips_by_unicode_cells() {
 }
 
 #[test]
-fn r2_source_path_requires_a_visible_grapheme_before_clipping_ellipsis() {
+fn source_path_requires_a_visible_grapheme_before_clipping_ellipsis() {
     use ratatui::buffer::CellWidth;
     for first in ["a", "路", "e\u{301}", "👩\u{200d}💻"] {
         let source = std::path::PathBuf::from(format!("{first}long-directory/x"));
@@ -651,7 +651,7 @@ fn r2_source_path_requires_a_visible_grapheme_before_clipping_ellipsis() {
 }
 
 #[test]
-fn r3_custom_characters_require_visible_standalone_text() {
+fn custom_characters_require_visible_standalone_text() {
     for text in [
         "\0",
         "\u{7f}",
@@ -748,7 +748,7 @@ fn r3_custom_characters_require_visible_standalone_text() {
 }
 
 #[test]
-fn r3_collision_diagnostics_distinguish_glyphs_from_special_keys() {
+fn collision_diagnostics_distinguish_glyphs_from_special_keys() {
     let (map, errors) = Keymap::parse(
         r#"{"select":{"next_row":["↓"],"previous_row":["Down"],"open_help":["F1"]}}"#,
     );
@@ -787,7 +787,7 @@ fn r3_collision_diagnostics_distinguish_glyphs_from_special_keys() {
 }
 
 #[test]
-fn r2_arrow_glyph_configuration_is_literal_not_the_special_arrow_key() {
+fn arrow_glyph_configuration_is_literal_not_the_special_arrow_key() {
     assert_eq!(Key::parse("↓"), Some(Key::Char('↓')));
     assert_eq!(Key::parse("Down"), Some(Key::Down));
     let (map, errors) = Keymap::parse(r#"{"select":{"next_row":["↓"]}}"#);
@@ -1382,7 +1382,7 @@ fn oversized_loaded_actions_have_one_pathless_list_and_keep_other_diagnostics() 
 }
 
 #[test]
-fn a10c_defined_key_limit_precedes_dedup_and_keeps_diagnostics() {
+fn defined_key_limit_precedes_dedup_and_keeps_diagnostics() {
     for keys in [r#"["J","K","L"]"#, r#"["J","J","J"]"#] {
         let (map, errors) = Keymap::parse(&format!(r#"{{"select":{{"next_row":{keys}}}}}"#));
         assert_eq!(errors, [crate::keymap::KEY_LIMIT_HINT]);
@@ -1408,7 +1408,7 @@ fn a10c_defined_key_limit_precedes_dedup_and_keeps_diagnostics() {
 }
 
 #[test]
-fn a10c_defaults_quit_and_search_q_are_context_specific() {
+fn defaults_quit_and_search_q_are_context_specific() {
     use crate::selection::Mode;
     let map = Keymap::default();
     assert_eq!(map.labels(Context::Help, "close"), "Esc/q");
