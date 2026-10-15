@@ -250,6 +250,25 @@ upgrade/return compatibility or run the local synthetic negative-asset cases.
 The emitted archive hash identifies the reviewed reference archive; binary bytes
 are compared with that reference. Local fixture results remain separate evidence.
 
+## Dual-profile local acceptance
+
+On 2026-10-16 both opt-in harnesses passed again with Herdr 0.9.5 and the
+repackaged dual-builder notice inventory. The CLI harness passed all five local
+success/failure cases. The native harness passed installation, popup search and
+exact target focus, replacement with the test-only 0.1.1 trailer fixture, return
+to 0.1.0, notice retention, uninstall and owned shutdown. Personal configuration
+and sessions were untouched; no network or Rust/Cargo ran in the sandbox.
+
+| Recorded asset | SHA256 |
+| --- | --- |
+| 0.1.0 archive | `753dd33d796804d14474abb50c6cf8745cc82cd51d21f818e9a19662f5fef111` |
+| 0.1.0 binary | `146d556e5afee59c61b0664b85457b16b31764d0662062ce553edc4374248c1c` |
+| Canonical notices | `08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174` |
+
+This is local distribution evidence, not execution of the public download mode
+or a newly released runtime upgrade. The public tag/assets and acceptance remain
+pending. Earlier local-only-notice results below are historical evidence.
+
 ## Native distribution acceptance
 
 `tests/test_distribution.py` is a separate, opt-in **real Herdr 0.9.3 or 0.9.5 server and

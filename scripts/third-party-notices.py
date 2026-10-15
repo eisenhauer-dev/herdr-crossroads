@@ -30,21 +30,8 @@ def fingerprint():
     return hashlib.sha256(data).hexdigest()
 
 
-def system_notices():
-    output = ["<h1>System startup and runtime provenance</h1>",
-              "<p>Installed native GCC driver candidates, resolved paths, file hashes "
-              "and Debian/Ubuntu package ownership follow. This is current-builder "
-              "provenance, not a historical linker map or proof that every archive "
-              "member was linked. Shared libraries are not bundled. Full package-wide "
-              "copyright records include unrelated architectures/languages; their "
-              "inclusion does not make all their licenses apply to Crossroads.</p>",
-              "<p>GCC's installed record explicitly covers libgcc and crtstuff.c "
-              "under GPL-3.0-or-later with GCC Runtime Library Exception 3.1. "
-              "The exact glibc source headers below additionally establish "
-              "unlimited linking/distribution exceptions for eight named startup "
-              "and nonshared sources. Those exceptions do not extend to other "
-              "glibc sources or versions. Final matching ELF/link-map review must "
-              "verify which sources actually contribute to the binary.</p>"]
+def installed_system():
+    candidates = []
     owners = set()
     for name in ["Scrt1.o", "crti.o", "crtn.o", "crtbeginS.o", "crtendS.o",
                  "libc.so", "libc_nonshared.a", "libgcc.a", "libgcc_eh.a", "libgcc_s.so",
@@ -55,40 +42,71 @@ def system_notices():
             raise ValueError(f"ambiguous package ownership: {path}")
         owner = ownership.split(": ", 1)[0]
         owners.add(owner)
-        if name == "Scrt1.o":
-            source = command("dpkg-query", "-W", "-f=${source:Package} ${source:Version}", owner)
-            evidence = ROOT / "LICENSES/glibc-2.43-2ubuntu2.4-startup.txt"
-            text = evidence.read_text()
-            if text.splitlines()[0] != "Source: " + source:
-                raise ValueError("glibc startup source evidence does not match installed source package")
-            output += ["<h2>Verified glibc startup source exceptions</h2>",
-                       f"<p>{evidence.relative_to(ROOT)}; "
-                       f"SHA256: {hashlib.sha256(evidence.read_bytes()).hexdigest()}</p>",
-                       "<pre>" + html.escape(text) + "</pre>"]
-        output += [f"<h2>{name}</h2>",
-                   f"<p>{html.escape(str(path))}; owner: {html.escape(owner)}; "
-                   f"SHA256: {hashlib.sha256(path.read_bytes()).hexdigest()}</p>"]
+        version, source, source_version = command(
+            "dpkg-query", "-W", "-f=${Version} ${source:Package} ${source:Version}", owner).split()
+        candidates.append(dict(query=name, resolved=str(path),
+                               sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                               packages=[dict(name=owner, version=version, source=source,
+                                              source_version=source_version)]))
     notices = set()
     for owner in sorted(owners):
-        record = command("dpkg-query", "-W", "-f=${binary:Package} ${Version}; "
-                         "source: ${source:Package} ${source:Version}", owner)
-        output.append(f"<p>{html.escape(record)}</p>")
         notices.add((Path("/usr/share/doc") / owner.split(":", 1)[0] / "copyright").resolve(strict=True))
     licenses = set()
     for path in sorted(notices):
         text = path.read_text()
-        output += [f"<h2>{html.escape(str(path))}</h2>",
-                   "<pre>" + html.escape(text) + "</pre>"]
         for name in re.findall(r"/usr/share/common-licenses/([A-Za-z0-9.-]+)", text):
             licenses.add((Path("/usr/share/common-licenses") / name.rstrip(".")).resolve(strict=True))
-    for path in sorted(licenses):
-        output += [f"<h2>{html.escape(str(path))}</h2>",
-                   "<pre>" + html.escape(path.read_text()) + "</pre>"]
-    for path in sorted(notices | licenses):
-        owner = command("dpkg-query", "-S", str(path)).split(": ", 1)[0]
-        record = command("dpkg-query", "-W", "-f=${binary:Package} ${Version}", owner)
-        output.append(f"<p>{html.escape(str(path))}; provider: {html.escape(record)}; "
-                      f"Notice/license file SHA256: {hashlib.sha256(path.read_bytes()).hexdigest()}</p>")
+    return candidates, [dict(path=str(path), text=path.read_text(),
+                             sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                        for path in sorted(notices | licenses)]
+
+
+def system_notices():
+    output = ["<h1>System startup and runtime provenance</h1>",
+              "<p>Conservative inventory of two reviewed builders, in stable order. "
+              "Only one profile must match the current builder's installed candidates "
+              "and full notice/license bytes. Neither profile proves actual code "
+              "contributions: reconcile the matching raw link map and final ELF before "
+              "distribution. GCC candidates may differ from actual driver flags. "
+              "Shared libraries are not bundled. Package-wide records include unrelated "
+              "architectures/languages; inclusion does not make all their licenses apply.</p>",
+              "<p>GCC records cover libgcc and crtstuff.c under GPL-3.0-or-later with "
+              "GCC Runtime Library Exception 3.1, for eligible compilation processes. "
+              "The glibc exceptions cover only the eight named sources at each exact "
+              "source version, not other glibc sources or arbitrary GPL code.</p>"]
+    installed = installed_system()
+    matched = False
+    for name, source in [("local-glibc-2.43", "2.43-2ubuntu2.4"),
+                         ("ubuntu-24.04", "2.39-0ubuntu8.9")]:
+        path = ROOT / f"LICENSES/{name}-system.json"
+        data = path.read_bytes()
+        profile = json.loads(data)
+        evidence = ROOT / f"LICENSES/glibc-{source}-startup.txt"
+        raw = evidence.read_bytes()
+        expected = dict(path=str(evidence.relative_to(ROOT)),
+                        sha256=hashlib.sha256(raw).hexdigest(), source="glibc " + source)
+        if (profile["glibc_evidence"] != expected
+                or raw.decode().splitlines()[0] != "Source: glibc " + source):
+            raise ValueError("glibc startup source evidence does not match reviewed profile")
+        for notice in profile["notices"]:
+            if hashlib.sha256(notice["text"].encode()).hexdigest() != notice["sha256"]:
+                raise ValueError("reviewed system notice hash mismatch")
+        matched |= installed == (profile["candidates"], profile["notices"])
+        output += [f"<h2>{html.escape(profile['label'])}</h2>",
+                   f"<p>{path.relative_to(ROOT)}; SHA256: {hashlib.sha256(data).hexdigest()}</p>",
+                   "<pre>" + html.escape(json.dumps(profile["provenance"], indent=2)) + "</pre>"]
+        for candidate in profile["candidates"]:
+            output += [f"<h3>{html.escape(candidate['query'])}</h3>",
+                       "<pre>" + html.escape(json.dumps(candidate, indent=2)) + "</pre>"]
+        output += ["<h3>Verified glibc startup source exceptions</h3>",
+                   f"<p>{evidence.relative_to(ROOT)}; SHA256: {expected['sha256']}</p>",
+                   "<pre>" + html.escape(raw.decode()) + "</pre>"]
+        for notice in profile["notices"]:
+            output += [f"<h3>{html.escape(notice['path'])}</h3>",
+                       f"<p>Notice/license file SHA256: {notice['sha256']}</p>",
+                       "<pre>" + html.escape(notice["text"]) + "</pre>"]
+    if not matched:
+        raise ValueError("installed inputs do not match either reviewed system builder; review required")
     return output
 
 
@@ -169,6 +187,8 @@ def main():
             raise ValueError("stale third-party notices: review and regenerate")
         if f"<!-- rustc: {html.escape(command('rustc', '--version'))} -->" not in text:
             raise ValueError("Rust toolchain changed: review and regenerate notices")
+        if not text.endswith("\n".join(system_notices()) + "\n</body></html>\n"):
+            raise ValueError("stale system notices: review and regenerate")
     else:
         raise ValueError("usage: third-party-notices.py --check | --write")
 
