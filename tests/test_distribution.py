@@ -35,7 +35,7 @@ import unicodedata
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = "SimonEisenhauer/herdr-crossroads"
+SOURCE = "eisenhauer-dev/herdr-crossroads"
 ARCHIVE = "herdr-crossroads-{}-x86_64-unknown-linux-gnu.tar.gz"
 
 
@@ -438,7 +438,7 @@ def run_case(herdr, asset_dir):
                     assert plugin["min_herdr_version"] == "0.9.1" and plugin["enabled"] is True
                     source = plugin["source"]
                     assert source["kind"] == "github"
-                    assert source["owner"] == "SimonEisenhauer" and source["repo"] == "herdr-crossroads"
+                    assert source["owner"] == "eisenhauer-dev" and source["repo"] == "herdr-crossroads"
                     assert source["requested_ref"] == "v" + version and source["resolved_commit"] == commits[version]
                     managed = Path(source["managed_path"]).resolve(strict=True)
                     assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"])) and managed.is_relative_to(base)
