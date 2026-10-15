@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
@@ -50,9 +51,13 @@ def file_record(path):
     """Keep both driver/trace spelling and resolved file; package ownership may differ."""
     path = Path(path)
     record = {"path": str(path), "resolved": str(path.resolve())}
-    if not path.is_file():
+    try:
+        status = path.stat()
+    except FileNotFoundError:
         record["unavailable"] = True  # Rust's temporary link objects may already be gone.
         return record
+    if not stat.S_ISREG(status.st_mode):
+        raise RuntimeError(f"Link input is not a regular file: {path}")
     record["sha256"] = sha256(path)
     packages = set()
     for name in dict.fromkeys([str(path), str(path.resolve())]):
@@ -71,11 +76,11 @@ def file_record(path):
 
 
 def traced_paths(stdout):
-    """Only recognize whole-line absolute file traces, not arbitrary map syntax."""
+    """Index whitespace-free absolute paths before any archive member suffix."""
     paths = set()
     for line in stdout.splitlines():
         name = line.strip().split("(", 1)[0]
-        if name.startswith("/") and not any(c in name for c in '\t\n"'):
+        if name.startswith("/") and not any(c.isspace() or c == '"' for c in name):
             paths.add(name)
     return sorted(paths)
 
@@ -132,5 +137,5 @@ if __name__ == "__main__":
     try:
         collect(sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]))
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
-        print(f"Build provenance failed: {error}", file=sys.stderr)
+        print(normalize(f"Build provenance failed: {error}", Path.cwd().resolve()), file=sys.stderr)
         sys.exit(error.returncode if isinstance(error, subprocess.CalledProcessError) else 1)

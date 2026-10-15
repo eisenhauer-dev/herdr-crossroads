@@ -1,13 +1,18 @@
 """Collector contracts using fake subprocess results, never a second real link."""
 
+import errno
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 
@@ -93,6 +98,98 @@ class BuildProvenanceTests(unittest.TestCase):
         self.assertEqual(provenance.traced_paths(
             '/usr/lib/libgcc.a(member.o)\n /usr/lib/Scrt1.o\n  123 456 /usr/lib/not-a-trace.o\n'
             'cc "/private/argv.o"\n'), ["/usr/lib/Scrt1.o", "/usr/lib/libgcc.a"])
+
+    def test_absolute_gcc_verbose_command_is_not_a_trace_filename(self):
+        command = (
+            "/home/runner/.rustup/toolchains/1.99.0-x86_64-unknown-linux-gnu/"
+            "lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/ld.lld "
+            "-plugin /usr/libexec/gcc/x86_64-linux-gnu/13/liblto_plugin.so "
+            "-plugin-opt=/usr/libexec/gcc/x86_64-linux-gnu/13/lto-wrapper "
+            "-plugin-opt=-fresolution=/tmp/cc123.res --build-id "
+            "-o /home/runner/work/herdr-crossroads/target/release/deps/herdr_crossroads"
+        )
+        traces = (f"         {command}\n"
+                  "         /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o\n"
+                  "         /usr/lib/libgcc.a(runtime member.o)\n")
+        self.assertEqual(provenance.traced_paths(traces), [
+            "/usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o", "/usr/lib/libgcc.a",
+        ], "verbose linker commands must remain raw evidence, never file records")
+
+    def test_ambiguous_whitespace_paths_remain_unindexed(self):
+        self.assertEqual(provenance.traced_paths(
+            '/absolute/path with spaces.o\n/absolute/path\twith-tab.o\n'
+            '/absolute/path\u00a0with-space.o\n/absolute/"quoted".o\n'
+            '/usr/lib/Scrt1.o\n'), ["/usr/lib/Scrt1.o"])
+
+    def test_collection_retains_verbose_command_without_indexing_it(self):
+        command = f"{Path.home()}/.rustup/toolchains/fixture/bin/gcc-ld/ld.lld -plugin /usr/libexec/gcc/13/liblto_plugin.so"
+
+        def verbose_run(argv, **kwargs):
+            result = self.fake_run(argv, **kwargs)
+            if argv[:2] == ["cargo", "rustc"]:
+                result.stderr = f"         {command}\n" + result.stderr
+            return result
+
+        with patch.object(provenance, "run", side_effect=verbose_run):
+            provenance.collect("x86_64-unknown-linux-gnu", self.binary, self.stem)
+        data = json.loads(Path(str(self.stem) + ".provenance.json").read_text())
+        self.assertEqual([row["path"] for row in data["trace_files"]],
+                         sorted([str(self.startup), str(self.archive)]))
+        self.assertIn("<rustup>/toolchains/fixture/bin/gcc-ld/ld.lld -plugin /usr/libexec/gcc/13/liblto_plugin.so",
+                      data["link_diagnostics"])
+
+    def test_failure_diagnostic_normalizes_private_paths_and_argv(self):
+        candidate = f"{Path.home()}/.rustup/toolchains/fixture/bin/ld.lld -plugin /usr/libexec/gcc/13/liblto_plugin.so"
+        for error, status in [
+            (OSError(36, "File name too long", candidate), 1),
+            (subprocess.CalledProcessError(19, ["gcc", candidate, str(ROOT / "target/input.o")]), 19),
+        ]:
+            with self.subTest(error=type(error).__name__):
+                stderr = io.StringIO()
+                with patch.object(subprocess, "run", side_effect=error), \
+                        patch.object(sys, "argv", [str(SPEC.origin), "x86_64-unknown-linux-gnu", str(self.binary), str(self.stem)]), \
+                        redirect_stderr(stderr), self.assertRaises(SystemExit) as failure:
+                    runpy.run_path(str(SPEC.origin), run_name="__main__")
+                self.assertEqual(failure.exception.code, status)
+                self.assertNotIn(str(Path.home()), stderr.getvalue())
+                self.assertNotIn(str(ROOT), stderr.getvalue())
+                self.assertIn("<rustup>/toolchains/fixture/bin/ld.lld", stderr.getvalue())
+                self.assertIn("/usr/libexec/gcc/13/liblto_plugin.so", stderr.getvalue())
+
+    def test_file_stat_errors_are_not_discarded(self):
+        real_stat = os.stat
+        for error in [PermissionError(errno.EACCES, "denied", str(self.startup)),
+                      OSError(errno.EIO, "I/O error", str(self.startup))]:
+            with self.subTest(errno=error.errno):
+                def faulty_stat(path, *args, **kwargs):
+                    if os.fspath(path) == str(self.startup):
+                        raise error
+                    return real_stat(path, *args, **kwargs)
+
+                with patch.object(os, "stat", side_effect=faulty_stat), \
+                        patch.object(provenance, "run") as command:
+                    with self.assertRaises(type(error)) as failure:
+                        provenance.file_record(self.startup)
+                self.assertIs(failure.exception, error)
+                command.assert_not_called()
+
+    def test_nonregular_input_fails_collection(self):
+        with patch.object(provenance, "run") as command:
+            with self.assertRaisesRegex(RuntimeError, "not a regular file"):
+                provenance.file_record(self.directory)
+        command.assert_not_called()
+
+    def test_symlink_records_original_and_resolved_regular_file(self):
+        link = self.directory / "startup-link.o"
+        link.symlink_to(self.startup)
+        with patch.object(provenance, "run", return_value=subprocess.CompletedProcess([], 1, "", "no owner")) as command:
+            record = provenance.file_record(link)
+        self.assertEqual(record["path"], str(link))
+        self.assertEqual(record["resolved"], str(self.startup))
+        self.assertEqual(record["sha256"], provenance.sha256(self.startup))
+        self.assertEqual([call.args[0] for call in command.call_args_list], [
+            ["dpkg-query", "-S", str(link)], ["dpkg-query", "-S", str(self.startup)],
+        ])
 
     def test_missing_inputs_are_explicit_not_fabricated_hashes(self):
         with patch.object(provenance, "run") as command:
