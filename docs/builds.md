@@ -104,6 +104,15 @@ incorporated code; GCC defaults may differ from the actual driver's flags.
 Manually reconcile the raw map and command with these records. There is no
 universal map parser or automatic attribution verdict.
 
+Automatic trace indexing accepts unquoted absolute paths without whitespace before
+an optional archive-member suffix. Verbose linker commands and ambiguous paths
+containing whitespace are not automatic file records. Normalized raw link
+output/diagnostics and the map remain available for manual reconciliation.
+Only a missing input (`FileNotFoundError`) is marked unavailable; nonregular inputs
+and other stat/read errors fail collection. Symlinks to regular files retain both
+the original and resolved paths. Private prefixes are normalized in failure
+diagnostics too.
+
 Repository, Cargo, Rustup and home prefixes are replaced with neutral placeholders
 in both sidecars; system paths such as `/usr/...` remain intact. Map hashes cover
 these normalized bytes. Sidecars are outside the strict four-member tar, not
