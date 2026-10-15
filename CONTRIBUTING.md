@@ -194,9 +194,13 @@ PTY gates above.
 
 ## Automated checks
 
-`.github/workflows/ci.yml` defines one stable **Linux gates** job for `push` and
-`pull_request` events, plus manual `workflow_dispatch` on an existing ref, on the
-standard Ubuntu 24.04 x86_64 runner. Every runner job is guarded by
+`.github/workflows/ci.yml` defines one stable **Linux gates** job for pushes to
+`main`, `pull_request` events, and manual `workflow_dispatch` on an existing ref,
+on the standard Ubuntu 24.04 x86_64 runner. Pull requests from both owner branches
+and forks are checked, including new commits, with no PR target-branch filter.
+Pushes to `develop` or feature branches and tag pushes do not trigger CI, avoiding
+duplicate push and PR runs for development branches. A push to `main` after merging
+still runs the checks. Every runner job is guarded by
 `github.event.repository.private == false`: private-repository
 events skip the job without executing runner steps. When the repository is public
 and Actions is enabled, these events automatically run formatting, Clippy with
@@ -224,7 +228,8 @@ Run the standard-library textual workflow regression checks locally with:
 python3 tests/test_ci_workflow.py
 ```
 
-These checks protect the agreed job guard, checkout settings, gate ordering,
+These checks protect the main-only push and unfiltered PR/manual trigger contract,
+job guard, checkout settings, gate ordering,
 helper invocation, and exact versioned artifact upload; they are not a full YAML
 parser or GitHub Actions schema validator. `python3 tests/test_build_linux.py` separately
 checks full PTY ordering, exact binary selection, checksums/mode, and failure

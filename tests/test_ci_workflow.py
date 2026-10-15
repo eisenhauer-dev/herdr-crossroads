@@ -12,17 +12,24 @@ class CiWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / ".github/workflows/ci.yml").read_text()
 
-    def test_single_public_only_read_only_linux_job(self):
-        header = self.workflow.split("    steps:\n", 1)[0]
-        self.assertEqual(header, '''name: CI
+    def test_only_main_branch_pushes_trigger_not_develop_features_or_tags(self):
+        push = self.workflow.split("  push:\n", 1)[1].split("  pull_request:\n", 1)[0]
+        self.assertEqual(push, "    branches: [main]\n")
+
+    def test_unfiltered_own_and_fork_pull_requests_and_manual_dispatch(self):
+        events = self.workflow.split("\npermissions:\n", 1)[0]
+        self.assertEqual(events, '''name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+''')
 
-permissions:
-  contents: read
+    def test_single_public_only_read_only_linux_job(self):
+        header = self.workflow.split("permissions:\n", 1)[1].split("    steps:\n", 1)[0]
+        self.assertEqual(header, '''  contents: read
 
 jobs:
   linux:
