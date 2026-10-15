@@ -8,6 +8,10 @@ and focus a pane without reorganizing your session.
 
 https://github.com/user-attachments/assets/c86b3c7c-718b-4033-82f8-8910d97d7278
 
+The demo uses AI-generated ElevenLabs Free narration for noncommercial use only;
+the software's MIT license does not grant commercial reuse rights to that narration.
+See [media terms, attribution and provenance](docs/media/README.md#narration-use-and-attribution).
+
 ## Features
 
 - Workspace/tab/pane navigation with stable pane-ID focus, even for duplicate names.
@@ -85,8 +89,12 @@ combination are not live-verified. The theme palette is based on Herdr v0.9.1;
 host-command examples below were checked against v0.9.3 sources. On 2026-10-14,
 an isolated native Herdr 0.9.3 server/client test verified local managed
 installation, search/focus, replacement, version return, and uninstall at 160×40
-with a fixture-only 90% popup manifest. It did not test personal-host setup or
-public distribution. A manifest minimum is not a guarantee for every later
+with a fixture-only 90% popup manifest. The current license-bearing binary archive
+also passed isolated real-Herdr 0.9.5 CLI and server/client installation tests on
+2026-10-15, including delivered notices, search/focus, replacement/return and
+uninstall; see [scope and hashes](docs/installation.md#native-distribution-acceptance).
+These runs did not test personal-host setup or public distribution. A manifest
+minimum is not a guarantee for every later
 Herdr release. See [terminal limitations](docs/keymaps.md#terminal-limits).
 
 ## Installation
@@ -201,8 +209,9 @@ points at the same directory; reopen Crossroads to load the new binary and confi
 If the checkout path changes, link the new root explicitly.
 
 Herdr itself is separate: use `herdr update` only for Herdr-installer-managed
-installations; otherwise update through the package manager. Herdr's plugin v1
-has no `plugin update` command: managed GitHub plugins are refreshed by reinstalling.
+installations; otherwise update through the package manager. Herdr 0.9.3 has no
+`plugin update` command; 0.9.5 provides one, but this command was not exercised
+by the native acceptance test. The tested managed route reinstalls a reviewed ref.
 Crossroads has no automatic updater. Close it before reinstalling a reviewed ref
 with matching trusted local assets, or uninstalling. A return to a previous ref
 also requires that version's assets. The isolated native test verified replacement
@@ -217,7 +226,10 @@ herdr plugin uninstall herdr-crossroads
 
 For a local link, this unregisters Crossroads without deleting your checkout.
 `herdr plugin unlink herdr-crossroads` is the registration-only alternative.
-Managed uninstall instead removes Herdr's managed checkout. In both cases,
+With Herdr 0.9.3, managed uninstall removes Herdr's managed checkout. Herdr 0.9.5
+removes registration but retains checkouts leased by live consumers; those become
+eligible for later cleanup after the leases end. The native test verifies
+unregistration and retained files, not that later reclamation. In all cases,
 plugin config/state files are retained; inspect and back up your own files before
 any manual cleanup. Do not remove other plugins or Herdr configuration.
 
@@ -368,7 +380,8 @@ and reconnect latency are not measured. See [contribution/testing](CONTRIBUTING.
 - [Architecture, module responsibilities, and core flows](docs/architecture.md)
 - [Developer and contribution guide](CONTRIBUTING.md)
 
-Licensed under [MIT](LICENSE), copyright 2026 SimonEisenhauer.
+Software licensed under [MIT](LICENSE), copyright 2026 SimonEisenhauer.
+The demo narration has separate [provider restrictions](docs/media/README.md#narration-use-and-attribution).
 
 [herdr-install]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/install.mdx
 [herdr-plugins]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/plugins.mdx

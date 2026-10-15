@@ -55,19 +55,24 @@ def install():
     asset_dir = os.environ.get("CROSSROADS_ASSET_DIR")
     if not asset_dir or not Path(asset_dir).is_absolute():
         raise ValueError("CROSSROADS_ASSET_DIR must name an absolute trusted local asset directory")
-    name = f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz"
+    archive_name = f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz"
     assets = Path(asset_dir)
-    archive = (assets / name).read_bytes()
-    verify_checksum(archive, (assets / (name + ".sha256")).read_bytes(), name)
+    archive = (assets / archive_name).read_bytes()
+    verify_checksum(archive, (assets / (archive_name + ".sha256")).read_bytes(), archive_name)
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as package:
         members = package.getmembers()
-        if (len(members) != 2 or {member.name for member in members}
-                != {"herdr-crossroads", "herdr-crossroads.sha256"}
+        if (len(members) != 4 or {member.name for member in members}
+                != {"herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}
                 or any(member.type not in [tarfile.REGTYPE, tarfile.AREGTYPE]
                        or member.issparse() for member in members)):
-            raise ValueError("archive must contain exactly the two regular release members")
+            raise ValueError("archive must contain exactly the four regular release members")
         binary = package.extractfile("herdr-crossroads").read()
         checksum = package.extractfile("herdr-crossroads.sha256").read()
+        notices = {}
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            notices[name] = package.extractfile(name).read()
+            if notices[name] != (root / name).read_bytes():
+                raise ValueError(f"release notice does not match trusted checkout: {name}")
     verify_checksum(binary, checksum, "herdr-crossroads")
     if (len(binary) < 64 or binary[:7] != b"\x7fELF\x02\x01\x01"
             or binary[16:18] not in [b"\x02\x00", b"\x03\x00"]
@@ -75,30 +80,36 @@ def install():
         raise ValueError("binary must have a little-endian ELF64 x86-64 executable header")
 
     directory = destination_directory(root)
-    staging = ".herdr-crossroads-" + secrets.token_hex(12)
-    created = False
+    staged = []
     try:
-        try:
-            existing = os.stat("herdr-crossroads", dir_fd=directory, follow_symlinks=False)
-        except FileNotFoundError:
-            existing = None
-        if existing is not None and not stat.S_ISREG(existing.st_mode):
-            raise ValueError("runtime destination must be a regular file, not a symlink")
-        descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                             0o600, dir_fd=directory)
-        created = True
-        with os.fdopen(descriptor, "wb") as output:
-            output.write(binary)
-            output.flush()
-            os.fchmod(output.fileno(), 0o755)
-            os.fsync(output.fileno())
-        os.replace(staging, "herdr-crossroads", src_dir_fd=directory, dst_dir_fd=directory)
-        created = False
+        files = {**notices, "herdr-crossroads": binary}
+        for name in files:
+            try:
+                existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                existing = None
+            if existing is not None and not stat.S_ISREG(existing.st_mode):
+                raise ValueError("runtime destination must be a regular file, not a symlink")
+        for name, data in files.items():
+            staging = ".herdr-crossroads-" + secrets.token_hex(12)
+            descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                 0o600, dir_fd=directory)
+            staged.append((staging, name))
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(data)
+                output.flush()
+                os.fchmod(output.fileno(), 0o755 if name == "herdr-crossroads" else 0o644)
+                os.fsync(output.fileno())
+        # Notices must be retained before the runtime is replaced.
+        while staged:
+            staging, name = staged[0]
+            os.replace(staging, name, src_dir_fd=directory, dst_dir_fd=directory)
+            staged.pop(0)
     finally:
-        if created:
+        for staging, _ in staged:
             os.unlink(staging, dir_fd=directory)
         os.close(directory)
-    print(f"Installed {name} at target/release/herdr-crossroads")
+    print(f"Installed {archive_name} at target/release/herdr-crossroads")
 
 
 if __name__ == "__main__":

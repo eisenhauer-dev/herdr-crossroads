@@ -3,8 +3,12 @@
 The current [Crossroads demo](../crossroads-circular-tour.mp4) follows Atlas Shop
 → linked Atlas Checkout → Checkout Editor. It replaces the
 [historical 120-second calm edition](calm-tour.md) at the same repository path;
-there is only one repository MP4. Technical media validation is not independent
-review, human listening acceptance or permission to publish.
+there is only one repository MP4. Independent final-film review passed and the
+user accepted the current revision on 2026-10-13; the user has also explicitly
+accepted the current movie for privacy. These supplied decisions cover the hash
+below, including closing-credit removal. They are not a fresh review by this
+documentation writer or permission to publish. See
+[current acceptance and provider terms](../README.md).
 
 ## Export and chronological composition
 
@@ -16,11 +20,14 @@ review, human listening acceptance or permission to publish.
   4,118,053 bytes. This identifies the local repository file, not remote publication.
 - No subtitle stream, burned-in subtitles, editorial footer band, native crop,
   painted UI or added black bars. The application's actual key footers remain.
-- The user accepted the preceding cut after independent review. This minor revision
-  removes only the visible closing-card voiceover credit and its fade-in. The
+- The user accepted the preceding cut after independent review, and subsequently
+  accepted this minor revision. It removes only the visible closing-card voiceover
+  credit and its fade-in. The
   descriptor “A navigator for Herdr”, documentation pointers, diagrams and native
   UI are retained. Attribution remains in the README video link title and movie
-  metadata, without claiming that either guarantees compliance with current terms.
+  metadata. The [2026-10-15 terms check](../README.md#narration-use-and-attribution)
+  records Free noncommercial-only use and required title attribution, not a blanket
+  compliance guarantee.
 - This finishing revision decodes the previous repository export: the original
   captures, graphics, scripts and external evidence are no longer available.
   Native frames retain that export's chronological order within each scene;
@@ -217,7 +224,8 @@ All five section gaps are measured from the **final decoded AAC**, using FFmpeg
 The fully visible popup hold to Navigation speech is **0.702857 seconds**. Final Closing
 speech ends at 99.926168 seconds, with 1.273832 seconds of trailing silence.
 These are amplitude-threshold estimates, not ASR, exact word boundaries or human
-listening approval. Sentence/graphic associations likewise need human review.
+listening approval. Human acceptance is recorded separately above; the numerical
+checks alone do not establish sentence/graphic alignment.
 The latest 1–2-second pause requirement supersedes two-minute padding; no voice
 speed change or long still was added to reach the old target.
 
@@ -326,12 +334,13 @@ The previous production record reported owner-supplied accepted-binary evidence
 covering 220 unit, 11 integration, 27 startup tests and all four PTY gates. Those
 historical results are not fresh media-writer software or release proof.
 
-**Open:** fresh independent review and user acceptance of the closing-credit
-removal revision; the prior user acceptance applies to SHA-256
-`4a7b8f43e417334e6cb09a629e342123512ede66aaa388838eda0875d5d778ae`,
-not automatically to this modified file. Also open: missing original external
-sources/evidence, current Free permitted-use/attribution
-verification and explicit publication approval. No installation, real workloads
-or agents are demonstrated.
+**Open:** missing original external sources/evidence and explicit publication
+approval. Current acceptance applies to SHA-256
+`5497401d6dc418ae6bb0d7069fd397f90a2dd60d9447728bc5d86940ad4ed054`,
+not just the preceding `4a7b8f43e417334e6cb09a629e342123512ede66aaa388838eda0875d5d778ae`
+cut. The [provider-terms check](../README.md#narration-use-and-attribution) records
+the user-confirmed Free/noncommercial scope and attribution, with account-level
+and generation-time evidence limits. No installation, real workloads or agents
+are demonstrated.
 The keymap concept is not proof of a live custom configuration. Writer self-check
 and technical media validation are not independent acceptance or release approval.

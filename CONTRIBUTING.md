@@ -1,5 +1,23 @@
 # Contributing
 
+## Public contribution workflow
+
+The required public-launch policy is owner-only repository write access. Other
+contributors work in forks and submit pull requests. Updates to `main` must use
+pull requests even for the owner, with administrator enforcement and no bypass;
+force pushes and branch deletion must be disabled. No independent approval is
+required solely to let the owner merge their own pull request. Verified public
+CI checks will be added as mandatory merge checks separately.
+
+These protections are not yet active: the repository is private, and GitHub
+currently requires a plan upgrade or public visibility for its protection APIs.
+Enable and verify the protections immediately after separately authorized public
+activation; do not enable paid services. The owner retains administrative power
+to change settings. Audit collaborators, app access, deploy keys and automation
+permissions rather than assuming branch protection alone establishes who can write.
+See GitHub's [personal repository permissions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/repository-access-and-collaboration/permission-levels-for-a-personal-account-repository)
+and [protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+
 ## Developer setup
 
 Use Linux with Rust/Cargo, a system linker, `stty`, a POSIX shell, and Python
@@ -152,7 +170,7 @@ approval requirements and execution status in the installation guide.
 and managed lifecycle; it passed on Herdr 0.9.3 on 2026-10-14, including replacement
 and version return with a test-only fixture, not a newly released runtime.
 See [native evidence and limits](docs/installation.md#native-distribution-acceptance).
-Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its three
+Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its four
 pure helper tests do not launch Herdr or any subprocess. Both real-Herdr harnesses
 remain explicit opt-in, outside discovery and CI.
 
@@ -252,3 +270,17 @@ touching those areas. Theme persistence is plugin-owned and explicitly initiated
 by the user; see [themes](docs/themes.md) for its write/delete contract.
 
 The project uses the [MIT license](LICENSE).
+Binary archives and installed payloads must retain `LICENSE` and
+`THIRD-PARTY-NOTICES.html`. Dependency/toolchain changes require reviewing and
+regenerating the exact-version notice inventory; see
+[notice maintenance and final link-map verification](docs/releases.md#license-inventory-and-verification).
+Run `python3 tests/test_notices.py` on the actual packaging builder with cached
+locked dependencies, installed Rust documentation, GCC, `dpkg-query`, and system
+copyright/full-license files to reproduce the full notice artifact, including
+package versions and startup/runtime object hashes. The build
+helper performs the cheaper manifest/lock/toolchain staleness check. This does
+not verify system provenance or final ELF contributions. Exact glibc startup
+exception headers and archive provenance are checked in under `LICENSES/` and
+embedded in the generated notices. Keep source versions matched, review the final
+binary/link map, and repack/reverify assets after notice changes; see the linked
+evidence above.

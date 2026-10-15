@@ -9,6 +9,8 @@ import unittest
 
 from test_distribution import ARCHIVE, Screen, digest, fixture_next_version, prepare_fixture
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 class DistributionHelpers(unittest.TestCase):
     def test_current_cells_replace_old_query_and_rows(self):
@@ -41,6 +43,17 @@ class DistributionHelpers(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unsupported native CSI"):
             screen.feed(b"\x1b[1P")
 
+    def test_pixel_mouse_mode_query_does_not_paint_cells(self):
+        screen = Screen(rows=2, cols=20)
+        screen.feed(b"Current")
+        painted, cursor = screen.text(), (screen.y, screen.x)
+        screen.feed(b"\x1b[?1016$")
+        screen.feed(b"p")
+        self.assertEqual(screen.text(), painted)
+        self.assertEqual((screen.y, screen.x), cursor)
+        with self.assertRaises(AssertionError):
+            screen.feed(b"\x1b[?9999$p")
+
     def test_artifacts_and_versions_stay_in_fixture(self):
         with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-helper-") as temporary:
             root = Path(temporary)
@@ -50,7 +63,9 @@ class DistributionHelpers(unittest.TestCase):
             name = ARCHIVE.format("0.1.0")
             with tarfile.open(trusted / name, "w:gz") as package:
                 for filename, data in [("herdr-crossroads", payload), ("herdr-crossroads.sha256",
-                                       f"{digest(payload)}  herdr-crossroads\n".encode())]:
+                                       f"{digest(payload)}  herdr-crossroads\n".encode()),
+                                       ("LICENSE", (ROOT / "LICENSE").read_bytes()),
+                                       ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes())]:
                     entry = tarfile.TarInfo(filename)
                     entry.size = len(data)
                     package.addfile(entry, io.BytesIO(data))
@@ -62,6 +77,10 @@ class DistributionHelpers(unittest.TestCase):
             self.assertEqual((assets / name).read_bytes(), (trusted / name).read_bytes())
             self.assertEqual(payloads["0.1.0"], payload)
             self.assertNotEqual(digest(payloads["0.1.0"]), digest(payloads["0.1.1"]))
+            for version in ["0.1.0", "0.1.1"]:
+                with tarfile.open(assets / ARCHIVE.format(version)) as package:
+                    for filename in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                        self.assertEqual(package.extractfile(filename).read(), (ROOT / filename).read_bytes())
             fixture_next_version(repo)
             manifest = tomllib.loads((repo / "herdr-plugin.toml").read_text())
             self.assertEqual(manifest["version"], "0.1.1")
