@@ -261,6 +261,6 @@ checks. Neither run proves new-runtime upgrade compatibility or the separate
 Herdr update command. The local-only installer is separate from public distribution;
 no public installer readiness or actual GitHub release automation is claimed.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
-The selected future source is `SimonEisenhauer/herdr-crossroads`; public
-repository/tag/asset availability, run/upload/download evidence and final release
-approval remain open.
+The selected future source is `eisenhauer-dev/herdr-crossroads`; public repository
+access was verified on 2026-10-15. Release tag/asset availability,
+run/upload/download evidence and final release approval remain open.

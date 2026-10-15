@@ -5,8 +5,9 @@ Crossroads 0.1.0 has a local-asset installer and a manifest `[[build]]` hook:
 version into the manifest's fixed `target/release/herdr-crossroads` path. It does
 not download, build, execute the binary, or register/activate a plugin. There is
 no public asset endpoint or short-name registry. The selected future source is
-`SimonEisenhauer/herdr-crossroads`; selection does not establish a published
-repository, tag, binary, or runnable public installation route.
+`eisenhauer-dev/herdr-crossroads`; public repository access was verified on
+2026-10-15, but no release tag, binary, or runnable public installation route is
+established.
 
 ## Requirements and local use
 
@@ -96,7 +97,7 @@ checking out `FETCH_HEAD`. A single slug such as `herdr-crossroads` fails usage;
 it does not resolve from a plugin registry.
 
 For the selected source, the intended pinned syntax is
-`CROSSROADS_ASSET_DIR=/absolute/path/to/trusted/assets herdr plugin install SimonEisenhauer/herdr-crossroads --ref v0.1.0`.
+`CROSSROADS_ASSET_DIR=/absolute/path/to/trusted/assets herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`.
 **This is intended syntax, not a runnable public installation instruction or an
 existing public release.** Noninteractive callers additionally need `--yes`; review the
 source, manifest, and assets before approving hook execution.

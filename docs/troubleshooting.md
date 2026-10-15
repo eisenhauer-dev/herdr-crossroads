@@ -11,7 +11,7 @@ a source-only clone is not ready to launch. Either build from source or use the
 [local binary installer](installation.md) with matching trusted versioned assets.
 The manifest's Python build hook installs local assets without Rust/Cargo or
 downloads; linking does not execute that hook. Keep the plugin root and executable
-in place. The selected future source is `SimonEisenhauer/herdr-crossroads`, not an
+in place. The selected future source is `eisenhauer-dev/herdr-crossroads`, not an
 established public release or download endpoint.
 
 These read-only checks belong in the **linked checkout root**, in a shell inside
