@@ -63,6 +63,7 @@ jobs:
             "python3 tests/test_build_linux.py",
             "python3 tests/test_build_provenance.py",
             "python3 tests/test_install_binary.py",
+            "python3 tests/test_setup_keybind.py",
             "python3 tests/test_distribution_helpers.py",
             "sh scripts/build-linux.sh",
         ]

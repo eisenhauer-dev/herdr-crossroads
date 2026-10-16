@@ -246,7 +246,8 @@ still runs the checks. Every runner job is guarded by
 events skip the job without executing runner steps. When the repository is public
 and Actions is enabled, these events automatically run formatting, Clippy with
 warnings denied, locked Cargo tests, isolated Git-hook tests, version-checker,
-build-helper, installer unit tests, and pure distribution helper tests,
+build-helper, installer and keybinding-setup unit tests, and pure distribution
+helper tests,
 and the explicit `x86_64-unknown-linux-gnu` locked release build with all four
 complete PTY harnesses through `scripts/build-linux.sh`.
 
@@ -286,7 +287,9 @@ collection failures using fake subprocess results. Evidence limits and the
 separate notice-review requirement are documented in [builds](docs/builds.md#builderlink-evidence-not-distribution-approval).
 `python3 tests/test_install_binary.py` is also a required helper-test gate locally
 and in CI; it uses synthetic assets without invoking Herdr or installing into the
-live checkout. `python3 tests/test_distribution_helpers.py` is also required
+live checkout. `python3 tests/test_setup_keybind.py` is a required local/CI gate
+for opt-in host-binding setup: isolated HOME/XDG/config paths under `/tmp/opencode`,
+no real Herdr or personal configuration. `python3 tests/test_distribution_helpers.py` is also required
 locally and in CI; it checks fixture assets/versions and current-cell parsing
 without invoking Herdr. Both real-Herdr sandbox harnesses remain opt-in and outside CI.
 Static checks and successful local gate runs are not proof of a CI execution.
@@ -408,7 +411,10 @@ credentials, or full personal config/logs.
 ## Safety and ownership
 
 Crossroads stays navigation-only. It must not install/update during opening or
-search, rewrite native prefix `g`/`t`, change other plugins, or alter Herdr config.
+search, rewrite native prefix `g`/`t`, or change other plugins. Only the explicitly
+invoked `setup-keybind` action may append the agreed host launch binding; install,
+startup and popup runtime must not alter Herdr config. Preserve conflicts and
+existing config bytes; see [setup safeguards](docs/installation.md#keyboard-launch-setup).
 Tests should use isolated fake executables and sockets, never a live session by
 accident. Keep plugin configuration precedence, strict validation, exact pane-ID
 focus, terminal-control sanitization, and terminal restoration covered when
