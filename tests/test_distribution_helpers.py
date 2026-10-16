@@ -19,6 +19,134 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DistributionHelpers(unittest.TestCase):
+    def test_cli_prepares_offline_metadata_without_changing_public_metadata(self):
+        class FixtureChecked(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-cli-helper-") as temporary:
+            assets = Path(temporary)
+            name = ARCHIVE.format("0.0.1")
+            with tarfile.open(assets / name, "w:gz") as package:
+                entry = tarfile.TarInfo("herdr-crossroads")
+                entry.size = 64
+                package.addfile(entry, io.BytesIO(b"\x7fELF" + bytes(60)))
+            (assets / (name + ".sha256")).write_text(f"{digest((assets / name).read_bytes())}  {name}\n")
+
+            for public in [False, True]:
+                def check_fixture(argv, **kwargs):
+                    self.assertEqual(argv, ["/not-executed/herdr", "--version"])
+                    repo = kwargs["cwd"] / "source"
+                    for filename in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+                        path = repo / filename
+                        if public:
+                            self.assertEqual(path.read_bytes(), (ROOT / filename).read_bytes())
+                        else:
+                            metadata = tomllib.loads(path.read_text())
+                            version = (metadata["version"] if filename == "herdr-plugin.toml" else
+                                       metadata["package"]["version"] if filename == "Cargo.toml" else
+                                       next(p["version"] for p in metadata["package"]
+                                            if p["name"] == "herdr-crossroads"))
+                            self.assertEqual(version, "0.0.1", filename)
+                    raise FixtureChecked()
+
+                with self.subTest(public=public), patch("subprocess.Popen", side_effect=check_fixture):
+                    with self.assertRaises(FixtureChecked):
+                        test_herdr_install.run_case(Path("/not-executed/herdr"), assets, name, "success",
+                                                    "v0.0.1" if public else None,
+                                                    "a" * 40 if public else None)
+
+    def test_update_checkpoint_accepts_reviewed_post_merge_main_bound_to_release(self):
+        release, main = "b" * 40, "d" * 40
+        commands = []
+
+        def command(argv):
+            commands.append(argv)
+            output = (f"ref: refs/heads/main\tHEAD\n{main}\tHEAD\n{main}\trefs/heads/main\n"
+                      if "--symref" in argv else f"{release}\t{argv[-2]}\n") if argv[0] == "git" else ""
+            return subprocess.CompletedProcess(argv, 0, output, "")
+
+        for predeclared in [None, main]:
+            with self.subTest(predeclared=predeclared), patch(
+                    "sys.stdin", io.StringIO(f"update {release} {main}\n")), patch("sys.stdout", io.StringIO()):
+                result, resolved = test_distribution.public_cycle_step(command, ["herdr"], "update", "v0.0.2", release,
+                                                                       predeclared)
+                self.assertTrue(any(c[0] == "herdr" for c in commands))
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(resolved, main)
+
+    def test_separate_main_identity_does_not_replace_release_tag_binding(self):
+        release, main = "a" * 40, "c" * 40
+        for operation in ["install", "update", "return"]:
+            with self.subTest(operation=operation), patch("sys.stdin", io.StringIO(f"update {main}\n")), patch(
+                    "sys.stdout", io.StringIO()):
+                command = Mock(side_effect=lambda argv: subprocess.CompletedProcess(
+                    argv, 0, f"{main}\t{argv[-2]}\n", ""))
+                with self.assertRaisesRegex(ValueError, "approved commit"):
+                    test_distribution.public_cycle_step(command, ["herdr"], operation, "v0.0.1", release, main)
+                self.assertTrue(all(c.args[0][0] == "git" for c in command.call_args_list))
+
+    def test_cycle_accepts_distinct_reviewed_main_and_release_commits(self):
+        release, main = "a" * 40, "c" * 40
+        commands = []
+
+        def command(argv):
+            commands.append(argv)
+            output = (f"ref: refs/heads/main\tHEAD\n{main}\tHEAD\n{main}\trefs/heads/main\n"
+                      if "--symref" in argv else f"{release}\t{argv[-2]}\n") if argv[0] == "git" else ""
+            return subprocess.CompletedProcess(argv, 0, output, "")
+
+        for operation in ["install", "update", "return"]:
+            commands.clear()
+            with self.subTest(operation=operation), patch("sys.stdin", io.StringIO(f"update {main}\n")), patch(
+                    "sys.stdout", io.StringIO()) as output:
+                result, resolved = test_distribution.public_cycle_step(command, ["herdr"], operation,
+                                                                       "v0.0.1", release, main)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(resolved, release if operation == "return" else main)
+                if operation == "update":
+                    self.assertIn(f"update {main}", output.getvalue())
+                    self.assertIn("do NOT eliminate branch races", output.getvalue())
+            self.assertEqual(sum("--symref" in c for c in commands), 0 if operation == "return" else 2)
+            operation_argv = next(c for c in commands if c[0] == "herdr")
+            self.assertEqual(operation_argv[-2:] if operation == "return" else operation_argv[-1:],
+                             ["--ref", release] if operation == "return" else ["--yes"])
+
+    def test_main_commit_parameters_fail_closed_before_effects(self):
+        release_pairs = ["v0.0.1", "a" * 40, "v0.0.2", "b" * 40]
+        cases = [(release_pairs, None, "d" * 40),
+                 ([None] * 4, "c" * 40, "d" * 40),
+                 (release_pairs[:2] + [None, None], "c" * 40, "d" * 40)]
+        for invalid in ["", "a" * 7, "A" * 40, "g" * 40, "a" * 41, "a" * 40 + "\n"]:
+            cases.extend([(release_pairs, invalid, "d" * 40), (release_pairs, "c" * 40, invalid)])
+        for releases, initial, update in cases:
+            params = [*releases, initial, update]
+            with self.subTest(params=params), patch("tempfile.TemporaryDirectory") as temporary:
+                with self.assertRaises(ValueError):
+                    test_distribution.run_case(Path("/not-executed/herdr"), Path("/unused"), *params)
+                temporary.assert_not_called()
+            argv = ["test_distribution.py", "--herdr-bin", "/not-executed/herdr",
+                    "--asset-dir", "/not-executed/assets"]
+            for flag, value in zip(["--public-ref", "--public-commit", "--public-update-ref",
+                                    "--public-update-commit", "--public-main-commit",
+                                    "--public-update-main-commit"], params):
+                if value is not None:
+                    argv.extend([flag, value])
+            with self.subTest(argv=argv), patch("sys.argv", argv), patch("sys.stderr", io.StringIO()), patch(
+                    "pathlib.Path.resolve") as resolve, patch("test_distribution.run_case") as run:
+                with self.assertRaises(SystemExit) as error:
+                    test_distribution.main()
+                self.assertEqual(error.exception.code, 2)
+                resolve.assert_not_called()
+                run.assert_not_called()
+
+    def test_invalid_main_commit_rejected_before_cycle_commands(self):
+        for operation in ["install", "update", "return"]:
+            with self.subTest(operation=operation):
+                command = Mock()
+                with self.assertRaises(ValueError):
+                    test_distribution.public_cycle_step(command, ["herdr"], operation, "v0.0.1", "a" * 40, "C" * 40)
+                command.assert_not_called()
+
     def test_public_cycle_cli_selects_two_reviewed_versions(self):
         argv = ["test_distribution.py", "--herdr-bin", "/not-executed/herdr",
                 "--asset-dir", "/not-executed/assets", "--public-ref", "v0.0.1",
@@ -27,18 +155,23 @@ class DistributionHelpers(unittest.TestCase):
         executable = Mock()
         executable.__enter__ = Mock(return_value=io.BytesIO(b"\x7fELF"))
         executable.__exit__ = Mock(return_value=False)
-        with patch("sys.argv", argv), patch("sys.stderr", new_callable=io.StringIO), patch(
+        for extra, expected in [([], (None, None)),
+                                (["--public-main-commit", "c" * 40], ("c" * 40, None)),
+                                (["--public-main-commit", "c" * 40, "--public-update-main-commit", "d" * 40],
+                                 ("c" * 40, "d" * 40))]:
+            executable.__enter__.return_value = io.BytesIO(b"\x7fELF")
+            with self.subTest(extra=extra), patch("sys.argv", argv + extra), patch("sys.stderr", new_callable=io.StringIO), patch(
                 "pathlib.Path.resolve", autospec=True, side_effect=lambda path, **kw: path), patch(
                 "pathlib.Path.open", return_value=executable), patch("os.access", return_value=True), patch(
                 "pathlib.Path.is_dir", return_value=True), patch("test_distribution.run_case") as run:
-            status = 0
-            try:
-                test_distribution.main()
-            except SystemExit as error:
-                status = error.code
-            self.assertEqual(status, 0, "complete reviewed cycle parameters must be accepted")
-            run.assert_called_once_with(Path("/not-executed/herdr"), Path("/not-executed/assets"),
-                                        "v0.0.1", "a" * 40, "v0.0.2", "b" * 40)
+                status = 0
+                try:
+                    test_distribution.main()
+                except SystemExit as error:
+                    status = error.code
+                self.assertEqual(status, 0, "complete reviewed cycle parameters must be accepted")
+                run.assert_called_once_with(Path("/not-executed/herdr"), Path("/not-executed/assets"),
+                                            "v0.0.1", "a" * 40, "v0.0.2", "b" * 40, *expected)
 
     def test_public_cli_verifies_tag_before_installing_approved_commit(self):
         approved, moved, tag_object = "a" * 40, "b" * 40, "c" * 40
@@ -154,11 +287,23 @@ class DistributionHelpers(unittest.TestCase):
         self.assertEqual(sum("--symref" in c for c in commands), 4)
 
     def test_update_checkpoint_rejects_eof_or_unconfirmed_input_without_commands(self):
-        for text in ["", "yes\n", "update " + "a" * 40 + "\n", "update " + "b" * 40]:
+        for text in ["", "yes\n", "update " + "a" * 40 + "\n", "update " + "b" * 40,
+                     f"update {'a' * 40} {'d' * 40}\n", f"update {'b' * 40} {'D' * 40}\n",
+                     f"update {'b' * 40} {'d' * 7}\n", f"update {'b' * 40} {'d' * 40}",
+                     f"update {'b' * 40} {'d' * 40} extra\n", f"update  {'b' * 40} {'d' * 40}\n"]:
             with self.subTest(text=text), patch("sys.stdin", io.StringIO(text)), patch("sys.stdout", io.StringIO()):
                 command = Mock()
                 with self.assertRaises(ValueError):
                     test_distribution.public_cycle_step(command, ["herdr"], "update", "v0.0.2", "b" * 40)
+                command.assert_not_called()
+
+    def test_update_checkpoint_cannot_override_predeclared_reviewed_main(self):
+        release, main = "b" * 40, "c" * 40
+        for text in [f"update {release} {'d' * 40}\n", f"update {release}\n"]:
+            with self.subTest(text=text), patch("sys.stdin", io.StringIO(text)), patch("sys.stdout", io.StringIO()):
+                command = Mock()
+                with self.assertRaises(ValueError):
+                    test_distribution.public_cycle_step(command, ["herdr"], "update", "v0.0.2", release, main)
                 command.assert_not_called()
 
     def test_unpinned_operations_require_exact_public_main_and_tag(self):
@@ -347,6 +492,12 @@ class DistributionHelpers(unittest.TestCase):
                 with tarfile.open(assets / ARCHIVE.format(version)) as package:
                     for filename in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
                         self.assertEqual(package.extractfile(filename).read(), (ROOT / filename).read_bytes())
+            # The offline next-version fixture starts at 0.0.1 regardless of checkout version.
+            self.assertEqual(tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"], "0.0.1")
+            self.assertEqual(tomllib.loads((repo / "herdr-plugin.toml").read_text())["version"], "0.0.1")
+            package = next(p for p in tomllib.loads((repo / "Cargo.lock").read_text())["package"]
+                           if p["name"] == "herdr-crossroads")
+            self.assertEqual(package["version"], "0.0.1")
             fixture_next_version(repo)
             manifest = tomllib.loads((repo / "herdr-plugin.toml").read_text())
             self.assertEqual(manifest["version"], "0.1.1")
@@ -361,7 +512,8 @@ class DistributionHelpers(unittest.TestCase):
             public_repo, public_assets, public_payloads = prepare_fixture(public_base, trusted, "0.0.1")
             self.assertEqual(public_payloads, {"0.0.1": payload})
             self.assertEqual(sorted(p.name for p in public_assets.iterdir()), [name, name + ".sha256"])
-            self.assertEqual((public_repo / "herdr-plugin.toml").read_bytes(), (ROOT / "herdr-plugin.toml").read_bytes())
+            for filename in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+                self.assertEqual((public_repo / filename).read_bytes(), (ROOT / filename).read_bytes())
             self.assertFalse((public_repo / ".git").exists())
             update_name = ARCHIVE.format("0.0.2")
             # Synthetic helper inputs only; never public runtime evidence.

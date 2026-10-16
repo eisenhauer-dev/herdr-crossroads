@@ -1,6 +1,6 @@
 # Binary installation
 
-Crossroads 0.0.1 is the current test-version preparation, with a version-pinned
+Crossroads 0.0.2 is the current test-version preparation, with a version-pinned
 binary installer and a manifest `[[build]]` hook:
 `command = ["python3", "scripts/install-binary.py"]`. It installs the agreed
 version into the manifest's fixed `target/release/herdr-crossroads` path. It does
@@ -8,9 +8,16 @@ not build, execute the binary, or register/activate a plugin. By default it
 downloads the exact archive and checksum from the fixed GitHub Release route
 `https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v<VERSION>/`.
 An explicit `CROSSROADS_ASSET_DIR` selects offline local assets instead.
-**Prepared, not publicly accepted:** as of 2026-10-16 no release tag or Release
-exists. The public route cannot succeed until the matching reviewed checkout,
-tag and assets are published; publication and public acceptance remain pending.
+**Version 0.0.2 is not yet published or accepted.** The non-latest
+[v0.0.1 prerelease](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.0.1)
+is published from reviewed source `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`,
+with the exact four reviewed pipeline assets. Its isolated Herdr 0.9.5 public
+CLI-install and pinned native single-version tests passed on 2026-10-16, including
+opening, search, stable-ID focus, reopening/closing, notices, uninstall and owned
+shutdown. All four public downloads matched the approved hashes, and
+[main CI run 38871442877](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38871442877)
+passed. The local receipt is `target/public-cycle/0.0.1-verification.json`.
+The real 0.0.1 → 0.0.2 → 0.0.1 cycle remains unrun.
 There is no short-name registry.
 
 ## Requirements and local use
@@ -25,8 +32,8 @@ No tooling is installed by this helper.
 For the current agreed version, the exact files (public or local) are:
 
 ```text
-herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
-herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz
+herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 The [build helper](builds.md) produces these in `target/builds/`. From the trusted
@@ -50,7 +57,8 @@ The existing source-build route remains `cargo build --release --locked`, then
 the binary first. Linking is user-global registration, not an isolated test.
 See [README installation](../README.md#installation) for launch and local-link
 cleanup. The isolated [native managed lifecycle test](#native-distribution-acceptance)
-passed on Herdr 0.9.3; personal-host setup and public distribution remain untested.
+passed on Herdr 0.9.3; personal-host setup remains untested. Public CLI-install
+evidence is recorded separately above and is not native full-cycle acceptance.
 
 ## Validation and failure behavior
 
@@ -111,11 +119,11 @@ Herdr v0.9.3 and v0.9.5 (also verified in v0.9.1) accept `OWNER/REPO[/SUBDIR]`, 
 checking out `FETCH_HEAD`. A single slug such as `herdr-crossroads` fails usage;
 it does not resolve from a plugin registry.
 
-For the selected source, the prepared public pinned syntax is
+For the published test prerelease, the public pinned syntax is
 `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`
 with `CROSSROADS_ASSET_DIR` absent. Set the absolute local override to use trusted
-offline assets instead. **This is pending syntax, not a currently runnable public
-installation instruction or an existing public release.** Noninteractive callers additionally need `--yes`; review the
+offline assets instead. This selects 0.0.1, not the current 0.0.2 preparation.
+Noninteractive callers additionally need `--yes`; review the
 source, manifest, and assets before approving hook execution.
 
 Herdr v0.9.3 executes build argv in the manifest root before moving the checkout
@@ -211,10 +219,11 @@ change the personal installation.
 The planned test sequence is `0.0.1 → 0.0.2 → 0.0.1`, before the first regular
 Linux release `0.1.0`. These need separately built, reviewed and approved public
 assets; historical `0.1.0`/trailer-fixture results below do not satisfy that gate.
-The `0.0.2` version and its publication are not prepared by this version change.
+The fresh [local 0.0.2 build and artifact verification](builds.md) passed;
+publication and the actual public update/return cycle remain pending.
 
-Both harnesses also accept an explicit public mode. **Not executed; blocked on
-an approved published tag/Release and its reviewed commit.** Only the owning main
+Both harnesses also accept an explicit public mode. The pinned 0.0.1 CLI and
+native single-version invocations passed. Only the owning main
 session may run these after checking isolation and publication approval:
 
 ```sh
@@ -269,11 +278,19 @@ approval; it is not evidence of public acceptance.** No local version change,
 tag, Release, main change or publication is performed by the harness.
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.0.1 --public-commit "$REVIEWED_INITIAL_COMMIT" --public-update-ref v0.0.2 --public-update-commit "$REVIEWED_UPDATE_COMMIT"
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.0.1 --public-commit "$REVIEWED_INITIAL_COMMIT" --public-update-ref v0.0.2 --public-update-commit "$REVIEWED_UPDATE_COMMIT" --public-main-commit "$REVIEWED_INITIAL_MAIN_COMMIT"
 ```
 
 Replace the placeholders with two separately reviewed full lowercase 40-character
-commits and actual asset paths. The second ref/commit pair is opt-in and requires
+release commits and actual asset paths. `REVIEWED_INITIAL_COMMIT` is the 0.0.1 tag
+commit `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`, while
+`REVIEWED_INITIAL_MAIN_COMMIT` is the separately reviewed initial main commit
+`24e60502de675ca1d6d501ae1cc03421276a03c4`. Recheck that main identity before execution.
+`--public-main-commit` is cycle-only and defaults to the initial release SHA when
+omitted. The optional `--public-update-main-commit` predeclares the update main SHA
+and requires the initial-main flag plus both release pairs. Omit it when the actual
+update merge SHA is not yet known; authorize that reviewed SHA at the checkpoint.
+All SHAs must be full lowercase 40-character values. The second ref/commit pair is opt-in and requires
 the complete first pair. Cycle versions must be exactly `v0.0.1` and `v0.0.2`,
 with distinct commits, binary hashes and archive hashes. Both version-specific
 archives and their adjacent `.sha256` files must already coexist in `--asset-dir`.
@@ -285,10 +302,10 @@ and mismatched bindings fail closed.
 
 The owning primary/operator controls the sequence and stdin manually:
 
-1. Obtain approval for execution against reviewed main `0.0.1`. Hold an
+1. Obtain approval for execution against the reviewed initial main commit. Hold an
    **exclusive main freeze during the entire initial unpinned operation, including
    checkout and hook execution**. The harness verifies public default `HEAD` is
-   `refs/heads/main` at the exact initial reviewed commit, then runs
+   `refs/heads/main` at the exact initial reviewed main commit, then runs
    `herdr plugin install eisenhauer-dev/herdr-crossroads --yes` **without `--ref`**.
 2. After installation assertions and successful initial native navigation, the
    harness prints a checkpoint naming the required reviewed `0.0.2` commit and
@@ -296,13 +313,19 @@ The owning primary/operator controls the sequence and stdin manually:
    Only after the user separately authorizes that concrete remote `0.0.2` change
    may the primary arrange publication/main transition outside the harness.
    The initial freeze may be released at this checkpoint. Establish an exclusive
-   freeze at the reviewed update commit before confirming.
-3. Send exactly `update <REVIEWED_UPDATE_COMMIT>` followed by newline to that
-   stdin. EOF, other text or an unterminated confirmation aborts without executing
+   freeze at the reviewed actual update main commit before confirming; it may be
+   a merge commit distinct from the approved 0.0.2 release/tag commit.
+3. Send exactly `update <REVIEWED_UPDATE_RELEASE_SHA> <REVIEWED_ACTUAL_MAIN_SHA>`
+   followed by newline to that stdin. The release SHA must match the supplied
+   update release, and any predeclared update main SHA must match the actual main
+   SHA. The legacy `update <SHA>` form remains accepted for the predeclared main
+   SHA, or the update release SHA when no main SHA was predeclared.
+   EOF, other text or an unterminated confirmation aborts without executing
    update. Keep stdin interactive or retain a primary-owned writable stdin pipe;
    do not prefill confirmation, close stdin or use an automatic approval feeder.
    The harness does not poll main or mutate the remote. It verifies the update tag
-   and default main commit, then runs the actual
+   against its release SHA and default main against its separate approved main SHA,
+   then runs the actual
    `herdr plugin update herdr-crossroads --yes` (no `--ref` exists on update).
 4. After update assertions/navigation, the harness returns using the existing
    tag-verified `install --ref <REVIEWED_INITIAL_COMMIT>` path. This return does
@@ -310,6 +333,9 @@ The owning primary/operator controls the sequence and stdin manually:
    checks complete the same session's cycle.
 
 Each unpinned operation has exact main and tag checks before and after execution.
+Its `resolved_commit` must equal the approved main SHA; pinned return instead
+resolves to the initial release/tag SHA. Tags always bind to release SHAs, not
+necessarily to main's merge commits.
 **These checks do not eliminate a branch race**: hooks could execute an unreviewed
 checkout if main changes between checks, even if it later changes back. Exclusive
 main ownership/freeze throughout checkout and hooks is a required external safety
@@ -361,8 +387,10 @@ This passed the release-procedure **local trial with a public pipeline asset**,
 not released-asset installation, public source/download mode, or the real public
 `0.0.1 → 0.0.2 → 0.0.1` cycle. The replacement is still the synthetic trailer
 fixture; the actual `herdr plugin update` command was not executed. No tag or
-GitHub Release exists, and publication, public acceptance and release approval
-remain open. This does not extend the recorded runtime or license/security scope.
+GitHub Release existed at the time of this trial. Subsequent 0.0.1 publication
+and public CLI-install evidence are recorded above; the full public cycle and
+regular release approval remain open. This does not extend the recorded runtime
+or license/security scope.
 
 ## Dual-profile local acceptance
 
@@ -380,7 +408,7 @@ and sessions were untouched; no network or Rust/Cargo ran in the sandbox.
 | Canonical notices | `08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174` |
 
 This is local distribution evidence, not execution of the public download mode
-or a newly released runtime upgrade. The public tag/assets and acceptance remain
+or a newly released runtime upgrade. At the time, public tag/assets and acceptance remained
 pending. Earlier local-only-notice results below are historical evidence.
 
 ## Native distribution acceptance
@@ -419,7 +447,7 @@ Crossroads supplies no automatic updater. Herdr 0.9.3 has no `plugin update`
 command; the opt-in public cycle above exercises the 0.9.5 command. Default offline managed replacement
 uses `plugin install OWNER/REPO --ref <reviewed-ref>` again with matching trusted
 local assets; returning to a previous ref needs its matching assets too. The
-pinned public syntax above remains pending publication and acceptance.
+pinned public 0.0.1 CLI install passed separately; the full public cycle remains open.
 
 The current original-version fixture uses the matching local `0.0.1` archive and
 its unchanged binary; the historical runs below used `0.1.0`. The temporary
@@ -463,7 +491,7 @@ sandbox, and the personal session was untouched. This local mode was rerun after
 preparing public downloads, including all five real-CLI success/failure cases;
 six pure helper tests passed before that recorded execution. The hashes below
 identify that run, not every later repetition of the generated gzip fixture.
-Public-mode execution is still pending. The remaining older
+Public-mode execution was still pending at that time. The remaining older
 table records historical 0.9.3 evidence.
 
 | Recorded local fixture (2026-10-15) | Binary SHA256 | Archive SHA256 |

@@ -2,9 +2,32 @@
 
 The local build helper and CI job support exactly
 `x86_64-unknown-linux-gnu`. Artifacts are version-named for local release
-preparation, not published releases. The build helper makes no tags, publication,
+preparation; building does not publish releases. The build helper makes no tags, publication,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
+
+The current preparation version is `0.0.2`. On 2026-10-16 its fresh local build
+passed formatting, Clippy, 258 Rust tests, the matching-builder notice gate, all
+four full release PTYs and packaging. Separate artifact verification confirmed
+exactly four regular root-owned tar members, both checksums, canonical notices,
+and binary/map binding. Preserved modes are binary `0775`, other members `0664`;
+the installer normalizes installed modes separately.
+
+| Local 0.0.2 evidence | SHA256 |
+| --- | --- |
+| Archive | `ab78229b1d00c418c470dc8b8cc1a78978f8bd8ef550732fe90d528aa9b18bf0` |
+| Binary | `dfcb503acc84a6d25b95a0050e282e3cbd70c99df77294abf37726c557749d5d` |
+| Normalized map | `ec19a021ae9ed3a59e9f74a19c0131070ebdebec2d55921df2a4b61d163d4b71` |
+
+The reviewed local glibc 2.43 profile's 13 candidates matched; collection also
+included unused `crt1.o`, absent from the map. All 14 bound startup rows were
+covered glibc/GCC contributions, with no static system archive contributions,
+RPATH/RUNPATH or uncovered init contributions. The ELF dynamically needs libc,
+libgcc and the loader. Receipt: `target/public-cycle/0.0.2-verification.json`.
+This is local artifact evidence, not an Ubuntu/minimum-runtime claim or public
+acceptance; the glibc DSC-signature limitation remains. Version 0.0.2 publication
+and the real public update/return cycle remain pending. The `0.0.1` evidence below
+remains bound to its original assets.
 
 The older build and native results below are historical `0.1.0` evidence, not
 verification of `0.0.1`. A fresh local `0.0.1` build on 2026-10-16 passed formatting,
@@ -70,6 +93,15 @@ or a universal legal/security guarantee. The
 [unverified glibc DSC-signature boundary](releases.md#ubuntu-2404-system-profile)
 is unchanged.
 
+Those exact four assets were subsequently published as the non-latest
+[v0.0.1 prerelease](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.0.1)
+from reviewed source `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`.
+The isolated Herdr 0.9.5 public CLI-install and pinned native single-version tests
+passed on 2026-10-16. All four public asset downloads matched the approved hashes;
+[main CI run 38871442877](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38871442877)
+also passed. The two-version cycle remains unrun. The local receipt is
+`target/public-cycle/0.0.1-verification.json`.
+
 ## Build and verify locally
 
 Run from a trusted checkout on native Linux x86_64. Have Rust/Cargo, a system
@@ -123,13 +155,13 @@ Only after all four full PTYs pass does it package the archive. A successful
 invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
 
 ```text
-target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.link.map
 ```
 
-These names use the current test-preparation version `0.0.1`, not a fixed literal in the
+These names use the current test-preparation version `0.0.2`, not a fixed literal in the
 helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
@@ -217,7 +249,7 @@ this is not evidence of the Ubuntu 24.04 runner's glibc version.
 Verify the archive from the repository root:
 
 ```sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
+(cd target/builds && sha256sum -c herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256)
 ```
 
 After extracting the tar into a separate empty directory, run
@@ -228,11 +260,11 @@ binary is not automatically placed at that path by the build helper. The separat
 [binary installer](installation.md) validates the tar and atomically installs
 that binary at the manifest path without Rust/Cargo. An explicit trusted local
 asset directory selects offline installation; otherwise it uses the prepared
-version-pinned GitHub Release route, still awaiting publication and acceptance.
+version-pinned GitHub Release route; 0.0.2 still awaits publication and acceptance.
 The [source build-then-link route](../README.md#installation)
-also remains available. The selected future source is
+also remains available. The public source is
 `eisenhauer-dev/herdr-crossroads`; public repository access was verified on
-2026-10-15. No release tag or published binary asset is established yet.
+2026-10-15. The published 0.0.1 prerelease is separate from current 0.0.2 preparation.
 
 ## Runtime and verification limits
 
