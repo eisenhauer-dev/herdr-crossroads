@@ -8,7 +8,7 @@ not build, execute the binary, or register/activate a plugin. By default it
 downloads the exact archive and checksum from the fixed GitHub Release route
 `https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v<VERSION>/`.
 An explicit `CROSSROADS_ASSET_DIR` selects offline local assets instead.
-**Prepared, not publicly accepted:** as of 2026-10-15 no release tag or Release
+**Prepared, not publicly accepted:** as of 2026-10-16 no release tag or Release
 exists. The public route cannot succeed until the matching reviewed checkout,
 tag and assets are published; publication and public acceptance remain pending.
 There is no short-name registry.
@@ -344,6 +344,25 @@ The replacement still used the explicitly synthetic offline `0.1.1` trailer
 fixture, not a real second runtime. Neither public mode nor the actual Herdr
 update command was executed. These are local preflight results, not public
 acceptance or release approval; the public `0.0.1/0.0.2` gate remains open.
+
+### Pipeline-asset local trial
+
+On 2026-10-16 main repeated both isolated Herdr 0.9.5 harnesses using the exact
+downloaded [0.0.1 public pipeline artifact](builds.md#current-001-public-pipeline-evidence):
+archive SHA256 `5750e503cfff7447538f92d3b96f4d60f211a1f3788d0420246cd0bc7b76d31e`,
+binary SHA256 `145898e7e925df0576af9b124afd8c76c2241f2d5ad64691164ec2eb3a029b41`.
+All five real-CLI local cases passed (success, missing asset, missing checksum,
+bad hash, wrong target). The native offline cycle
+`0.0.1 → synthetic 0.1.1 → 0.0.1` passed opening, search/focus, notice retention,
+uninstall and owned shutdown in temporary HOME/XDG/session paths under
+`/tmp/opencode`.
+
+This passed the release-procedure **local trial with a public pipeline asset**,
+not released-asset installation, public source/download mode, or the real public
+`0.0.1 → 0.0.2 → 0.0.1` cycle. The replacement is still the synthetic trailer
+fixture; the actual `herdr plugin update` command was not executed. No tag or
+GitHub Release exists, and publication, public acceptance and release approval
+remain open. This does not extend the recorded runtime or license/security scope.
 
 ## Dual-profile local acceptance
 

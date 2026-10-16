@@ -1,6 +1,6 @@
 # Tested Linux build artifacts
 
-The local build helper and prepared CI job support exactly
+The local build helper and CI job support exactly
 `x86_64-unknown-linux-gnu`. Artifacts are version-named for local release
 preparation, not published releases. The build helper makes no tags, publication,
 plugin activation, or installation changes. See [release preparation](releases.md)
@@ -27,6 +27,48 @@ lacks `_IO_stdin_used` and `_dl_relocate_static_pie`. This is artifact-specific 
 evidence, not public CI, distribution acceptance, or a legal/security guarantee.
 The documented source-signature limits remain. Existing historical local artifacts
 were not renamed or removed. See [local installation checks](installation.md#local-001-preflight).
+
+## Current 0.0.1 public pipeline evidence
+
+On 2026-10-16 public PR [run 38867597394](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38867597394)
+passed formatting, Clippy, 258 Rust tests, Python helper tests (including source
+policy), the mandatory exact-builder notice gate, the explicit-target release
+build, all four full PTYs, packaging and upload. This is the fresh Ubuntu 24.04
+gate result, distinct from the historical `0.1.0` runs below.
+
+Artifact `12032370902`, `herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu`, records
+head `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`. The actual PR checkout was
+`448362638a37aee7be3711a1ce9d429386c9e40a`, with parents
+`5239c17dd0548f55c76d380998e327a6766e86dd` and that reviewed head; GitHub's tree
+`b256a58a781fa1455b93f8a47cb23d04357a8520` equals the reviewed head's tree.
+
+| Downloaded 0.0.1 evidence | SHA256 |
+| --- | --- |
+| Actions ZIP | `74a7c183e15b091e1b204af233874ad53ef1f565ff2c67e1938d487c46491dc5` |
+| Archive | `5750e503cfff7447538f92d3b96f4d60f211a1f3788d0420246cd0bc7b76d31e` |
+| Binary | `145898e7e925df0576af9b124afd8c76c2241f2d5ad64691164ec2eb3a029b41` |
+| Normalized map | `e14f6ad3cca0e8891a8561a738466df1cc6b30c7cde3d66d0ba720c1ddfd90ea` |
+
+Independent primary verification matched the ZIP digest and its exact four files
+to the downloaded archive/checksum and JSON/map sidecars. The tar has exactly four
+regular members, numeric root ownership, binary mode `0755` and other modes
+`0644`; both checksums and both notice files matched the trusted commit.
+All 13 GCC candidates matched the reviewed Ubuntu profile; all 14 collected
+candidates, including `crt1.o`, matched the prior primary package proof's bytes
+and binary/source package identities. The checked-in profile, startup-source
+evidence and canonical notices were hash-identical to that proof.
+
+Fresh checks of this bound ELF/map found PIE, no RPATH/RUNPATH, no
+`_IO_stdin_used` or `_dl_relocate_static_pie`, only 14 covered glibc/GCC startup
+rows, and no static `libc_nonshared.a`, `libgcc.a` or `libgcc_eh.a` members.
+The retained local receipt is
+`target/public-pipeline/38867597394/verification.json` (ignored build evidence,
+not a published asset). The [local native trial](installation.md#pipeline-asset-local-trial)
+also passed with these exact downloaded bytes. This is artifact-specific evidence,
+not distribution approval, public Release installation, a minimum-runtime claim,
+or a universal legal/security guarantee. The
+[unverified glibc DSC-signature boundary](releases.md#ubuntu-2404-system-profile)
+is unchanged.
 
 ## Build and verify locally
 
@@ -153,7 +195,7 @@ order, not just the current host. The Ubuntu profile was reconciled against exac
 official package payloads matching the actual PR run's candidate hashes; it is not
 a relabeled local inventory. [Source/package provenance and limits](releases.md#ubuntu-2404-system-profile)
 include the exact patched glibc headers. The mandatory pre-build system check has
-passed locally; its actual Ubuntu-runner execution remains pending a fresh CI run.
+passed locally and in the [fresh Ubuntu CI run](#current-001-public-pipeline-evidence).
 Neither a profile match nor collection proves linked contributions or distribution
 readiness: retain the manual matching raw-map/ELF release gate.
 
@@ -164,7 +206,7 @@ canonical notice bytes, binary/map hash binding and normalized private prefixes.
 The binary remained byte-identical to the earlier local executable. Both isolated
 real-Herdr 0.9.5 harnesses subsequently passed against this repackaged asset; see
 [dual-profile native acceptance](installation.md#dual-profile-local-acceptance).
-Actual CI execution of the new notice gate is still pending.
+The later [0.0.1 CI run](#current-001-public-pipeline-evidence) passed the new notice gate.
 
 Local collector verification on 2026-10-15 used the offline helper invocation
 above: a fresh link, all four full PTYs, packaging, binary/map SHA256 binding,

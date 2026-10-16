@@ -84,8 +84,8 @@ See [builder evidence and limits](builds.md#builderlink-evidence-not-distributio
 Review the normalized raw map rather than treating every traced file or GCC
 candidate as an actual contribution. The actual PR run's system candidates and
 exact Ubuntu package/source evidence are now recorded in the reviewed Ubuntu
-profile below. Repeat actual-runner validation on a fresh CI run, and manually
-reconcile its matching raw map/ELF before distribution. A successful collection,
+profile below. The [fresh 0.0.1 CI gate and matching raw-map/ELF checks](builds.md#current-001-public-pipeline-evidence)
+passed; repeat these checks for each new asset before distribution. A successful collection,
 profile match, or build alone is not distribution approval.
 
 ## License inventory and verification
@@ -205,11 +205,12 @@ identifies `Scrt1.o` inputs as `start.os`, `abi-note.o` and `init.o`; the unused
 not arbitrary later builds or a universal glibc exception.
 
 The retained local copy of the old PR artifact carries the old local-only notices; it is evidence for
-its candidate bytes, not a corrected distribution asset. A fresh CI run must pass
-the new mandatory matching-profile gate, all four full PTYs and packaging/upload;
-then independently check the four-member tar, checksums and exact canonical notice
-bytes, and manually reconcile that run's bound raw map/ELF. Actual CI execution of
-the new gate and final distribution approval remain pending.
+its candidate bytes, not a corrected distribution asset. The fresh
+[0.0.1 pipeline verification](builds.md#current-001-public-pipeline-evidence)
+passed the new mandatory matching-profile gate, all four full PTYs and
+packaging/upload, independent four-member tar/checksum/canonical-notice checks,
+and matching raw-map/ELF reconciliation. Final distribution approval remains pending;
+these artifact-specific checks must be repeated for new assets.
 
 ### Installed system provenance and verified startup exceptions
 
@@ -341,8 +342,11 @@ passed the gates, explicit-target build, all four full isolated PTYs, packaging,
 and upload on Ubuntu 24.04. This is not a dry-run release publication.
 Independent [downloaded pipeline-artifact verification](builds.md#downloaded-public-pipeline-verification)
 passed on 2026-10-15, including all four full local PTYs against the downloaded
-binary. The public release-procedure trial and matching CI system/link provenance
-remain outstanding. Before any tag, push, or publication, obtain
+binary. The later [0.0.1 public pipeline](builds.md#current-001-public-pipeline-evidence)
+passed the new Ubuntu builder gate and matching system/link provenance checks.
+The [release-procedure local trial](installation.md#pipeline-asset-local-trial)
+passed using that public CI artifact, not a released asset or public download-mode
+installation. Publication and public acceptance remain outstanding. Before any tag, push, or publication, obtain
 explicit approval for that action and the reviewed version/ref/assets. A proposed
 tag convention is `v<version>` (for example `v0.0.1`); no tag is created here.
 
@@ -359,6 +363,7 @@ no public installer readiness or actual GitHub release automation is claimed.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
 The selected future source is `eisenhauer-dev/herdr-crossroads`; public repository
 access was verified on 2026-10-15. Public CI execution and upload are verified;
-release tag/asset availability, the public release-procedure trial, and final
-release approval remain open. Downloaded pipeline-artifact verification is
+release tag/asset availability, the public install/update/return cycle, and final
+release approval remain open. The pipeline-asset local trial does not close those
+gates. Downloaded pipeline-artifact verification is
 recorded in the build guide; it is not a released-asset installation test.
