@@ -3,8 +3,11 @@
 import html
 import copy
 import json
+import hashlib
+from html.parser import HTMLParser
 from pathlib import Path
 import runpy
+import re
 import subprocess
 import sys
 import unittest
@@ -15,6 +18,95 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NoticeTests(unittest.TestCase):
+    def test_published_html_requires_exact_version_and_equivalent_trusted_markdown(self):
+        from test_install_binary import InstallBinaryTests
+        fixture = InstallBinaryTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.check_published_html_requires_exact_version_and_equivalent_trusted_markdown()
+
+    def test_cached_license_bytes_keep_original_line_endings(self):
+        self.assertIn("THIRD-PARTY-NOTICES.md -text", (ROOT / ".gitattributes").read_text().splitlines())
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        generated = generator["generate"]()
+        tree = generator["command"]("cargo", "tree", "--offline", "--locked", "--target",
+                                    generator["TARGET"], "-e", "normal,build", "--prefix", "none")
+        active = set(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
+        metadata = json.loads(generator["command"](
+            "cargo", "metadata", "--offline", "--locked", "--format-version", "1",
+            "--filter-platform", generator["TARGET"]))
+        count = 0
+        for package in metadata["packages"]:
+            if not package["source"] or (package["name"], package["version"]) not in active:
+                continue
+            for path in Path(package["manifest_path"]).parent.rglob("*"):
+                if path.is_file() and re.search(r"licen[cs]e|notice|copyright|copying|attribution", path.name, re.I):
+                    self.assertIn("\n" + path.read_bytes().decode() + "\n", generated, str(path))
+                    count += 1
+        self.assertEqual(count, 140)
+
+    def test_output_is_markdown_with_every_original_verbatim_block(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        generated = generator["generate"]()
+        self.assertTrue(generated.startswith("# Crossroads third-party notices\n"),
+                        "notices must be genuine Markdown, not renamed HTML")
+        original = generator["generate_html"]()
+        self.assertEqual(hashlib.sha256(original.replace("\r\n", "\n").encode()).hexdigest(),
+                         "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174")
+        class Blocks(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.blocks = []
+                self.current = None
+                self.prose = []
+                self.urls = []
+            def handle_starttag(self, tag, attrs):
+                if tag == "pre":
+                    self.current = ""
+                if tag == "a":
+                    self.urls.append(dict(attrs)["href"])
+            def handle_data(self, data):
+                if self.current is not None:
+                    self.current += data
+                elif data.strip():
+                    self.prose.append(re.sub(r"\s+", " ", data).strip())
+            def handle_endtag(self, tag):
+                if tag == "pre":
+                    self.blocks.append(self.current)
+                    self.current = None
+        parser = Blocks()
+        parser.feed(original)
+        self.assertEqual(len(parser.blocks), 458)
+        # Delimiters add one newline; the enclosed bytes, including all original
+        # leading/trailing whitespace and decoded entities, remain untouched.
+        self.assertEqual(re.findall(r"^(`{3,})\n(.*?)\n\1$", generated, re.M | re.S),
+                         [("`" * max(3, max((len(s) + 1 for s in re.findall(r"`+", block)), default=0)), block)
+                          for block in parser.blocks])
+        for text in parser.prose:
+            text = text.replace("Texts below are reproduced without modification (HTML-escaped).",
+                                "Texts below are reproduced without modification in verbatim fenced blocks.")
+            escaped = re.sub(r"([\\`*_{}\[\]<>])", r"\\\1", text)
+            self.assertIn(escaped, generated)
+        for url in parser.urls:
+            if not url.startswith("#"):
+                self.assertIn("](<" + url + ">)", generated)
+        self.assertEqual(len(parser.urls), 148)
+        self.assertNotIn("<details>", generated)
+        self.assertNotIn("<pre>", generated)
+        self.assertNotIn("<html>", generated)
+        self.assertIn("[Short version for non-lawyers](<#short-version-for-non-lawyers>)", generated)
+
+    def test_conversion_preserves_entities_whitespace_and_fence_collisions(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        convert = generator["markdown"]
+        text = "\r\n  A & B <tag> &#34; literal\t\n```\n````\nend  "
+        result = convert("<h1>Notices</h1><pre>" + html.escape(text) + "</pre>")
+        self.assertEqual(result, "# Notices\n\n`````\n" + text + "\n`````\n")
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            convert("<script>lost attribution</script>")
+        self.assertEqual(convert("<div><p>parent</p><div><p>exception</p></div><p>parent again</p></div>"),
+                         "> parent\n\n> > exception\n\n> parent again\n")
+
     def test_check_rejects_unreviewed_builder_even_when_cargo_and_rust_match(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         original = generator["command"]
@@ -93,7 +185,7 @@ class NoticeTests(unittest.TestCase):
                            "sysdeps/pthread/pthread_atfork.c", "debug/stack_chk_fail_local.c"]:
                 self.assertIn("File: " + source + "\n", text)
             self.assertEqual(text.count("gives you unlimited"), 8)
-            self.assertTrue(html.escape(text) in generated,
+            self.assertTrue(text in generated,
                             "full verified startup header artifact must accompany the binary notices")
 
     def test_glibc_startup_exception_evidence_requires_matching_source_package(self):
@@ -138,13 +230,13 @@ class NoticeTests(unittest.TestCase):
     def test_system_notices_preserve_installed_copyright_and_full_licenses(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         generated = generator["generate"]()
-        self.assertTrue("<h1>System startup and runtime provenance</h1>" in generated,
+        self.assertTrue("# System startup and runtime provenance" in generated,
                         "binary notice inventory must include system startup/runtime evidence")
         for filename in ["/usr/share/doc/libc6-dev/copyright",
                          "/usr/share/doc/libgcc-s1/copyright",
                          "/usr/share/common-licenses/LGPL-2.1",
                          "/usr/share/common-licenses/GPL-3"]:
-            self.assertTrue(html.escape(Path(filename).read_text()) in generated,
+            self.assertTrue(Path(filename).read_text() in generated,
                             f"full installed notice/license must be preserved: {filename}")
         self.assertTrue("Notice/license file SHA256:" in generated,
                         "copied system notices need hash and installed provider provenance")
@@ -155,10 +247,10 @@ class NoticeTests(unittest.TestCase):
     def test_checked_in_notice_reproduces_all_exact_cached_sources(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         generated = generator["generate"]()
-        self.assertEqual((ROOT / "THIRD-PARTY-NOTICES.html").read_text(), generated)
+        self.assertEqual((ROOT / "THIRD-PARTY-NOTICES.md").read_bytes().decode(), generated)
         self.assertIn("78 unique registry package versions", generated)
         for text in ["foldhash 0.2.0", "unicode-ident 1.0.26", "LICENSE-UNICODE",
-                     "unicode-general-category 1.1.0", "<h3>COPYING</h3>",
+                     "unicode-general-category 1.1.0", "### COPYING",
                      "Copyright notices for The Rust Standard Library"]:
             self.assertIn(text, generated)
 

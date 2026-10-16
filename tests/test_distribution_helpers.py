@@ -19,6 +19,35 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DistributionHelpers(unittest.TestCase):
+    def test_notice_expectations_distinguish_pinned_html_from_current_markdown(self):
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-notice-helper-") as temporary:
+            base = Path(temporary)
+            managed, reference = base / "managed", base / "reference"
+            managed.mkdir()
+            reference.mkdir()
+            (reference / "LICENSE").write_bytes(b"MIT fixture")
+            (reference / "THIRD-PARTY-NOTICES.md").write_bytes(b"Markdown fixture")
+            old = managed / "THIRD-PARTY-NOTICES.html"
+            old.write_bytes(b"historical fixture")
+            expected = test_distribution.expected_notices
+            with patch.dict(test_distribution.INSTALLER,
+                            LEGACY_NOTICE_SHA256=digest(old.read_bytes()),
+                            LEGACY_MARKDOWN_SHA256=digest(b"Markdown fixture")):
+                self.assertEqual(expected(managed, reference, True), {
+                    "LICENSE": b"MIT fixture", "THIRD-PARTY-NOTICES.html": b"historical fixture"})
+                with self.assertRaises(AssertionError):
+                    expected(managed, reference, False)
+                old.write_bytes(b"tampered")
+                with self.assertRaises(AssertionError):
+                    expected(managed, reference, True)
+                old.write_bytes(b"historical fixture")
+                (reference / "THIRD-PARTY-NOTICES.md").write_bytes(b"changed inventory")
+                with self.assertRaises(AssertionError):
+                    expected(managed, reference, True)
+            (managed / "THIRD-PARTY-NOTICES.md").write_bytes(b"Markdown source")
+            self.assertEqual(expected(managed, reference, False), {
+                "LICENSE": b"MIT fixture", "THIRD-PARTY-NOTICES.md": b"changed inventory"})
+
     def test_cli_prepares_offline_metadata_without_changing_public_metadata(self):
         class FixtureChecked(Exception):
             pass
@@ -476,7 +505,7 @@ class DistributionHelpers(unittest.TestCase):
                 for filename, data in [("herdr-crossroads", payload), ("herdr-crossroads.sha256",
                                        f"{digest(payload)}  herdr-crossroads\n".encode()),
                                        ("LICENSE", (ROOT / "LICENSE").read_bytes()),
-                                       ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes())]:
+                                       ("THIRD-PARTY-NOTICES.md", (ROOT / "THIRD-PARTY-NOTICES.md").read_bytes())]:
                     entry = tarfile.TarInfo(filename)
                     entry.size = len(data)
                     package.addfile(entry, io.BytesIO(data))
@@ -490,7 +519,7 @@ class DistributionHelpers(unittest.TestCase):
             self.assertNotEqual(digest(payloads["0.0.1"]), digest(payloads["0.1.1"]))
             for version in ["0.0.1", "0.1.1"]:
                 with tarfile.open(assets / ARCHIVE.format(version)) as package:
-                    for filename in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                    for filename in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
                         self.assertEqual(package.extractfile(filename).read(), (ROOT / filename).read_bytes())
             # The offline next-version fixture starts at 0.0.1 regardless of checkout version.
             self.assertEqual(tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"], "0.0.1")
@@ -521,7 +550,7 @@ class DistributionHelpers(unittest.TestCase):
                 for filename, data in [("herdr-crossroads", payload + b"second"),
                                        ("herdr-crossroads.sha256", f"{digest(payload + b'second')}  herdr-crossroads\n".encode()),
                                        ("LICENSE", (ROOT / "LICENSE").read_bytes()),
-                                       ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes())]:
+                                       ("THIRD-PARTY-NOTICES.md", (ROOT / "THIRD-PARTY-NOTICES.md").read_bytes())]:
                     entry = tarfile.TarInfo(filename)
                     entry.size = len(data)
                     package.addfile(entry, io.BytesIO(data))

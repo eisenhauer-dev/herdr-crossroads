@@ -91,9 +91,15 @@ target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
 target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
 ```
 
-The tar contains the exact tested executable, preserving its executable mode,
-`herdr-crossroads.sha256`, the project's `LICENSE`, and `THIRD-PARTY-NOTICES.html`.
+New builds' tar contains the exact tested executable, preserving its executable mode,
+`herdr-crossroads.sha256`, the project's `LICENSE`, and `THIRD-PARTY-NOTICES.md`.
 The installer requires all four files and retains both notices beside the binary.
+The already-published `v0.1.0` archive still contains `THIRD-PARTY-NOTICES.html`;
+it is not replaced or relabeled by this conversion. The version is unchanged,
+so new local archive bytes differ despite identical filenames. Current checkouts
+accept only the exact historical HTML paired with the pinned equivalent Markdown;
+[installation](installation.md#validation-and-failure-behavior) specifies the hashes
+and unchanged negative checks. Old pinned checkouts continue installing HTML.
 Ownership is normalized to numeric root. Both
 checksum entries use portable filenames. SHA256 detects corruption, not asset
 authenticity or publisher identity. See [builds](builds.md) for prerequisites,
@@ -145,7 +151,7 @@ profile match, or build alone is not distribution approval.
 
 ## License inventory and verification
 
-`THIRD-PARTY-NOTICES.html` preserves actual full license/copyright/attribution
+`THIRD-PARTY-NOTICES.md` preserves actual full license/copyright/attribution
 texts, not just SPDX expressions, including system startup/runtime package records
 and the full system license files those records reference.
 `scripts/third-party-notices.py --write` uses
@@ -176,6 +182,27 @@ Rust's exact-commit [COPYRIGHT](https://github.com/rust-lang/rust/blob/b940084d7
 identifies this file as the standard-library attribution source. The public
 versioned documentation URL returned 404 on 2026-10-15, so the installed
 toolchain's notice file was used with explicit read authorization.
+
+The generator renders its reviewed HTML vocabulary into Markdown headings,
+links, nested blockquotes (preserving the scope of Rust's in-tree exceptions),
+and expanded notice sections rather than embedding the upstream HTML body.
+Preformatted license text is HTML-decoded exactly once and fenced without
+stripping or reflowing it; fences exceed any backtick run in the text. Cached
+crate files are read as UTF-8 bytes, preserving their original CRLF where present
+(the old HTML generator normalized those line endings). `.gitattributes` disables
+Git text normalization for this generated file so checkouts retain those bytes
+and the installer compatibility pin. The upstream Rust HTML
+SHA256 still identifies the original source bytes, not the Markdown rendition.
+Tests compare all 458 preformatted blocks in order, all prose and external links,
+and all 140 active packaged license/notice files against the exact local sources.
+The historical renderer, with its original newline normalization, reproduces the
+HTML hash from reviewed source
+[`490b0d74dc866b6ed83786f7aaa5657c35db5c51`](https://github.com/eisenhauer-dev/herdr-crossroads/blob/490b0d74dc866b6ed83786f7aaa5657c35db5c51/THIRD-PARTY-NOTICES.html).
+On 2026-10-16, the public `v0.1.0` archive and its adjacent checksum were read
+and verified: archive SHA256
+`d55b5bc611f74a7f1a61de789428e01fcf9b414640153c796f10a6a8a049304e`,
+with the exact pinned HTML and checkout-matching `LICENSE`. This read-only check
+does not replace a new native installation or distribution acceptance run.
 
 For approved dependency/toolchain/builder changes, with exact cached crate sources,
 the installed toolchain's Rust documentation, native GCC driver, `dpkg-query`,

@@ -33,7 +33,7 @@ class BuildLinuxTests(unittest.TestCase):
         checker = ROOT / "scripts/check-version.py"
         if checker.exists():
             shutil.copy2(checker, self.repo / "scripts/check-version.py")
-        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.md"]:
             if not (ROOT / name).exists():
                 continue
             shutil.copy2(ROOT / name, self.repo / name)
@@ -133,8 +133,8 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         archive = self.output / ARCHIVE
         self.assertEqual(archive.read_bytes()[:2], b"\x1f\x8b", "successful build must replace the versioned archive")
         with tarfile.open(archive) as package:
-            self.assertEqual(package.getnames(), ["herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"])
-            for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+            self.assertEqual(package.getnames(), ["herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.md"])
+            for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
                 self.assertEqual(package.extractfile(name).read(), (ROOT / name).read_bytes())
             binary = package.getmember("herdr-crossroads")
             self.assertEqual(binary.mode & 0o111, 0o111)
@@ -169,7 +169,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         self.assertIn("version", result.stderr.lower())
 
     def test_stale_or_missing_notices_block_packaging(self):
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             with self.subTest(name=name):
                 path = self.repo / name
                 if path.exists():

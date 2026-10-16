@@ -276,7 +276,7 @@ metadata into caller-selected files.
 
 The tar contains exactly four regular files: `herdr-crossroads` (with its executable
 mode preserved), `herdr-crossroads.sha256` (the binary's SHA256), `LICENSE`
-(the project's full MIT terms), and `THIRD-PARTY-NOTICES.html` (full dependency
+(the project's full MIT terms), and `THIRD-PARTY-NOTICES.md` (full dependency
 license/attribution texts, Rust standard-library notices, and installed system
 startup/runtime copyright/full-license records and exact glibc startup linking
 exception headers). Keep the notices
@@ -284,6 +284,13 @@ with redistributed binaries. Archive ownership is normalized
 to numeric root, rather than recording the builder's username. The adjacent file
 checksums the tar. Checksum entries contain filenames, not checkout paths.
 Checksums detect corruption, not authenticity or publisher identity.
+
+This describes new local/CI builds, not a replacement of the published `v0.1.0`
+assets, which still contain `THIRD-PARTY-NOTICES.html`. The version remains
+`0.1.0`; identical artifact filenames do not imply identical archive bytes.
+Do not publish or replace assets without separate approval. The current installer
+supports that exact historical HTML through the
+[pinned compatibility contract](installation.md#validation-and-failure-behavior).
 
 Build, PTY, and packaging failures return nonzero and remove the current-version archive,
 archive checksum, JSON/map evidence and temporary packaging files; handled INT/TERM

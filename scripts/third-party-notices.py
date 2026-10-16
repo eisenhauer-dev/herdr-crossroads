@@ -1,7 +1,8 @@
-"""Generate cached exact-version notices, or cheaply reject stale build inputs."""
+"""Generate exact-version Markdown notices, or cheaply reject stale build inputs."""
 
 import hashlib
 import html
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -12,7 +13,118 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-unknown-linux-gnu"
-NOTICE = ROOT / "THIRD-PARTY-NOTICES.html"
+NOTICE = ROOT / "THIRD-PARTY-NOTICES.md"
+
+
+class Markdown(HTMLParser):
+    """Convert the reviewed notice HTML vocabulary; fail on upstream changes.
+
+    Preformatted text is decoded once by HTMLParser and never stripped, wrapped,
+    or escaped. A longer fence prevents license text from closing its own block.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.blocks = []
+        self.text = ""
+        self.pre = None
+        self.head = False
+        self.depth = 0
+        self.prefix = ""
+        self.links = []
+        self.anchors = {}
+        self.heading_id = None
+
+    def flush(self):
+        text = self.text.strip()
+        if text:
+            self.blocks.append("> " * self.depth + self.prefix + text)
+        self.text = ""
+        self.prefix = ""
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        allowed = {"html", "head", "meta", "title", "body", "h1", "h2", "h3",
+                   "p", "pre", "b", "code", "a", "ul", "li", "div", "details", "summary"}
+        permitted = {"meta": {"charset"}, "div": {"style"}, "a": {"href"},
+                     "h1": {"id"}, "h2": {"id"}, "h3": {"id"}}
+        if tag not in allowed or set(attributes) - permitted.get(tag, set()):
+            raise ValueError(f"unsupported notice HTML: {tag} {attrs}")
+        if self.pre is not None:
+            raise ValueError("unsupported markup inside preformatted notice")
+        if tag == "head":
+            self.head = True
+        if self.head:
+            return
+        if tag in {"h1", "h2", "h3", "p", "pre", "li", "div", "details", "summary", "ul"}:
+            self.flush()
+        if tag in {"h1", "h2", "h3"}:
+            self.prefix = "#" * int(tag[1]) + " "
+            self.heading_id = attributes.get("id")
+        elif tag == "div":
+            self.depth += 1
+        elif tag == "li":
+            self.prefix = "- "
+        elif tag == "pre":
+            self.pre = ""
+        elif tag == "b":
+            self.text += "**"
+        elif tag == "a":
+            self.links.append(attributes["href"])
+            self.text += "["
+
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self.head = False
+            return
+        if self.head:
+            return
+        if tag == "pre":
+            fence = "`" * max(3, max((len(s) + 1 for s in re.findall(r"`+", self.pre)), default=0))
+            self.blocks.append(fence + "\n" + self.pre + "\n" + fence)
+            self.pre = None
+        elif tag == "a":
+            self.text += "](<" + self.links.pop() + ">)"
+        elif tag == "b":
+            self.text += "**"
+        elif tag in {"h1", "h2", "h3", "p", "li", "div", "details", "summary", "ul"}:
+            if tag in {"h1", "h2", "h3"} and self.heading_id:
+                self.anchors[self.heading_id] = re.sub(r"[^\w -]", "", self.text.lower()).replace(" ", "-")
+                self.heading_id = None
+            self.flush()
+            if tag == "div":
+                self.depth -= 1
+
+    def handle_data(self, data):
+        if self.head:
+            return
+        if self.pre is not None:
+            self.pre += data
+        else:
+            # HTML prose whitespace is collapsible, unlike preformatted text.
+            self.text += re.sub(r"([\\`*_{}\[\]<>])", r"\\\1", re.sub(r"\s+", " ", data))
+
+    def handle_comment(self, data):
+        if not self.head:
+            self.flush()
+            self.blocks.append("<!--" + data + "-->")
+
+
+def markdown(source):
+    parser = Markdown()
+    parser.feed(source)
+    parser.close()
+    parser.flush()
+    if parser.pre is not None:
+        raise ValueError("unterminated preformatted notice")
+    # Keep the document title first, before machine-readable provenance comments.
+    title = next((i for i, block in enumerate(parser.blocks) if block.startswith("# ")), None)
+    if title is not None:
+        parser.blocks.insert(0, parser.blocks.pop(title))
+    result = "\n\n".join(parser.blocks) + "\n"
+    for anchor, slug in parser.anchors.items():
+        result = result.replace("](<#" + anchor + ">)", "](<#" + slug + ">)")
+    return result
 
 
 def command(*args):
@@ -110,7 +222,7 @@ def system_notices():
     return output
 
 
-def generate():
+def generate_html():
     tree = command("cargo", "tree", "--offline", "--locked", "--target", TARGET,
                    "-e", "normal,build", "--prefix", "none")
     active = set(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
@@ -125,7 +237,7 @@ def generate():
         raise ValueError("active package inventory does not match metadata")
     toolchain = command("rustc", "--version")
     sysroot = Path(command("rustc", "--print", "sysroot"))
-    standard_library = (sysroot / "share/doc/rust/COPYRIGHT-library.html").read_text()
+    standard_library = (sysroot / "share/doc/rust/COPYRIGHT-library.html").read_bytes().decode()
     verbose = command("rustc", "--version", "--verbose")
     commit = re.search(r"^commit-hash: ([0-9a-f]{40})$", verbose, re.M)
     if commit is None:
@@ -161,7 +273,7 @@ def generate():
             raise ValueError(f"no notice files found for {name} {version}")
         for path in files:
             output += [f"<h3>{html.escape(str(path.relative_to(root)))}</h3>",
-                       "<pre>" + html.escape(path.read_text()) + "</pre>"]
+                       "<pre>" + html.escape(path.read_bytes().decode()) + "</pre>"]
     output += ["<h1>Rust standard library (conservative upstream inventory)</h1>",
                f"<p>Rust source commit: https://github.com/rust-lang/rust/tree/{commit[1]}. "
                f"Upstream COPYRIGHT-library.html SHA256: {hashlib.sha256(standard_library.encode()).hexdigest()}.</p>",
@@ -172,6 +284,12 @@ def generate():
     output += system_notices()
     output.append("</body></html>\n")
     return "\n".join(output)
+
+
+def generate():
+    return markdown(generate_html()).replace(
+        "Texts below are reproduced without modification (HTML-escaped).",
+        "Texts below are reproduced without modification in verbatim fenced blocks.")
 
 
 def main():
@@ -187,7 +305,7 @@ def main():
             raise ValueError("stale third-party notices: review and regenerate")
         if f"<!-- rustc: {html.escape(command('rustc', '--version'))} -->" not in text:
             raise ValueError("Rust toolchain changed: review and regenerate notices")
-        if not text.endswith("\n".join(system_notices()) + "\n</body></html>\n"):
+        if not text.endswith(markdown("\n".join(system_notices()))):
             raise ValueError("stale system notices: review and regenerate")
     else:
         raise ValueError("usage: third-party-notices.py --check | --write")
