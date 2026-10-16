@@ -20,6 +20,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import tomllib
 
 from test_distribution import SOURCE, digest, enable_public_downloads, install_public, public_version
 
@@ -38,6 +39,13 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
         (repo / "scripts").mkdir(parents=True)
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
             shutil.copy2(ROOT / name, repo / name)
+        if not public_ref:
+            version = tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"]
+            for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+                path = repo / name
+                prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
+                path.write_text(path.read_text().replace(
+                    prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
         for name in ["check-version.py", "install-binary.py"]:
             shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
         assets = base / "assets"
