@@ -1,4 +1,4 @@
-"""Installer tests: synthetic ELF and mocked HTTP, no network, Herdr or Rust.
+"""Installer tests: synthetic ELF, mocked HTTP and fake curl; no network/Herdr/Rust.
 
 The full historical notice fixture is exercised separately by test_notices.py
 on builders with the cached sources and Rust documentation installed.
@@ -6,10 +6,12 @@ on builders with the cached sources and Rust documentation installed.
 
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import runpy
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -273,6 +275,182 @@ class InstallBinaryTests(unittest.TestCase):
         for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
 
+    def fake_curl(self, body=None):
+        tools = self.base / "tools"
+        tools.mkdir(exist_ok=True)
+        curl = tools / "curl"
+        curl.write_text(
+            f"#!{sys.executable}\n"
+            "import json, pathlib, sys, time\n"
+            f"with open({str(self.base / 'curl-args')!r}, 'a') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            f"assets = pathlib.Path({str(self.assets)!r})\n"
+            + (body if body is not None else
+               "sys.stdout.buffer.write((assets / sys.argv[-1].rsplit('/', 1)[1]).read_bytes())\n"))
+        curl.chmod(0o755)
+        return tools
+
+    def curl_environment(self, tools):
+        return {"PATH": str(tools), "https_proxy": "http://user:password@proxy.invalid",
+                "ALL_PROXY": "socks5://proxy.invalid", "HOME": str(self.base)}
+
+    def test_curl_security_arguments_and_pinned_urls(self):
+        tools = self.fake_curl()
+        (self.base / ".curlrc").write_text("insecure\nproxy = http://proxy.invalid\n")
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "urllib.request.OpenerDirector.open") as python_download:
+            module["install"]()
+            python_download.assert_not_called()
+        calls = [json.loads(line) for line in (self.base / "curl-args").read_text().splitlines()]
+        base = "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v0.0.1/"
+        self.assertEqual(calls, [[
+            "--disable", "--proto", "=https", "--proto-redir", "=https",
+            "--disallow-username-in-url", "--location", "--fail", "--silent", "--show-error",
+            "--noproxy", "*", "--max-time", "30", "--url", base + name,
+        ] for name in [ARCHIVE, ARCHIVE + ".sha256"]])
+
+    def test_curl_failures_never_fall_back_and_preserve_previous_binary(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        # Protocol downgrade, credentialed redirect, HTTP, timeout, TLS and
+        # unsupported-option statuses: none permits switching TLS clients.
+        for status in [1, 3, 22, 28, 60, 2]:
+            with self.subTest(status=status):
+                tools = self.fake_curl(f"sys.stdout.buffer.write(b'partial')\nsys.exit({status})\n")
+                with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                        "urllib.request.OpenerDirector.open") as python_download:
+                    with self.assertRaisesRegex(ValueError, "curl.*failed"):
+                        module["install"]()
+                    python_download.assert_not_called()
+                self.assertEqual(self.binary.read_bytes(), b"previous binary")
+                self.assertEqual(self.binary.stat().st_mode & 0o777, 0o751)
+                self.assertEqual(list(self.binary.parent.glob(".herdr-crossroads-*")), [])
+
+    def test_curl_bounded_unknown_length_output_kills_and_reaps_child(self):
+        tools = self.fake_curl("sys.stdout.buffer.write(b'x' * 65536)\n"
+                               "sys.stdout.buffer.flush()\ntime.sleep(60)\n")
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        children = []
+        popen = subprocess.Popen
+
+        def start(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "subprocess.Popen", side_effect=start), patch(
+                "urllib.request.OpenerDirector.open", side_effect=AssertionError("must use curl")):
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                module["download"]("https://github.com/asset", 1024)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].returncode, "oversize child must be reaped")
+        self.assertTrue(children[0].stdout.closed)
+
+    def test_curl_read_error_kills_and_reaps_child_without_fallback(self):
+        tools = self.fake_curl("time.sleep(60)\n")
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        children = []
+        popen = subprocess.Popen
+
+        def start(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            children.append(child)
+            read = patch.object(child.stdout, "read", side_effect=OSError("forced pipe failure"))
+            read.start()
+            self.addCleanup(read.stop)
+            return child
+
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "subprocess.Popen", side_effect=start), patch(
+                "urllib.request.OpenerDirector.open") as python_download:
+            with self.assertRaisesRegex(OSError, "forced pipe failure"):
+                module["install"]()
+            python_download.assert_not_called()
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].returncode)
+        self.assertTrue(children[0].stdout.closed)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_curl_launch_error_never_falls_back(self):
+        tools = self.fake_curl()
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "subprocess.Popen", side_effect=OSError("cannot execute curl")), patch(
+                "urllib.request.OpenerDirector.open") as python_download:
+            with self.assertRaisesRegex(OSError, "cannot execute curl"):
+                module["install"]()
+            python_download.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_curl_checksum_failure_and_size_limits_preserve_previous_binary(self):
+        tools = self.fake_curl()
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        original = module["download"]
+        limits = []
+
+        def download(url, limit):
+            limits.append(limit)
+            return original(url, limit)
+
+        checksum = self.assets / (ARCHIVE + ".sha256")
+        for data, message in [(b"bad hash\n", "malformed checksum"),
+                              (b"0" * 64 + f"  {ARCHIVE}\n".encode(), "SHA256 mismatch"),
+                              (b"x" * 1025, "size limit")]:
+            with self.subTest(message=message):
+                limits.clear()
+                checksum.write_bytes(data)
+                with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch.dict(
+                        module["install"].__globals__, download=download):
+                    with self.assertRaisesRegex(ValueError, message):
+                        module["install"]()
+                self.assertEqual(limits, [64 * 1024 * 1024, 1024])
+                self.assertEqual(self.binary.read_bytes(), b"previous binary")
+        self.fake_curl("if sys.argv[-1].endswith('.sha256'):\n    sys.exit(22)\n"
+                       "sys.stdout.buffer.write((assets / sys.argv[-1].rsplit('/', 1)[1]).read_bytes())\n")
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "urllib.request.OpenerDirector.open") as python_download:
+            with self.assertRaisesRegex(ValueError, "curl.*failed"):
+                module["install"]()
+            python_download.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_curl_exact_limit_and_initial_url_boundary(self):
+        tools = self.fake_curl("sys.stdout.buffer.write(b'abcd')\n")
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
+                "urllib.request.OpenerDirector.open", side_effect=AssertionError("must use curl")):
+            self.assertEqual(module["download"]("https://github.com/asset", 4), b"abcd")
+            with patch("subprocess.Popen") as child:
+                for url in ["http://github.com/asset", "https://user:password@github.com/asset",
+                            "https://user@github.com/asset", "file:///asset"]:
+                    with self.subTest(url=url), self.assertRaisesRegex(ValueError, "HTTPS"):
+                        module["download"](url, 4)
+                child.assert_not_called()
+
+    def test_available_curl_installs_despite_python_strict_tls_failure(self):
+        tools = self.fake_curl()
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        failure = urllib.error.URLError(ssl.SSLCertVerificationError(
+            "CERTIFICATE_VERIFY_FAILED: Missing Authority Key Identifier"))
+        with patch.dict(os.environ, {"PATH": str(tools)}, clear=True), patch(
+                "urllib.request.OpenerDirector.open", side_effect=failure) as python_download:
+            try:
+                module["install"]()
+            except OSError as error:
+                self.fail(f"available curl must avoid Python's strict TLS failure: {error}")
+            python_download.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), ELF)
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
+            self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
+
+    def test_absent_curl_keeps_python_strict_tls_failure(self):
+        failure = urllib.error.URLError(ssl.SSLCertVerificationError(
+            "CERTIFICATE_VERIFY_FAILED: Missing Authority Key Identifier"))
+        with self.assertRaisesRegex(urllib.error.URLError, "Missing Authority Key Identifier"):
+            self.public_install(failure=failure)
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
     def test_public_default_uses_agreed_version_not_latest_or_older_asset(self):
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
             path = self.repo / name
@@ -319,9 +497,12 @@ class InstallBinaryTests(unittest.TestCase):
     def test_explicit_local_directory_never_uses_public_download(self):
         module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
         with patch.dict(os.environ, self.env, clear=True), patch(
-                "urllib.request.OpenerDirector.open") as network:
+                "urllib.request.OpenerDirector.open") as network, patch(
+                "shutil.which") as discovery, patch("subprocess.Popen") as curl:
             module["install"]()
             network.assert_not_called()
+            discovery.assert_not_called()
+            curl.assert_not_called()
         self.assertEqual(self.binary.read_bytes(), ELF)
 
     def test_public_invalid_checksum_preserves_previous_binary(self):
@@ -339,7 +520,8 @@ class InstallBinaryTests(unittest.TestCase):
             self.assertEqual(self.binary.read_bytes(), b"previous binary")
         response = io.BytesIO(b"too large")
         response.geturl = lambda: "https://release-assets.githubusercontent.com/asset?signature=fixture"
-        with patch("urllib.request.OpenerDirector.open", return_value=response):
+        with patch.dict(os.environ, {"PATH": ""}, clear=True), patch(
+                "urllib.request.OpenerDirector.open", return_value=response):
             with self.assertRaisesRegex(ValueError, "size limit"):
                 module["download"]("https://github.com/asset", 4)
         handler = module["HTTPSRedirectHandler"]()
