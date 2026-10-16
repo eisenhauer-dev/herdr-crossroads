@@ -53,10 +53,10 @@ Historical native previews (not current release verification):
 - No macOS, Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
-- **0.1.0 is in local preparation as the first regular Linux release, not published or
-  publicly installation-tested yet.** The completed `0.0.1 → 0.0.2 → 0.0.1`
-  [public test cycle](docs/installation.md#public-installupdatereturn-cycle) is separate evidence.
-  Historical local `0.1.0` assets are not new-release proof and must not be reused or renamed.
+- **[0.1.0](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
+  is the first regular Linux release**, published as Latest with reviewed clean CI assets.
+  [Public installation evidence](docs/installation.md#regular-010-public-installation)
+  distinguishes pinned native navigation from unpinned CLI installation; no `0.1.0` upgrade cycle is claimed.
 
 ## Installation
 
@@ -67,8 +67,8 @@ herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
 - This follows the public default branch; the checkout's version-pinned hook downloads
-  its matching Linux archive/checksum. **The prepared 0.1.0 route needs publication
-  before it can work; this command is not proof of a published 0.1.0.**
+  its matching Linux archive/checksum. The unpinned command passed isolated CLI
+  installation on Herdr 0.9.5; native navigation was tested separately with a pinned release.
 - Review the source, manifest, and assets before approving hook execution:
   installation executes code and registers a plugin globally for your user, not in a sandbox.
 - See [binary installation](docs/installation.md) for trusted local assets, pinned test
@@ -98,7 +98,7 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
   [Herdr's versioned configuration guide][herdr-config], check `prefix+?` for conflicts,
   and preserve existing navigation/close bindings. `keymaps.jsonc` changes only the plugin UI.
 - These source clone/build/link and personal-host configuration examples remain unexecuted;
-  isolated historical installation evidence is recorded in the [installation guide](docs/installation.md).
+  isolated installation evidence is recorded in the [installation guide](docs/installation.md).
 
 ## Controls
 

@@ -6,11 +6,40 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-The current preparation version is `0.1.0`, the first regular Linux release.
-Its fresh local build and artifact gates passed on 2026-10-16; separate clean CI,
-public installation and publication remain pending. No publication or public
-`0.1.0` installation success is claimed. Historical local/CI `0.1.0` artifacts
-below are not new-release proof and must not be renamed or reused.
+The current version is `0.1.0`, the first regular Linux release, published as
+[Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
+on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
+Historical local/CI `0.1.0` artifacts below were not reused or renamed.
+
+## Regular 0.1.0 public pipeline evidence
+
+- [Run 38903556630](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38903556630),
+  artifact `12046949385`, passed formatting, Clippy, 258 Rust tests, Python helpers,
+  the exact-builder notice gate, the build, all four full PTYs and packaging on its first attempt.
+- Reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` matches the PR checkout's
+  tree `a18018e4a56c60d7ba814e6e44a6de2d0a595db2`. PR #10 later merged as
+  `9ed72efed62672a1cee087bb9d3e353cce52276b` with that same tree.
+- Independent downloaded-artifact verification checked ZIP SHA256
+  `6b4fdfa65b115b5ac4ef4faf42b1420753370b566a8bd757eb72e2f241f58724`, exactly four
+  assets, four regular root-owned tar members with modes `0755`/`0644`, canonical
+  notices, both checksums and binary/map binding.
+- All 13 reviewed Ubuntu profile candidates and 14 collected candidates matched;
+  the bound map had 14 covered startup rows. ELF inspection confirmed PIE, dynamic
+  libc/libgcc/loader dependencies, no static system archive contributions,
+  RPATH/RUNPATH, uncovered startup symbols or personal home prefix.
+- All four primary-owned local PTYs also passed against the downloaded CI binary;
+  synthetic search updates measured 1.48/1.91/1.48 ms, not a live Herdr benchmark.
+- Published archive SHA256:
+  `d55b5bc611f74a7f1a61de789428e01fcf9b414640153c796f10a6a8a049304e`.
+  Binary SHA256: `63857e066f8e4c7821114107292e5e973aaab0b12144ab13b1a63e59611bace1`.
+  All four public downloads matched the approved CI hashes exactly.
+- The binary hash matches historical CI evidence because Rust source/version,
+  toolchain and candidate-profile inputs match. This was a fresh CI build and
+  canonical-notice packaging run, not historical asset reuse.
+- Receipt: `target/public-pipeline/38903556630/verification.json`. Its earlier
+  publication-pending limit describes that checkpoint; subsequent publication and
+  [public installation](installation.md#regular-010-public-installation) passed separately.
+  Minimum-runtime, source-signature and historical behavior-RED limitations remain.
 
 ## Current 0.1.0 local preparation evidence
 
@@ -34,8 +63,8 @@ below are not new-release proof and must not be renamed or reused.
   source/version are unchanged. This run generated fresh gate, map and archive
   evidence; it did not rename or reuse historical assets.
 - **The local binary contains personal build paths and is not a publication
-  candidate.** Only subsequently reviewed clean CI assets are proposed for
-  publication, subject to separate approval. This local result establishes no
+  candidate.** The regular release instead used the reviewed clean CI assets above.
+  This local result alone establishes no
   minimum runtime, public installation or publication; the documented source-signature
   and historical policy behavior-RED limitations remain.
 
@@ -240,7 +269,7 @@ target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
 target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
 ```
 
-These names use the current regular-release preparation version `0.1.0`, not a fixed literal in the
+These names use the current regular-release version `0.1.0`, not a fixed literal in the
 helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
@@ -339,9 +368,10 @@ binary is not automatically placed at that path by the build helper. The separat
 [binary installer](installation.md) validates the tar and atomically installs
 that binary at the manifest path without Rust/Cargo. An explicit trusted local
 asset directory selects offline installation; otherwise it uses the prepared
-version-pinned GitHub Release route. Both test prereleases are published and
-the isolated real public cycle passed; this does not verify the prepared `0.1.0`
-route or authorize publication.
+version-pinned GitHub Release route. The regular `0.1.0` release and both test
+prereleases are published; their separately scoped
+[public installation evidence](installation.md#regular-010-public-installation)
+does not establish universal runtime compatibility.
 The [source build-then-link route](../README.md#installation)
 also remains available. The public source is
 `eisenhauer-dev/herdr-crossroads`; public repository access was verified on
