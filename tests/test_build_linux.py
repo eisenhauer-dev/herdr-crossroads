@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 
 
@@ -36,6 +37,13 @@ class BuildLinuxTests(unittest.TestCase):
             if not (ROOT / name).exists():
                 continue
             shutil.copy2(ROOT / name, self.repo / name)
+        # Asset expectations use a fixed fixture version, not the checkout version.
+        version = tomllib.loads((self.repo / "Cargo.toml").read_text())["package"]["version"]
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = self.repo / name
+            prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
+            path.write_text(path.read_text().replace(
+                prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
         if (ROOT / "scripts/third-party-notices.py").exists():
             shutil.copy2(ROOT / "scripts/third-party-notices.py", self.repo / "scripts/third-party-notices.py")
         shutil.copytree(ROOT / "LICENSES", self.repo / "LICENSES")
