@@ -1,401 +1,165 @@
 # Herdr Crossroads
 
-A keyboard-driven pane navigator for [Herdr](https://herdr.dev). Crossroads
-opens as a terminal popup, groups panes by workspace and tab, and lets you search
-and focus a pane without reorganizing your session.
+A keyboard-driven pane navigator for [Herdr](https://herdr.dev): search panes,
+tabs, workspaces, or agent names and focus the pane you need without reorganizing
+your session.
+
+## Contents
+
+- [Demo](#crossroads-demo---voiceover-by-elevenlabsio)
+- [Features](#features)
+- [Requirements and compatibility](#requirements-and-compatibility)
+- [Installation](#installation)
+- [Controls](#controls)
+- [Configuration](#configuration)
+- [Update and uninstall](#update-and-uninstall)
+- [Documentation and license](#documentation-and-license)
 
 ## Crossroads Demo - voiceover by elevenlabs.io
 
 https://github.com/user-attachments/assets/c86b3c7c-718b-4033-82f8-8910d97d7278
 
-The demo uses AI-generated ElevenLabs Free narration for noncommercial use only;
-the software's MIT license does not grant commercial reuse rights to that narration.
-See [media terms, attribution and provenance](docs/media/README.md#narration-use-and-attribution).
+The demo uses AI-generated **ElevenLabs Free narration for noncommercial use only**.
+The software's MIT license does not grant commercial reuse rights to that narration;
+see [media terms, attribution and provenance](docs/media/README.md#narration-use-and-attribution).
 
 ## Features
 
-- Workspace/tab/pane navigation with stable pane-ID focus, even for duplicate names.
-- Case-insensitive subsequence search across workspace, tab, pane, or agent names.
-  Matches stay in topology order, never span fields, and are underlined; status
-  text is not searched. Search updates on every character without requerying Herdr.
-- Linked-worktree workspaces marked with `↳` and a branch when available, grouped
-  after their source workspace. Failed worktree lookups leave ordinary labels.
-- Live agent statuses over the local Herdr socket, with background reconnection.
-- Compact inline statuses and a separate Status column at 110+ content columns.
-- Searchable Keys help, replaceable navigation bindings, theme preview, and
-  per-status color overrides.
+- Workspace/tab/pane navigation with stable pane-ID focus, including duplicate names.
+- Live, case-insensitive subsequence search without requerying or reordering Herdr topology.
+- [Linked worktrees](docs/worktrees.md) grouped beside their source workspace with `↳` and branch context.
+- Live local agent statuses, [theme previews](docs/themes.md), customizable keys, and searchable help.
+- **Navigation-only:** no creation, movement, renaming, or deletion of session topology.
+  Only confirmation changes focus; explicitly saving a theme changes plugin-owned files.
+- Opening/searching uses local CLI/socket access and files, not network requests or updates.
+  Crossroads does not change Herdr configuration, native prefix `g`/`t` bindings, or other plugins.
 
-Crossroads is **navigation-only**: it does not create, move, rename, or delete
-workspaces, tabs, panes, or worktrees. Confirming a pane changes focus; explicitly
-saving a theme changes only plugin-owned theme files. Opening and searching use
-local CLI/socket access and local files, not network requests. They do not install
-or update anything. Crossroads does not change Herdr's native prefix `g`/`t`
-bindings, other plugins, or Herdr configuration.
+<a id="navigation-and-search"></a>
 
-### Navigation and search
+Historical native previews (not current release verification):
+[navigation and themes provenance](docs/media/recordings/native-loops.md).
 
-Pane, tab, and workspace movement wraps in both directions through the filtered
-rows and blocks. Browse without changing host focus; only confirming a pane
-focuses it. Search matches workspace, tab, pane, or agent names without reordering
-the topology. See [navigation controls](docs/keymaps.md#actions-and-defaults).
-
-![Native navigation and live search, followed by a second Enter focusing Codex Frontend](docs/media/native-navigation.gif)
-
-This older native clip uses Atlas/Welcome and Codex Frontend with an `odx` search;
-it does not demonstrate current wrapping or contextual help. The three GIFs here
-are retained historical captures with independently named ordinary shells and
-editorial key captions below the UI, not recaptures for the current movie.
-See [navigation/theme loop provenance](docs/media/recordings/native-loops.md).
-
-### Linked worktrees
-
-See linked workspaces beside their source workspace, with a `↳` marker and branch
-context when available. Search and navigation retain that context even when the
-source workspace is filtered out. See [linked workspaces and filtering](docs/worktrees.md).
-
-![Native linked-worktree selection: Tab selects Atlas Review and Shift+Tab returns to Atlas without changing host focus](docs/media/linked-worktrees.gif)
-
-This older clip selects Atlas Review and returns to Atlas without changing host
-focus; its names differ from the movie's Atlas Shop and Atlas Checkout.
-
-### Themes and help
-
-Preview a theme in the list or pane table before saving. Contextual Keys help
-shows the effective bindings for Select or Themes and has its own search filter.
-See [themes](docs/themes.md) and [keys and help](docs/keymaps.md).
-
-![Native theme previews and Dracula save, with unchanged pane selection](docs/media/native-themes.gif)
-
-This older clip previews and saves Dracula while keeping Welcome selected; it
-does not show the current contextual help.
-
-Additional historical previews and their limits: [earlier native navigation](docs/media/navigation-demo.md)
-and [synthetic previews](docs/media/README.md).
+![Native navigation and live search](docs/media/native-navigation.gif)
+![Native linked-worktree selection](docs/media/linked-worktrees.gif)
+![Native theme preview and save](docs/media/native-themes.gif)
 
 ## Requirements and compatibility
 
-- Linux, a running Herdr session, and Herdr **0.9.1 or later** (manifest minimum).
-- For source builds: Rust/Cargo and a system linker. For prebuilt installation:
-  a trusted versioned Release (or local assets) and Python 3.11+ (standard library only); no Rust/Cargo.
-  `stty` is required on `PATH` at runtime.
-- A terminal popup with at least **80×15 content cells**, excluding host borders.
-  Smaller popups show an error page instead of allowing pane focus.
-- Git to obtain/update a source checkout. Python 3.11+ is also used for local
-  tests, not plugin runtime.
-
-Crossroads 0.0.2 is the current Linux-only test version. Both 0.0.1 and 0.0.2
-are retained non-latest prereleases with exactly four reviewed CI assets each.
-The real public 0.0.1 → 0.0.2 → 0.0.1 install/update/return cycle passed on
-2026-10-16 with Herdr 0.9.5; see [public lifecycle evidence](docs/installation.md#public-installupdatereturn-cycle).
-This verified test cycle is not approval for 0.1.0 as the first regular Linux release. The
-[verified 0.0.2 CI artifact](docs/builds.md#current-002-public-pipeline-evidence)
-records the exact published assets separately from 0.0.1 and local builds.
-Local verification is on Linux x86_64;
-macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
-combination are not live-verified. The theme palette is based on Herdr v0.9.1;
-host-command examples below were checked against v0.9.3 sources. On 2026-10-14,
-an isolated native Herdr 0.9.3 server/client test verified local managed
-installation, search/focus, replacement, version return, and uninstall at 160×40
-with a fixture-only 90% popup manifest. The historical 0.1.0 license-bearing binary archive
-also passed isolated real-Herdr 0.9.5 CLI and server/client installation tests on
-2026-10-15, including delivered notices, search/focus, replacement/return and
-uninstall; see [scope and hashes](docs/installation.md#native-distribution-acceptance).
-These runs did not test personal-host setup or public distribution. A manifest
-minimum is not a guarantee for every later
-Herdr release. See [terminal limitations](docs/keymaps.md#terminal-limits).
+- **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
+  and a running Herdr session; manifest minimum **Herdr 0.9.1**.
+- **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
+- Managed installation: Git and **Python 3.11+** (standard library only); no Rust/Cargo.
+  Source builds: Git, Rust/Cargo, and a system linker.
+- No macOS, Windows, other-architecture, or SSH support is claimed; no minimum glibc
+  or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
+  and [terminal limits](docs/keymaps.md#terminal-limits).
+- **0.1.0 is in local preparation as the first regular Linux release, not published or
+  publicly installation-tested yet.** The completed `0.0.1 → 0.0.2 → 0.0.1`
+  [public test cycle](docs/installation.md#public-installupdatereturn-cycle) is separate evidence.
+  Historical local `0.1.0` assets are not new-release proof and must not be reused or renamed.
 
 ## Installation
 
-Install Herdr using its [versioned upstream installation guide][herdr-install].
-For installer-managed Linux installations, that guide gives
-`curl -fsSL https://herdr.dev/install.sh | sh`; this downloads and executes remote
-code, so review the installer first. Package-manager installations should follow
-their own installation/update workflow instead.
-
-For Crossroads, obtain a trusted source checkout and run these commands **from
-its repository root**:
+Install [Herdr](https://herdr.dev) first. The primary Crossroads installation command is:
 
 ```sh
-cargo build --release --locked
-herdr plugin link "$PWD"
-herdr plugin list
+herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
-The manifest launches `./target/release/herdr-crossroads` from the linked root.
-Keep that checkout and its release binary in place. Linking registers a plugin
-globally for your user and creates its config/state directories; it is not a
-sandbox. Review the manifest and source before linking.
+- This follows the public default branch; the checkout's version-pinned hook downloads
+  its matching Linux archive/checksum. **The prepared 0.1.0 route needs publication
+  before it can work; this command is not proof of a published 0.1.0.**
+- Review the source, manifest, and assets before approving hook execution:
+  installation executes code and registers a plugin globally for your user, not in a sandbox.
+- See [binary installation](docs/installation.md) for trusted local assets, pinned test
+  prereleases, validation, and version-specific Herdr behavior. There is no short-name registry.
 
-The manifest has a Python **version-pinned binary build hook**. With
-`CROSSROADS_ASSET_DIR` absent it downloads the exact Linux x86_64 glibc archive and
-checksum from `eisenhauer-dev/herdr-crossroads` GitHub Release `v<VERSION>`.
-An explicit absolute `CROSSROADS_ASSET_DIR` selects trusted local assets instead;
-empty/relative values fail without network fallback. It never compiles. Linking does not execute this
-hook, so the source build-then-link route above is unchanged. See
-[binary installation](docs/installation.md) for safety checks, requirements,
-and isolated tests. The current published test prerelease's pinned route is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.2`.
-The isolated Herdr 0.9.5 public cycle passed initial unpinned installation,
-actual plugin update to 0.0.2 and pinned return to 0.0.1 on 2026-10-16.
-`herdr plugin install herdr-crossroads` is not valid
-shorthand. Native local managed installation was tested; see
-[its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
+Alternatively, explicitly clone, build, and link a trusted source checkout:
 
-From a shell in the running Herdr session, open the popup:
+```sh
+git clone https://github.com/eisenhauer-dev/herdr-crossroads.git
+cd herdr-crossroads
+cargo build --release --locked
+herdr plugin link "$PWD"
+```
+
+- Linking does not run build hooks. Keep the checkout and `target/release/herdr-crossroads`
+  in place; Cargo may download dependencies on a fresh machine.
+- From a shell in your running Herdr session, open Crossroads:
 
 ```sh
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
 
-The manifest's default placement is `popup`, with no explicit dimensions; Herdr
-defaults to a half-size popup. The installed Herdr 0.9.3 CLI help used for local
-acceptance does not list `--width`/`--height` for this command. To request more space
-in a trusted local checkout, add `width = "90%"` and `height = "90%"` to its
-`[[panes]]` table before registration; these are manifest fields, not CLI flags.
-The native acceptance fixture uses only its temporary manifest for that change.
-Neither the default nor 90% can guarantee 80×15 content cells on a small terminal;
-enlarge the terminal if needed. The fixture dimensions passed at 160×40 only.
-No host keybinding is installed or required; the commands do not rebind prefix
-`g`, `t`, or `x`. If another modal is open, Herdr may return `ui_busy`.
+- The default popup is half-size. For a trusted local checkout, `width = "90%"` and
+  `height = "90%"` belong in the manifest's `[[panes]]` table before registration,
+  not CLI flags; neither size guarantees 80×15 content cells.
+- No launch binding is installed. For an optional host shortcut, follow
+  [Herdr's versioned configuration guide][herdr-config], check `prefix+?` for conflicts,
+  and preserve existing navigation/close bindings. `keymaps.jsonc` changes only the plugin UI.
+- These source clone/build/link and personal-host configuration examples remain unexecuted;
+  isolated historical installation evidence is recorded in the [installation guide](docs/installation.md).
 
-### Optional launch binding
+## Controls
 
-For a keyboard shortcut, preserve your existing Herdr configuration and append
-one command table to `~/.config/herdr/config.toml` on Linux (or the file selected
-by `HERDR_CONFIG_PATH`):
+<a id="select-defaults"></a>
 
-```toml
-[[keys.command]]
-key = "prefix+f"
-type = "shell"
-command = '"${HERDR_BIN_PATH:-herdr}" plugin pane open --plugin herdr-crossroads --entrypoint crossroads'
-description = "Open Crossroads"
-```
-
-`prefix+f` is unbound in Herdr 0.9.3 defaults. Check your active bindings with
-`prefix+?` first; if you already use `f`, replace the key above with an unused
-`prefix+` single key, for example `prefix+a`. Leave existing `g`/`t` navigation
-and `x`/`shift+x` close bindings unchanged. Reload after editing:
-
-```sh
-herdr server reload-config
-```
-
-With the default prefix, press Ctrl+b, then f (not simultaneously). The detached
-`shell` command uses Herdr's injected binary path, falling back to `herdr` on
-`PATH`, and opens the registered plugin pane with its plugin environment.
-`type = "pane"` runs a shell command, not a plugin entrypoint. Crossroads'
-`keymaps.jsonc` controls only its internal UI, not this host launch shortcut;
-the manifest does not install a default binding. The direct command above
-remains a fallback. To remove the shortcut, delete only the added
-`[[keys.command]]` table and reload again. See [Herdr's versioned configuration
-guide][herdr-config].
-
-**Execution status:** the source-build/link, launch-binding, reload and
-configuration-directory examples remain unexecuted on a personal host. Local
-managed install/reinstall/version-return/uninstall and popup search/focus passed
-in the isolated native sandbox. Public installation/update/return passed separately
-in the isolated Herdr 0.9.5 cycle, not on a personal host.
-Example syntax/lifecycle comes from Herdr's versioned
-[plugin guide][herdr-plugins], [configuration guide][herdr-config], and
-[v0.9.3 CLI implementation][herdr-cli]. The historical capture used
-the plugin-opening route with `--session film --width 142 --height 30` in a
-separate isolated environment. The current finishing cut compresses startup
-and begins native footage at the complete popup; it does not show CLI execution
-or validate personal-host configuration or general installation compatibility.
-
-## Update and uninstall
-
-Close Crossroads before rebuilding. In your linked checkout, inspect local
-changes and the intended upstream revision, then update and rebuild:
-
-```sh
-git status --short
-git pull --ff-only
-cargo build --release --locked
-```
-
-The pull example assumes a clean branch with a configured upstream. For a pinned
-or detached checkout, select and review the next revision instead. The link still
-points at the same directory; reopen Crossroads to load the new binary and config.
-If the checkout path changes, link the new root explicitly.
-
-Herdr itself is separate: use `herdr update` only for Herdr-installer-managed
-installations; otherwise update through the package manager. Herdr 0.9.3 has no
-`plugin update` command; 0.9.5 provides one, exercised by the real public cycle.
-The offline managed route instead reinstalls a reviewed ref.
-Crossroads has no automatic updater. Close it before reinstalling a reviewed ref
-with matching trusted assets (public Release or explicit local override), or uninstalling. A return to a previous ref
-also requires that version's assets. Historical offline tests used a test-only
-replacement fixture; the later [public cycle](docs/installation.md#public-installupdatereturn-cycle)
-used the two real prerelease runtimes. See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
-
-To uninstall **this local link only**:
-
-```sh
-herdr plugin uninstall herdr-crossroads
-```
-
-For a local link, this unregisters Crossroads without deleting your checkout.
-`herdr plugin unlink herdr-crossroads` is the registration-only alternative.
-With Herdr 0.9.3, managed uninstall removes Herdr's managed checkout. Herdr 0.9.5
-removes registration but retains checkouts leased by live consumers; those become
-eligible for later cleanup after the leases end. The native test verifies
-unregistration and retained files, not that later reclamation. In all cases,
-plugin config/state files are retained; inspect and back up your own files before
-any manual cleanup. Do not remove other plugins or Herdr configuration.
-
-## Configuration and complete defaults overview
-
-No configuration files are required. To locate the plugin-owned directory:
-
-```sh
-herdr plugin config-dir herdr-crossroads
-```
-
-This host command may create the directory. Herdr injects its path as
-`HERDR_PLUGIN_CONFIG_DIR`; Crossroads does not guess a global plugin-config path.
-Each file is read once per opening. A `.jsonc` file takes precedence; legacy
-`.json` is read **only when `.jsonc` is absent**, never when it is invalid or
-unreadable. Reopen after editing. Comments and trailing commas are allowed, but
-other JSON5 extensions and duplicate fields are not.
-
-| File | Supported settings | Default / failure behavior |
-| --- | --- | --- |
-| `keymaps.jsonc` | `select`, `help`, `themes` action objects; one or two keys per action | Bindings below; invalid config opens the common error page |
-| `theme.jsonc` | Exactly `{"theme":"<explicit built-in name>"}` | Absent: Auto (Herdr); invalid: Mocha plus an error notice |
-| `status-colors.jsonc` | `working`, `blocked`, `done`, `idle`, `unknown`, each `#RRGGBB` | Active theme colors; invalid config opens the common error page |
-
-There are no other plugin settings. Keymaps replace an action's whole key list;
-omitted actions keep defaults. Conflicts are checked within each mode, including
-unchanged defaults. No Ctrl/Alt bindings, macros, sequences, or disabling actions.
-Keymaps and status colors are never written by Crossroads. The theme picker saves
-an explicit choice atomically to `theme.jsonc` (without retaining comments), or
-removes both theme files when Auto is explicitly saved. See the detailed references
-for validation and failed-save behavior.
-
-**Allowed custom keys:** case-sensitive single Unicode letters, numbers,
-punctuation, or symbols (for example `j`, `J`, `!`, or `é`), ASCII space, and the
-exact special names `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`, `Right`,
-`Tab`, `Shift+Tab`, and `Space`. Write Shift-generated characters directly
-(`!`, not `Shift+1`). Combining marks, control/format characters, private-use or
-unassigned characters, other whitespace, and multi-character sequences are not
-allowed. Neither are Ctrl/Alt combinations, F-keys, or other modified special
-keys. Each action accepts one or two entries, checked before deduplication.
-See [key syntax](docs/keymaps.md#key-syntax) for the exact Unicode-category rules
-and JSON string examples.
-
-### Select defaults
-
-| Action | Keys |
+| Action | Default keys |
 | --- | --- |
 | Next / previous pane | `j` / `k`, or Down / Up |
 | Next / previous tab | `l` / `h`, or Right / Left |
 | Next / previous workspace | Tab / Shift+Tab |
-| Search / reset search | `/` / `r` |
+| Search / reset filter | `/` / `r` |
 | Keys help / themes | `?` / `t` |
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
 
-Movement wraps in both directions and visits only visible rows/blocks. Tab and
-workspace jumps select the first visible pane of the next/previous block. If the
-remembered pane is filtered out, the first visible pane is the focus candidate. With no
-matches, Enter does not focus anything. Focus failures do not retry a different pane.
+- Movement wraps through visible panes/blocks without changing host focus.
+- While editing search, printable keys are text; Enter/Esc ends editing but retains
+  the filter. Press Enter again to focus; no matches means no focus.
+- Themes: `j`/`k` or arrows to preview, Space for list/table view, Enter to save,
+  Esc/`q` to cancel. `?` shows the current view's effective keys.
+- See [complete controls, customization and input limits](docs/keymaps.md#actions-and-defaults).
 
-### Help and Themes defaults
+## Configuration
 
-| Mode | Action | Keys |
-| --- | --- | --- |
-| Help | Next / previous entry | `j` / `k`, or Down / Up |
-| Help | Search / reset independent help filter | `/` / `r` |
-| Help | Return to calling Select or Themes view | Esc or `q` |
-| Themes | Next / previous theme | `j` / `k`, or Down / Up |
-| Themes | Toggle list / pane-table preview | Space |
-| Themes | Save / cancel | Enter / Esc or `q` |
-| Themes | Keys help (list or table preview) | `?` |
+<a id="configuration-and-complete-defaults-overview"></a>
 
-Keys help shows the caller's effective bindings under `Keys — Select` or
-`Keys — Themes`. Help cycles through matching entries only; Themes cycles through
-all offered themes in both list and table preview, without saving. Returning
-preserves pane search, selection and viewport, and the pending theme cursor/preview
-without saving or canceling. Existing search
-rows show the current mode right-aligned (`Select`, `Search`, `Help`, `Themes`),
-reserving query width for the label. Theme table preview remains `Themes`; the
-theme list identifies itself with its existing Themes heading instead.
+No configuration is required. Locate the plugin-owned directory with
+`herdr plugin config-dir herdr-crossroads` (the host may create it), then reopen
+Crossroads after editing.
 
-In pane/help **search editing**, printable characters (including `q`, `t` and `?`) are
-text; Backspace erases, and Enter/Esc leaves editing while retaining the filter.
-Help search is independent: Esc ends editing first; a subsequent default Esc
-returns to the caller. Its mode label remains `Help` while editing.
-Search editing is fixed, not configurable. Recognized Ctrl/Alt input is ignored;
-classical terminals cannot distinguish physical Ctrl+i from Tab or Ctrl+m from
-Enter. Standalone raw Esc has a 100-ms ambiguity delay. On error pages, fixed
-Up/`k`, Down/`j` scroll and Enter/Esc/`q` closes without focus.
-
-### Theme and status defaults
-
-Auto (Herdr) recognizes a simple manual built-in theme from `HERDR_CONFIG_PATH`,
-then `$XDG_CONFIG_HOME/herdr/config.toml`, then `$HOME/.config/herdr/config.toml`.
-These are precedence choices, not fallbacks after a read failure. Missing,
-unreadable, ambiguous, custom, or auto-switching config, and SSH environments,
-fall back to Catppuccin Mocha. Auto does not follow live Herdr theme changes.
-
-The 18 explicit choices are `catppuccin`, `catppuccin-latte`, `terminal`,
-`tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`, `gruvbox-light`,
-`one-dark`, `one-light`, `solarized`, `solarized-light`, `kanagawa`,
-`kanagawa-lotus`, `rose-pine`, `rose-pine-dawn`, and `vesper`. Only `terminal`
-inherits terminal default foreground/background; others paint their own panel.
-
-| Status | Mocha fallback color |
+| Optional file | Reference |
 | --- | --- |
-| `working` | `#f9e2af` |
-| `blocked` | `#f38ba8` |
-| `done` | `#94e2d5` |
-| `idle` | `#a6e3a1` |
-| `unknown` / unrecognized snapshot status | `#6c7086` |
+| `keymaps.jsonc` | [Action bindings, schema and defaults](docs/keymaps.md) |
+| `theme.jsonc` | [Themes, Auto fallback and persistence](docs/themes.md) |
+| `status-colors.jsonc` | [Status colors and precedence](docs/status-colors.md) |
 
-Explicit status overrides win over theme colors; omitted statuses follow the
-active theme. Rows without an agent have no inline status.
+- JSONC supports comments and trailing commas; legacy `.json` is read only when
+  `.jsonc` is absent, never when it is invalid or unreadable.
+- Keymaps and status colors are read-only. Saving a theme writes only plugin-owned
+  theme files; explicitly saving Auto removes both theme files. See the references for failure behavior.
 
-### Runtime context (not additional settings)
+## Update and uninstall
 
-Herdr supplies `HERDR_BIN_PATH` for local CLI calls (otherwise `herdr` on `PATH`)
-and `HERDR_SOCKET_PATH` for status subscriptions and focus. Without a nonempty
-socket path, the snapshot remains browsable but focus cannot succeed and live
-status is disabled. A supplied `HERDR_PANE_ID` is excluded from the snapshot;
-Herdr popups themselves have no pane ID. `COLUMNS` is only a width fallback when
-`stty size` cannot provide one (otherwise 80 columns and 24 rows). SSH environment
-variables affect Auto theme recognition, not a remote plugin transport feature.
+- Close Crossroads before updating, rebuilding, or uninstalling; uninstall does not stop an open popup.
+- Managed installs: Herdr 0.9.5 provides `herdr plugin update herdr-crossroads`;
+  0.9.3 instead needs reinstalling a reviewed ref with matching assets.
+  See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
+- Linked checkout: inspect local changes and the intended revision, update it,
+  then rerun `cargo build --release --locked`. The link still points to that checkout.
+- Uninstall: `herdr plugin uninstall herdr-crossroads`. A local link leaves the
+  checkout intact; managed checkout retention depends on Herdr's version and live leases.
+  Plugin config/state remains: back up your files before any manual cleanup.
+- Crossroads has no automatic updater; updating Herdr itself is a separate operation.
 
-## Verification and further reading
+## Documentation and license
 
-An isolated release-binary PTY run on **2026-10-02**, Linux x86_64, Rust/Cargo
-1.93.1 and Python 3.14.4, measured 1,000 synthetic rows:
-
-| Query | Matches | Keypress-to-view |
-| --- | --- | --- |
-| `x` | 3 | 3.06 ms |
-| `xy` | 2 | 2.79 ms |
-| `xyz` | 1 | 2.93 ms |
-
-Command: `python3 tests/pty_latency.py target/release/herdr-crossroads`, after
-`cargo build --release --offline`, from the repository root. The existing harness
-requires each measured update to be ≤100 ms and checks that search issues no new
-snapshot calls. These are three local synthetic measurements, **not historical
-results, a live Herdr benchmark, or a universal latency guarantee**; opening time
-and reconnect latency are not measured. See [contribution/testing](CONTRIBUTING.md).
-
-- [Keymaps, JSONC schema, input limits, and complete PTY gates](docs/keymaps.md)
 - [Troubleshooting by symptom](docs/troubleshooting.md)
-- [Theme selection, persistence, and Auto limitations](docs/themes.md)
-- [Status colors and override precedence](docs/status-colors.md)
-- [Architecture, module responsibilities, and core flows](docs/architecture.md)
-- [Developer and contribution guide](CONTRIBUTING.md)
+- [Architecture](docs/architecture.md), [contributing and testing](CONTRIBUTING.md)
+- [Linux artifacts and verification limits](docs/builds.md), [release preparation](docs/releases.md)
+- Software: [MIT](LICENSE), copyright 2026 SimonEisenhauer. Binary distributions
+  retain `LICENSE` and `THIRD-PARTY-NOTICES.html`; demo narration has
+  [separate provider restrictions](docs/media/README.md#narration-use-and-attribution).
 
-Software licensed under [MIT](LICENSE), copyright 2026 SimonEisenhauer.
-The demo narration has separate [provider restrictions](docs/media/README.md#narration-use-and-attribution).
-
-[herdr-install]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/install.mdx
-[herdr-plugins]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/plugins.mdx
-[herdr-cli]: https://github.com/herdrdev/herdr/blob/v0.9.3/src/cli/plugin.rs
 [herdr-config]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx

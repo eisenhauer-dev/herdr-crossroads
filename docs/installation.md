@@ -1,7 +1,15 @@
 # Binary installation
 
-Crossroads 0.0.2 is the current published test version, with a version-pinned
-binary installer and a manifest `[[build]]` hook:
+Crossroads `0.1.0` is in local preparation as the first regular Linux release,
+for `x86_64-unknown-linux-gnu` only; it is not published or publicly installation-tested.
+The fresh local build and artifact gates passed; see
+[current local evidence](builds.md#current-010-local-preparation-evidence) and its
+separate receipt `target/regular-release/local-verification.json`. The local binary
+contains personal build paths and is not a publication candidate; subsequently
+reviewed clean CI assets, public installation and publication remain pending,
+subject to separate approvals. Historical local `0.1.0` artifacts below must
+not be reused or renamed as new-release proof. `0.0.2` remains the latest published
+test version. The version-pinned binary installer uses a manifest `[[build]]` hook:
 `command = ["python3", "scripts/install-binary.py"]`. It installs the agreed
 version into the manifest's fixed `target/release/herdr-crossroads` path. It does
 not build, execute the binary, or register/activate a plugin. By default it
@@ -35,11 +43,11 @@ runtime still requires `stty` and a running Herdr session (manifest minimum 0.9.
 Python is an installation/test prerequisite, not a plugin runtime dependency.
 No tooling is installed by this helper.
 
-For the current agreed version, the exact files (public or local) are:
+For the current preparation version, the required files (not yet published) are:
 
 ```text
-herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz
-herdr-crossroads-0.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 The [build helper](builds.md) produces these in `target/builds/`. From the trusted
@@ -61,8 +69,9 @@ untrusted processes to modify the checkout or assets during installation.
 The existing source-build route remains `cargo build --release --locked`, then
 `herdr plugin link "$PWD"`. **Link does not run build hooks**; build or install
 the binary first. Linking is user-global registration, not an isolated test.
-See [README installation](../README.md#installation) for launch and local-link
-cleanup. The isolated [native managed lifecycle test](#native-distribution-acceptance)
+See [README installation](../README.md#installation) for launch and
+[update and uninstall](../README.md#update-and-uninstall) for local-link cleanup.
+The isolated [native managed lifecycle test](#native-distribution-acceptance)
 passed on Herdr 0.9.3; personal-host setup remains untested. Public CLI-install
 and native public full-cycle evidence are recorded separately below.
 
@@ -125,7 +134,14 @@ Herdr v0.9.3 and v0.9.5 (also verified in v0.9.1) accept `OWNER/REPO[/SUBDIR]`, 
 checking out `FETCH_HEAD`. A single slug such as `herdr-crossroads` fails usage;
 it does not resolve from a plugin registry.
 
-For the current published test prerelease, the public pinned syntax is
+The primary installation syntax is
+`herdr plugin install eisenhauer-dev/herdr-crossroads`. It follows the public default
+branch; its version-pinned hook requires matching published assets. The prepared
+`0.1.0` route cannot succeed before publication and has not been publicly tested.
+See [README installation](../README.md#installation) for the explicit source
+clone/build/link alternative.
+
+For the retained published test prerelease, the public pinned syntax is
 `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.2`
 with `CROSSROADS_ASSET_DIR` absent. Set the absolute local override to use trusted
 offline assets instead. Use `--ref v0.0.1` to select the retained earlier prerelease.
