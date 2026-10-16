@@ -95,7 +95,7 @@ installation: opening/searching the runtime does not download or update anything
 
 The gzip tar must contain exactly four regular, non-sparse members named
 `herdr-crossroads`, `herdr-crossroads.sha256`, `LICENSE`, and
-`THIRD-PARTY-NOTICES.html`. Both notice files must match the trusted checkout's
+`THIRD-PARTY-NOTICES.md`. Both notice files must match the trusted checkout's
 bytes exactly; missing, tampered or malformed notice payloads fail even if the
 outer checksum was recomputed. Older two-member assets are no longer accepted.
 Duplicates, unexpected members,
@@ -104,9 +104,25 @@ paths are extracted. The binary must have a little-endian ELF64 x86-64 executabl
 header; this sanity check is not proof that it runs, is trustworthy, or supports
 a particular glibc version.
 
+The unchanged public `v0.1.0` assets instead contain `THIRD-PARTY-NOTICES.html`.
+For version `0.1.0` only, the current installer accepts that exact four-member
+layout when the HTML SHA256 is
+`08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174`
+and the trusted checkout's equivalent Markdown SHA256 is
+`ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56`.
+`LICENSE` must still match the checkout byte-for-byte, and all archive, checksum,
+ELF and destination checks still apply. The installer retains the trusted
+Markdown rather than HTML. Different HTML, another version, mixed layouts, or
+changed Markdown are rejected; this is not general HTML compatibility. Future
+inventory changes must explicitly reconcile this pin rather than bypass it.
+The old source-SHA-pinned checkout continues using its own HTML installer and
+trusted HTML notices unchanged. No new release or version bump accompanies this
+format conversion; unpinned installation from the changed checkout can still
+install the original public `v0.1.0` archive.
+
 After validation, all three payload files are staged in exclusive temporary
 files in `target/release/`, flushed/synced, then individually atomically replaced:
-`LICENSE` and `THIRD-PARTY-NOTICES.html` (mode 0644) first, then
+`LICENSE` and `THIRD-PARTY-NOTICES.md` (mode 0644) first, then
 `herdr-crossroads` (mode 0755). Keep both notice files with the installed binary
 when copying or redistributing it. Existing symlink/nonregular destinations for
 any payload and symlink directory ancestors

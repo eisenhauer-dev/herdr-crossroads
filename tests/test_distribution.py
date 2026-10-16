@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import pty
 import re
+import runpy
 import select
 import shutil
 import signal
@@ -41,6 +42,7 @@ import unicodedata
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "eisenhauer-dev/herdr-crossroads"
 ARCHIVE = "herdr-crossroads-{}-x86_64-unknown-linux-gnu.tar.gz"
+INSTALLER = runpy.run_path(str(ROOT / "scripts/install-binary.py"))
 
 
 def digest(data):
@@ -147,12 +149,27 @@ def public_cycle_step(command, herdr_argv, operation, ref, commit, main_commit=N
     return result, main_commit
 
 
+def expected_notices(managed, reference, public):
+    """Keep pinned historical checkout assertions distinct from new installs."""
+    notices = {"LICENSE": (reference / "LICENSE").read_bytes()}
+    markdown = (reference / "THIRD-PARTY-NOTICES.md").read_bytes()
+    if (managed / "THIRD-PARTY-NOTICES.md").is_file():
+        notices["THIRD-PARTY-NOTICES.md"] = markdown
+    else:
+        assert public
+        historical = (managed / "THIRD-PARTY-NOTICES.html").read_bytes()
+        assert digest(historical) == INSTALLER["LEGACY_NOTICE_SHA256"]
+        assert digest(markdown) == INSTALLER["LEGACY_MARKDOWN_SHA256"]
+        notices["THIRD-PARTY-NOTICES.html"] = historical
+    return notices
+
+
 def prepare_fixture(base, asset_dir, public=None, update=None):
     """Copy reference artifacts unchanged; add a trailer variant only offline."""
     repo, assets = base / "source", base / "assets"
     (repo / "scripts").mkdir(parents=True)
     assets.mkdir()
-    for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+    for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.md"]:
         shutil.copy2(ROOT / name, repo / name)
     for name in ["check-version.py", "install-binary.py"]:
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
@@ -175,13 +192,23 @@ def prepare_fixture(base, asset_dir, public=None, update=None):
         assert (assets / (name + ".sha256")).read_text() == f"{digest(archive.read_bytes())}  {name}\n"
         with tarfile.open(archive) as package:
             members = package.getmembers()
+            notice_name = "THIRD-PARTY-NOTICES.md"
+            # Public reference assets may belong to an old pinned checkout;
+            # this does not extend the current installer's version exception.
+            if public is not None and {m.name for m in members} == {
+                    "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}:
+                notice_name = "THIRD-PARTY-NOTICES.html"
             assert len(members) == 4 and {m.name for m in members} == {
-                "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}
+                "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", notice_name}
             assert all(m.isfile() and not m.sparse for m in members)
             notices = {name: package.extractfile(name).read()
-                       for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]}
+                       for name in ["LICENSE", notice_name]}
             for name, data in notices.items():
-                assert data == (repo / name).read_bytes()
+                if name == "THIRD-PARTY-NOTICES.html":
+                    assert digest(data) == INSTALLER["LEGACY_NOTICE_SHA256"]
+                    assert digest((repo / "THIRD-PARTY-NOTICES.md").read_bytes()) == INSTALLER["LEGACY_MARKDOWN_SHA256"]
+                else:
+                    assert data == (repo / name).read_bytes()
             original = package.extractfile("herdr-crossroads").read()
             assert package.extractfile("herdr-crossroads.sha256").read() == (
                 f"{digest(original)}  herdr-crossroads\n".encode())
@@ -602,10 +629,11 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                     binary = managed / "target/release/herdr-crossroads"
                     assert not binary.is_symlink() and binary.resolve(strict=True).is_relative_to(managed)
                     assert binary.read_bytes() == payloads[version] and binary.stat().st_mode & 0o777 == 0o755
-                    for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                    installed_notices = expected_notices(managed, repo, public)
+                    for name, data in installed_notices.items():
                         notice = binary.parent / name
                         assert not notice.is_symlink() and notice.resolve(strict=True).is_relative_to(managed)
-                        assert notice.read_bytes() == (repo / name).read_bytes()
+                        assert notice.read_bytes() == data
                         assert notice.stat().st_mode & 0o777 == 0o644
                     if runtime_version == "0.9.5":
                         registry = Path(env["XDG_CONFIG_HOME"]) / "herdr/plugins.json"
@@ -643,8 +671,8 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                     # not reclaim a checkout that a server could still be using.
                     assert json.loads(registry.read_text()) == []
                     assert binary.read_bytes() == payloads[public or "0.0.1"]
-                    for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
-                        assert (binary.parent / name).read_bytes() == (repo / name).read_bytes()
+                    for name, data in installed_notices.items():
+                        assert (binary.parent / name).read_bytes() == data
                 assert all(p.read_text() == "owned fixture data\n" for p in retained)
                 assert not denied.exists()
                 assert artifact_before == {p.name: digest(p.read_bytes()) for p in assets.iterdir()}
