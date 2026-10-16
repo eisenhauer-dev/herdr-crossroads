@@ -35,6 +35,119 @@ the local binary with personal build paths. The real public
 test cycle is not approval for a regular 0.1.0 release.
 There is no short-name registry.
 
+## Keyboard launch setup
+
+Install with `herdr plugin install eisenhauer-dev/herdr-crossroads`, then explicitly
+authorize host-config setup with:
+
+```sh
+herdr plugin action invoke herdr-crossroads.setup-keybind
+herdr plugin log list --plugin herdr-crossroads
+```
+
+The global `setup-keybind` action runs `python3 scripts/setup-keybind.py` from the
+plugin root. Python **3.11+** must still be available on the server's `PATH`.
+Installation/build hooks, startup and opening Crossroads never run this helper;
+only explicit invocation opts into the host-config write. Existing installs need
+the updated checkout/manifest containing the action; the Rust runtime and published
+binary are unchanged, so no new binary release is needed.
+
+**Wait for completion before reloading.** A successful invoke response means the
+action started, not that setup succeeded. Repeat the log command and match the
+invocation's `log_id`; require `status = "succeeded"`, `exit_code = 0`, and stdout
+confirming the added/already-configured binding and target path. On `failed`, read
+stderr/error and resolve the problem instead. Only after success run:
+
+```sh
+herdr server reload-config
+```
+
+Then press `Ctrl+b`, followed by `f` (or your configured prefix). There is no
+automatic reload or launch, avoiding a race with asynchronous setup.
+
+The helper selects the config using the **action process's inherited environment**
+(normally the server's), not necessarily the invoking shell's latest environment:
+
+1. Present `HERDR_CONFIG_PATH` selects that exact file.
+2. Otherwise present `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/herdr/config.toml`.
+3. Otherwise `HOME` selects `$HOME/.config/herdr/config.toml` (Linux default).
+
+Presence, not truthiness, determines precedence. Unlike Herdr's permissive path
+resolution, setup rejects empty, relative, or `..`-containing selected paths and
+missing `HOME` when required, rather than guessing or falling back. An explicit
+config path must name a file, not end with `/`. Verify the
+reported path matches your running host's config before reload.
+
+Setup validates existing/proposed TOML with stdlib `tomllib` and appends only the
+[README's exact shell-binding entry](../README.md#add-the-launch-binding-reload-and-open).
+Layouts that cannot accept an appended `[[keys.command]]` (such as an inline
+`command = []` array) fail without rewriting; use manual setup for those layouts.
+Existing bytes/comments and file permissions are preserved; new config files are
+mode 0600 and missing parent directories 0700. Existing symlink/nonregular targets
+and symlink ancestors are refused, including dangling links. Staging uses an
+exclusive temporary file in the target parent, flushed/synced and atomically
+replaced only after rechecking original metadata and bytes. Handled pre-replacement
+failures leave the existing file unchanged and clean the helper's staging file;
+new empty parents can remain. Forced termination can leave a staging file. This is
+not a hostile-filesystem sandbox or power-loss durability guarantee: **do not edit
+config or run setup concurrently**; the final check/replacement is not a lock.
+
+The action refuses occupied `prefix+f` in built-in configured bindings or custom
+commands, including arrays and whitespace-equivalent spellings, and unmodified
+`f` reserved as a prefix (including `extra_prefixes`). Uppercase `F` and modified
+`ctrl+f` are distinct; setup does not implement a full host key parser. Malformed
+relevant structures fail closed. An existing identical shell command (including
+omitted `type`, which defaults to shell) is a no-op, but other conflicting entries
+are still checked. Defaults for Herdr 0.9.1/0.9.3/0.9.5 leave `prefix+f` free.
+The legacy `[keys.indexed]` table is validated separately: optional `tabs`,
+`workspaces`, and `agents` strings must be empty or modifier combinations. These
+expand only to direct number keys 1–9, so they cannot occupy `prefix+f`; their
+original bytes are preserved. Unsupported fields, non-string values, and invalid
+modifier combinations are refused without rewriting the config.
+No existing binding is removed or overwritten.
+
+**Manual alternative/conflicts:** check both `prefix+?` and your existing config,
+then use the README TOML example with another free key if `prefix+f` is occupied.
+Follow [Herdr's versioned configuration guide](https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx)
+and `herdr --help` for the resolved config path. Preserve custom/default navigation
+and close bindings, including `prefix+g`, `prefix+t`, and `prefix+x` (close pane).
+Reload explicitly after manual changes as well. Uninstall does not remove this
+host entry; remove only your Crossroads entry manually if no longer wanted.
+
+Herdr v0.9.1, v0.9.3, and v0.9.5 have no native install-time launch-binding
+mechanism; Crossroads supplies an opt-in action instead. The host
+`[[keys.command]]` entry uses `type = "shell"` to run the pane-open command
+detached. Plugin-owned `keymaps.jsonc` only controls the UI after launch and
+cannot provide this host shortcut. No personal Herdr config was edited and the
+personal-host binding/reload/key-launch sequence remains unexecuted; isolated
+installation and popup evidence below does not verify that sequence.
+
+Source compatibility checked 2026-10-16 against Herdr v0.9.1
+(`065ef9d6a531c49fb8bee7e818ef837065b21ee9`), v0.9.3
+(`7b116c05bfda646af39d2524c54e70c751f57ee8`), and v0.9.5
+(`2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01`);
+primary contracts:
+
+- [Versioned config path, custom command syntax and reload guide](https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx)
+- [Default prefix and bindings](https://github.com/herdrdev/herdr/blob/v0.9.5/docs/next/website/src/data/config-reference.json)
+- [Plugin manifest schema (no host key bindings)](https://github.com/herdrdev/herdr/blob/v0.9.1/src/app/api/plugins/manifest.rs)
+- [Managed installation and pane-open CLI](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs)
+- [Action argv schema and valid hyphenated IDs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/manifest.rs)
+- [Asynchronous action execution and captured logs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/runtime.rs)
+- [Action invoke and log list --plugin syntax](https://github.com/herdrdev/herdr/blob/v0.9.1/src/cli/plugin.rs)
+- [Config-path presence precedence](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/io.rs)
+- [Binding normalization, shell default, and reserved prefix keys](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/keybinds.rs)
+- [Legacy indexed table fields](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/model.rs#L857-L866)
+- [Indexed number expansion](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/keybinds.rs#L998-L1036) and [modifier syntax](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/keybinds.rs#L1231-L1279)
+
+`python3 tests/test_setup_keybind.py` from the repository root covers manifest and
+README contracts, isolated subprocess success/idempotence/path selection, conflict
+and malformed-config rejection, permissions/comment preservation, unsafe targets,
+and injected staging/replace/concurrent-change failures under `/tmp/opencode`.
+No real Herdr invocation, personal config write, reload or host key launch was
+executed for this feature. The historical installation/runtime evidence below is
+unchanged and does not verify the new action end-to-end.
+
 ## Requirements and local use
 
 Use a trusted checkout and trusted asset source on Linux x86_64 with glibc and
@@ -43,7 +156,7 @@ for public downloads; it is optional, and Python's urllib is used only when curl
 is absent. No Rust/Cargo is required to install a prebuilt binary.
 Git is required for Herdr's managed source checkout; plugin
 runtime still requires `stty` and a running Herdr session (manifest minimum 0.9.1).
-Python is an installation/test prerequisite, not a plugin runtime dependency.
+Python is an installation/setup/test prerequisite, not a popup runtime dependency.
 No tooling is installed by this helper.
 
 For the current published version, the installer requires:

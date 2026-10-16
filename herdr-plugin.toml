@@ -8,6 +8,12 @@ platforms = ["linux"]
 [[build]]
 command = ["python3", "scripts/install-binary.py"]
 
+[[actions]]
+id = "setup-keybind"
+title = "Set up prefix+f launch binding"
+contexts = ["global"]
+command = ["python3", "scripts/setup-keybind.py"]
+
 [[panes]]
 id = "crossroads"
 title = "Herdr Crossroads"
