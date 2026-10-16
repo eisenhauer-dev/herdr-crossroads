@@ -34,6 +34,7 @@ import tarfile
 import tempfile
 import termios
 import time
+import tomllib
 import unicodedata
 
 
@@ -89,8 +90,15 @@ def install_public(command, herdr_argv, ref, commit):
     return command([*herdr_argv, "plugin", "install", SOURCE, "--yes", "--ref", commit])
 
 
-def public_versions(ref, commit, update_ref=None, update_commit=None):
+def public_versions(ref, commit, update_ref=None, update_commit=None,
+                    main_commit=None, update_main_commit=None):
     public = public_version(ref, commit) if ref is not None or commit is not None else None
+    if main_commit is not None or update_main_commit is not None:
+        if main_commit is None or update_ref is None or update_commit is None:
+            raise ValueError("reviewed main commits require an initial main SHA and both public release pairs in cycle mode")
+        public_version(ref, main_commit)
+        if update_main_commit is not None:
+            public_version(update_ref, update_main_commit)
     if update_ref is None and update_commit is None:
         return public, None
     update = public_version(update_ref, update_commit)
@@ -108,25 +116,35 @@ def verify_public_main(command, commit):
         raise ValueError("public default HEAD must be refs/heads/main at the exact reviewed main commit")
 
 
-def public_cycle_step(command, herdr_argv, operation, ref, commit):
+def public_cycle_step(command, herdr_argv, operation, ref, commit, main_commit=None):
+    """Return the command result and approved source identity, separate from the release identity."""
     public_version(ref, commit)
+    if main_commit is not None:
+        public_version(ref, main_commit)
     if operation == "return":
-        return install_public(command, herdr_argv, ref, commit)
+        return install_public(command, herdr_argv, ref, commit), commit
     if operation not in ["install", "update"]:
         raise ValueError("unknown public cycle operation")
     if operation == "update":
         print(f"CHECKPOINT: initial navigation passed. After separate user approval, the primary/operator must\n"
-              f"publish reviewed main {ref} at {commit} and hold an exclusive main freeze throughout update hooks.\n"
-              f"Pre/post checks do NOT eliminate branch races. To authorize update, enter: update {commit}", flush=True)
-        if sys.stdin.readline() != f"update {commit}\n":
+              f"publish reviewed main for {ref} and hold an exclusive main freeze throughout update hooks.\n"
+              f"Pre/post checks do NOT eliminate branch races. To authorize the actual reviewed merge, enter:\n"
+              f"update {commit} <reviewed-main-SHA>\n"
+              f"Or confirm the predeclared/default main: update {main_commit or commit}", flush=True)
+        confirmation = sys.stdin.readline()
+        explicit = re.fullmatch(r"update ([0-9a-f]{40}) ([0-9a-f]{40})\n", confirmation)
+        if explicit and explicit[1] == commit and (main_commit is None or explicit[2] == main_commit):
+            main_commit = explicit[2]
+        elif confirmation != f"update {main_commit or commit}\n":
             raise ValueError("update checkpoint unconfirmed or EOF; update not executed")
+    main_commit = commit if main_commit is None else main_commit
     verify_public_tag(command, ref, commit)
-    verify_public_main(command, commit)
+    verify_public_main(command, main_commit)
     result = command([*herdr_argv, "plugin", operation,
                       SOURCE if operation == "install" else "herdr-crossroads", "--yes"])
-    verify_public_main(command, commit)
+    verify_public_main(command, main_commit)
     verify_public_tag(command, ref, commit)
-    return result
+    return result, main_commit
 
 
 def prepare_fixture(base, asset_dir, public=None, update=None):
@@ -141,6 +159,12 @@ def prepare_fixture(base, asset_dir, public=None, update=None):
     # Dimensions belong only to the temporary fixture, not the project manifest.
     manifest = repo / "herdr-plugin.toml"
     if public is None:
+        version = tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"]
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = repo / name
+            prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
+            path.write_text(path.read_text().replace(
+                prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
         manifest.write_text(manifest.read_text() + '\nwidth = "90%"\nheight = "90%"\n')
     payloads = {}
     for version in ([public, update] if update else [public or "0.0.1"]):
@@ -325,8 +349,12 @@ def stop_owned(process):
 
 
 def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
-             public_update_ref=None, public_update_commit=None):
-    public, update = public_versions(public_ref, public_commit, public_update_ref, public_update_commit)
+             public_update_ref=None, public_update_commit=None,
+             public_main_commit=None, public_update_main_commit=None):
+    public, update = public_versions(public_ref, public_commit, public_update_ref, public_update_commit,
+                                     public_main_commit, public_update_main_commit)
+    main_commits = {public: public_commit if public_main_commit is None else public_main_commit,
+                    update: public_update_main_commit}
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-native-") as temporary:
         base = Path(temporary)
         repo, assets, payloads = prepare_fixture(base, asset_dir, public, update)
@@ -544,11 +572,16 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                     release_ref = "v" + version
                     requested_ref = (None if update and step < 2 else commits[version]) if public else release_ref
                     if public:
-                        installed_result = (public_cycle_step(command, argv, operation, release_ref, commits[version])
-                                            if update else install_public(command, argv, public_ref, public_commit))
+                        if update:
+                            installed_result, expected_commit = public_cycle_step(
+                                command, argv, operation, release_ref, commits[version], main_commits[version])
+                        else:
+                            installed_result = install_public(command, argv, public_ref, public_commit)
+                            expected_commit = commits[version]
                         assert installed_result.returncode == 0, (installed_result.stdout, installed_result.stderr)
                     else:
                         cli("plugin", "install", SOURCE, "--yes", "--ref", requested_ref)
+                        expected_commit = commits[version]
                     plugins = result("plugin.list")["plugins"]
                     installed = [p for p in plugins if p["plugin_id"] == "herdr-crossroads"]
                     assert len(installed) == 1, plugins
@@ -563,7 +596,7 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                         assert "requested_ref" not in source, source
                     else:
                         assert source["requested_ref"] == requested_ref
-                    assert source["resolved_commit"] == commits[version]
+                    assert source["resolved_commit"] == expected_commit
                     managed = Path(source["managed_path"]).resolve(strict=True)
                     assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"])) and managed.is_relative_to(base)
                     binary = managed / "target/release/herdr-crossroads"
@@ -662,9 +695,12 @@ def main():
     parser.add_argument("--public-commit", help="reviewed full commit SHA required with --public-ref")
     parser.add_argument("--public-update-ref", help="OPT IN to reviewed public 0.0.1/0.0.2/0.0.1 cycle (v0.0.2)")
     parser.add_argument("--public-update-commit", help="reviewed full update SHA; requires both public ref/commit pairs")
+    parser.add_argument("--public-main-commit", help="reviewed full initial main SHA; cycle only; defaults to release SHA")
+    parser.add_argument("--public-update-main-commit", help="predeclared reviewed full update main SHA; requires --public-main-commit and cycle mode; otherwise authorize at checkpoint")
     args = parser.parse_args()
     try:
-        public_versions(args.public_ref, args.public_commit, args.public_update_ref, args.public_update_commit)
+        public_versions(args.public_ref, args.public_commit, args.public_update_ref, args.public_update_commit,
+                        args.public_main_commit, args.public_update_main_commit)
     except ValueError as error:
         parser.error(str(error))
     if not args.herdr_bin.is_absolute() or not args.asset_dir.is_absolute():
@@ -676,7 +712,8 @@ def main():
             parser.error("Herdr must be a real executable ELF, not a PATH shim")
     if not assets.is_dir() or sys.flags.optimize:
         parser.error("asset directory required; assertions must remain enabled (no python -O)")
-    run_case(herdr, assets, args.public_ref, args.public_commit, args.public_update_ref, args.public_update_commit)
+    run_case(herdr, assets, args.public_ref, args.public_commit, args.public_update_ref, args.public_update_commit,
+             args.public_main_commit, args.public_update_main_commit)
 
 
 if __name__ == "__main__":

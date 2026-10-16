@@ -83,11 +83,12 @@ and [synthetic previews](docs/media/README.md).
 - Git to obtain/update a source checkout. Python 3.11+ is also used for local
   tests, not plugin runtime.
 
-Crossroads 0.0.1 is the Linux-only test-version preparation. The planned public
+Crossroads 0.0.2 is the current Linux-only test-version preparation. The public
 acceptance sequence is 0.0.1 → 0.0.2 → 0.0.1, before 0.1.0 as the first regular
-Linux release; no matching public Release assets are available yet. The
+Linux release. Version 0.0.1 is a published non-latest prerelease; 0.0.2 assets
+are not yet published. The
 [verified 0.0.1 CI artifact](docs/builds.md#current-001-public-pipeline-evidence)
-is build evidence, not a published Release.
+records the exact assets subsequently published for 0.0.1; it is not 0.0.2 evidence.
 Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
@@ -131,11 +132,11 @@ An explicit absolute `CROSSROADS_ASSET_DIR` selects trusted local assets instead
 empty/relative values fail without network fallback. It never compiles. Linking does not execute this
 hook, so the source build-then-link route above is unchanged. See
 [binary installation](docs/installation.md) for safety checks, requirements,
-and isolated tests. **Public installation is prepared, not yet available or
-accepted:** no matching tag/Release exists as of 2026-10-16. Once published and
-accepted, the pinned route is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`;
-this is not currently a runnable public install instruction.
+and isolated tests. **Version 0.0.2 publication and acceptance are pending.**
+The published test prerelease's pinned route is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`.
+Its isolated Herdr 0.9.5 public CLI-install and pinned native single-version tests
+passed on 2026-10-16; the real update/return cycle remains unrun.
 `herdr plugin install herdr-crossroads` is not valid
 shorthand. Native local managed installation was tested; see
 [its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
