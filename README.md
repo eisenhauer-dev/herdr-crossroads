@@ -49,6 +49,8 @@ Historical native previews (not current release verification):
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
 - Managed installation: Git and **Python 3.11+** (standard library only); no Rust/Cargo.
+  Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
+  is absent, never after a curl failure. See [download safeguards](docs/installation.md#validation-and-failure-behavior).
   Source builds: Git, Rust/Cargo, and a system linker.
 - No macOS, Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
