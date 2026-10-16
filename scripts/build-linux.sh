@@ -38,7 +38,7 @@ done
     cd "$binary_dir"
     sha256sum herdr-crossroads > herdr-crossroads.sha256
     tar --owner=0 --group=0 --numeric-owner -czf "$output/$archive.tmp" \
-        herdr-crossroads herdr-crossroads.sha256 -C "$root" LICENSE THIRD-PARTY-NOTICES.html
+        herdr-crossroads herdr-crossroads.sha256 -C "$root" LICENSE THIRD-PARTY-NOTICES.md
 )
 mv "$output/$archive.tmp" "$output/$archive"
 (

@@ -22,7 +22,7 @@ import tempfile
 import threading
 import tomllib
 
-from test_distribution import SOURCE, digest, enable_public_downloads, install_public, public_version
+from test_distribution import SOURCE, digest, enable_public_downloads, expected_notices, install_public, public_version
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +37,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
         base = Path(temporary)
         repo = base / "source"
         (repo / "scripts").mkdir(parents=True)
-        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.md"]:
             shutil.copy2(ROOT / name, repo / name)
         if not public_ref:
             version = tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"]
@@ -70,7 +70,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                 for name, data in [("herdr-crossroads", wrong), ("herdr-crossroads.sha256",
                         f"{hashlib.sha256(wrong).hexdigest()}  herdr-crossroads\n".encode()),
                         ("LICENSE", (repo / "LICENSE").read_bytes()),
-                        ("THIRD-PARTY-NOTICES.html", (repo / "THIRD-PARTY-NOTICES.html").read_bytes())]:
+                        ("THIRD-PARTY-NOTICES.md", (repo / "THIRD-PARTY-NOTICES.md").read_bytes())]:
                     entry = tarfile.TarInfo(name)
                     entry.size = len(data)
                     package.addfile(entry, io.BytesIO(data))
@@ -177,7 +177,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                                 binary = managed / "target/release/herdr-crossroads"
                                 assert binary.read_bytes() == expected
                                 assert binary.stat().st_mode & 0o777 == 0o755
-                                for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+                                for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
                                     notice = binary.parent / name
                                     assert not notice.is_symlink()
                                     assert notice.read_bytes() == (repo / name).read_bytes()
@@ -243,8 +243,8 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                 assert Path(plugin["plugin_root"]).resolve(strict=True) == managed
                 assert Path(plugin["manifest_path"]).resolve(strict=True) == managed / "herdr-plugin.toml"
                 for name, data, mode in [("herdr-crossroads", expected, 0o755),
-                                         ("LICENSE", (repo / "LICENSE").read_bytes(), 0o644),
-                                         ("THIRD-PARTY-NOTICES.html", (repo / "THIRD-PARTY-NOTICES.html").read_bytes(), 0o644)]:
+                                        *((name, data, 0o644) for name, data in
+                                          expected_notices(managed, repo, public_ref).items())]:
                     installed = managed / "target/release" / name
                     assert not installed.is_symlink() and installed.resolve(strict=True).is_relative_to(managed)
                     assert installed.read_bytes() == data and installed.stat().st_mode & 0o777 == mode

@@ -159,7 +159,8 @@ Crossroads after editing.
 - [Architecture](docs/architecture.md), [contributing and testing](CONTRIBUTING.md)
 - [Linux artifacts and verification limits](docs/builds.md), [release preparation](docs/releases.md)
 - Software: [MIT](LICENSE), copyright 2026 SimonEisenhauer. Binary distributions
-  retain `LICENSE` and `THIRD-PARTY-NOTICES.html`; demo narration has
+  retain `LICENSE` and [third-party notices](THIRD-PARTY-NOTICES.md); the existing
+  `v0.1.0` release contains the equivalent HTML notices. Demo narration has
   [separate provider restrictions](docs/media/README.md#narration-use-and-attribution).
 
 [herdr-config]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx
