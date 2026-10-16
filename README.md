@@ -32,7 +32,8 @@ see [media terms, attribution and provenance](docs/media/README.md#narration-use
 - **Navigation-only:** no creation, movement, renaming, or deletion of session topology.
   Only confirmation changes focus; explicitly saving a theme changes plugin-owned files.
 - Opening/searching uses local CLI/socket access and files, not network requests or updates.
-  Crossroads does not change Herdr configuration, native prefix `g`/`t` bindings, or other plugins.
+  Only the explicit setup action below writes a host launch binding; opening/searching
+  never changes Herdr configuration, native prefix `g`/`t` bindings, or other plugins.
 
 <a id="navigation-and-search"></a>
 
@@ -48,7 +49,8 @@ Historical native previews (not current release verification):
 - **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
-- Managed installation: Git and **Python 3.11+** (standard library only); no Rust/Cargo.
+- Managed installation and opt-in keybinding setup: Git and **Python 3.11+**
+  (standard library only); no Rust/Cargo.
   Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
   is absent, never after a curl failure. See [download safeguards](docs/installation.md#validation-and-failure-behavior).
   Source builds: Git, Rust/Cargo, and a system linker.
@@ -76,7 +78,58 @@ herdr plugin install eisenhauer-dev/herdr-crossroads
 - See [binary installation](docs/installation.md) for trusted local assets, pinned test
   prereleases, validation, and version-specific Herdr behavior. There is no short-name registry.
 
-Alternatively, explicitly clone, build, and link a trusted source checkout:
+### Add the launch binding, reload, and open
+
+Installation alone does not write a host binding. After reviewing the plugin,
+explicitly opt in to adding `prefix+f` in Herdr's Linux user config:
+
+```sh
+herdr plugin action invoke herdr-crossroads.setup-keybind
+herdr plugin log list --plugin herdr-crossroads
+```
+
+Invocation starts asynchronously: repeat the log command until the matching
+`log_id` has `status = "succeeded"`, `exit_code = 0`, and output confirming the
+config path was added or already configured. Do not reload on `running` or `failed`;
+read the error first. Then reload explicitly:
+
+```sh
+herdr server reload-config
+```
+
+Press `Ctrl+b`, then `f` (or your configured prefix). The action refuses conflicts
+without overwriting bindings and preserves existing config bytes/comments. See
+[path precedence and safeguards](docs/installation.md#keyboard-launch-setup).
+It requires the updated plugin checkout/manifest, not a new runtime binary release.
+
+**Manual fallback:** edit `~/.config/herdr/config.toml` (default path;
+`herdr --help` shows the resolved path), following
+[Herdr's versioned configuration guide][herdr-config].
+
+First check `prefix+?` and your existing config for collisions. `prefix+f` is unused
+in Herdr 0.9.1/0.9.3/0.9.5 defaults and suggests “find panes”; if you already use
+it, choose another free shortcut. Preserve all
+custom and default navigation/close bindings, including `prefix+g`, `prefix+t`,
+and `prefix+x` (close pane). Append only this new entry, with a free key:
+
+```toml
+[[keys.command]]
+key = "prefix+f"
+type = "shell"
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
+description = "Open Herdr Crossroads"
+```
+
+`shell` runs the launch command detached; the plugin manifest opens the popup.
+After manual setup, reload as above and press your configured prefix and chosen key.
+This host launch binding is separate from `keymaps.jsonc`, which changes only
+controls inside Crossroads. Personal-host configuration and key launch remain
+unexecuted; see [installation evidence and source contracts](docs/installation.md#keyboard-launch-setup).
+
+### Optional: build from source
+
+This is an alternative to managed installation, not a prerequisite. Explicitly
+clone, build, and link a trusted source checkout:
 
 ```sh
 git clone https://github.com/eisenhauer-dev/herdr-crossroads.git
@@ -87,7 +140,8 @@ herdr plugin link "$PWD"
 
 - Linking does not run build hooks. Keep the checkout and `target/release/herdr-crossroads`
   in place; Cargo may download dependencies on a fresh machine.
-- From a shell in your running Herdr session, open Crossroads:
+- Use the launch binding above, or open Crossroads from a shell in your running
+  Herdr session:
 
 ```sh
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
@@ -96,10 +150,7 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 - The default popup is half-size. For a trusted local checkout, `width = "90%"` and
   `height = "90%"` belong in the manifest's `[[panes]]` table before registration,
   not CLI flags; neither size guarantees 80×15 content cells.
-- No launch binding is installed. For an optional host shortcut, follow
-  [Herdr's versioned configuration guide][herdr-config], check `prefix+?` for conflicts,
-  and preserve existing navigation/close bindings. `keymaps.jsonc` changes only the plugin UI.
-- These source clone/build/link and personal-host configuration examples remain unexecuted;
+- These source clone/build/link examples remain unexecuted;
   isolated installation evidence is recorded in the [installation guide](docs/installation.md).
 
 ## Controls
@@ -127,7 +178,9 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 
 <a id="configuration-and-complete-defaults-overview"></a>
 
-No configuration is required. Locate the plugin-owned directory with
+No plugin-owned configuration is required; keyboard launch needs the opt-in or manual
+[host binding setup](#add-the-launch-binding-reload-and-open) above.
+Locate the plugin-owned directory with
 `herdr plugin config-dir herdr-crossroads` (the host may create it), then reopen
 Crossroads after editing.
 
