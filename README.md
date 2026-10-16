@@ -75,21 +75,26 @@ and [synthetic previews](docs/media/README.md).
 ## Requirements and compatibility
 
 - Linux, a running Herdr session, and Herdr **0.9.1 or later** (manifest minimum).
-- For source builds: Rust/Cargo and a system linker. For local prebuilt installation:
-  trusted versioned assets and Python 3.11+ (standard library only); no Rust/Cargo.
+- For source builds: Rust/Cargo and a system linker. For prebuilt installation:
+  a trusted versioned Release (or local assets) and Python 3.11+ (standard library only); no Rust/Cargo.
   `stty` is required on `PATH` at runtime.
 - A terminal popup with at least **80×15 content cells**, excluding host borders.
   Smaller popups show an error page instead of allowing pane focus.
 - Git to obtain/update a source checkout. Python 3.11+ is also used for local
   tests, not plugin runtime.
 
-Crossroads 0.1.0 declares Linux only. Local verification is on Linux x86_64;
+Crossroads 0.0.1 is the Linux-only test-version preparation. The planned public
+acceptance sequence is 0.0.1 → 0.0.2 → 0.0.1, before 0.1.0 as the first regular
+Linux release; no matching public Release assets are available yet. The
+[verified 0.0.1 CI artifact](docs/builds.md#current-001-public-pipeline-evidence)
+is build evidence, not a published Release.
+Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
 host-command examples below were checked against v0.9.3 sources. On 2026-10-14,
 an isolated native Herdr 0.9.3 server/client test verified local managed
 installation, search/focus, replacement, version return, and uninstall at 160×40
-with a fixture-only 90% popup manifest. The current license-bearing binary archive
+with a fixture-only 90% popup manifest. The historical 0.1.0 license-bearing binary archive
 also passed isolated real-Herdr 0.9.5 CLI and server/client installation tests on
 2026-10-15, including delivered notices, search/focus, replacement/return and
 uninstall; see [scope and hashes](docs/installation.md#native-distribution-acceptance).
@@ -119,14 +124,19 @@ Keep that checkout and its release binary in place. Linking registers a plugin
 globally for your user and creates its config/state directories; it is not a
 sandbox. Review the manifest and source before linking.
 
-The manifest now has a Python **local-asset build hook**. It requires an absolute
-`CROSSROADS_ASSET_DIR` containing the exact versioned Linux x86_64 glibc tar and
-checksum; it does not download or compile anything. Linking does not execute this
+The manifest has a Python **version-pinned binary build hook**. With
+`CROSSROADS_ASSET_DIR` absent it downloads the exact Linux x86_64 glibc archive and
+checksum from `eisenhauer-dev/herdr-crossroads` GitHub Release `v<VERSION>`.
+An explicit absolute `CROSSROADS_ASSET_DIR` selects trusted local assets instead;
+empty/relative values fail without network fallback. It never compiles. Linking does not execute this
 hook, so the source build-then-link route above is unchanged. See
-[local binary installation](docs/installation.md) for safety checks, requirements,
-and isolated tests. The selected future source is
-`eisenhauer-dev/herdr-crossroads`, but no public binary endpoint or published
-release is established; `herdr plugin install herdr-crossroads` is not valid
+[binary installation](docs/installation.md) for safety checks, requirements,
+and isolated tests. **Public installation is prepared, not yet available or
+accepted:** no matching tag/Release exists as of 2026-10-16. Once published and
+accepted, the pinned route is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`;
+this is not currently a runnable public install instruction.
+`herdr plugin install herdr-crossroads` is not valid
 shorthand. Native local managed installation was tested; see
 [its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
 
@@ -213,7 +223,7 @@ installations; otherwise update through the package manager. Herdr 0.9.3 has no
 `plugin update` command; 0.9.5 provides one, but this command was not exercised
 by the native acceptance test. The tested managed route reinstalls a reviewed ref.
 Crossroads has no automatic updater. Close it before reinstalling a reviewed ref
-with matching trusted local assets, or uninstalling. A return to a previous ref
+with matching trusted assets (public Release or explicit local override), or uninstalling. A return to a previous ref
 also requires that version's assets. The isolated native test verified replacement
 and return using a test-only version fixture, not compatibility with a newly
 released runtime. See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).

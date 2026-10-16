@@ -1,0 +1,40 @@
+name: PR source policy
+
+on:
+  pull_request_target:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  source-policy:
+    name: PR source policy
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate source repository metadata
+        shell: bash
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+              event = json.load(source)
+          pr = event["pull_request"]
+          target = pr["base"]["ref"]
+          if target == "develop":
+              print("PR source policy: allowed")
+              sys.exit(0)
+          if target != "main":
+              sys.exit("PR source policy: unexpected target branch")
+          ids = [event["repository"]["id"], pr["base"]["repo"]["id"], pr["head"]["repo"]["id"]]
+          if not all(type(repo_id) is int and repo_id > 0 for repo_id in ids):
+              sys.exit("PR source policy: missing or invalid repository identity")
+          if not ids[0] == ids[1] == ids[2]:
+              sys.exit("PR source policy: main requires an internal source; target develop for fork contributions")
+          print("PR source policy: allowed")
+          PY

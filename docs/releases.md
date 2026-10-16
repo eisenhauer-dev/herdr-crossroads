@@ -3,7 +3,14 @@
 This process prepares reviewable versioned Linux assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The current version remains `0.1.0`; no version bump is part of this preparation.
+The current preparation version is `0.0.1`. The planned public installation,
+update and return test uses `0.0.1 → 0.0.2 → 0.0.1`, with each version built and
+checked independently. Only after Linux acceptance is `0.1.0` planned as the first
+regular Linux release. Test publications should be marked as GitHub prereleases;
+their exact commits, tags and assets still require separate approval. A GitHub
+prerelease flag does not change the canonical `X.Y.Z` version accepted by the tools.
+Historical `0.1.0` evidence below is not evidence for these new test versions;
+never rename an old asset to a new version.
 
 ## Version and asset contract
 
@@ -14,15 +21,19 @@ fields, duplicate/missing lock entries, mismatches, and non-string versions fail
 Only canonical stable `X.Y.Z` with ASCII digits and no leading zeroes is supported;
 prereleases and build-metadata suffixes are deliberately excluded. These checks
 prevent version data from becoming shell commands or traversing artifact paths.
-The separate [local-asset installation hook](installation.md) reuses this checker
-without downloading or invoking Rust/Cargo. It requires Python 3.11+ standard
-library only and an explicit trusted local asset directory.
+The separate [binary installation hook](installation.md) reuses this checker
+without invoking Rust/Cargo. It requires Python 3.11+ standard library only;
+an explicit trusted local asset directory selects offline installation, otherwise
+the prepared route downloads the exact version from GitHub Releases. Publication
+and public acceptance remain pending.
 
-For `0.1.0`, the only supported target produces:
+For `0.0.1`, the only supported target produces:
 
 ```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.link.map
 ```
 
 The tar contains the exact tested executable, preserving its executable mode,
@@ -45,14 +56,16 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 tests/test_git_hooks.py
+python3 tests/test_pr_source_policy.py
 python3 tests/test_version.py
 python3 tests/test_build_linux.py
+python3 tests/test_build_provenance.py
 python3 tests/test_install_binary.py
 python3 tests/test_distribution_helpers.py
 python3 tests/test_notices.py
 sh scripts/build-linux.sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-tar -tvzf target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+(cd target/builds && sha256sum -c herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
+tar -tvzf target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 The helper builds the locked optimized explicit-target binary and runs all four
@@ -62,6 +75,18 @@ gate results, tar membership/mode/ownership, and both checksums before requestin
 release approval. A file left by an earlier build is not fresh success evidence.
 Run `sha256sum -c herdr-crossroads.sha256` after extraction into a separate empty
 directory. Do not run concurrent builds in the same checkout.
+
+The JSON/map sidecars are evidence outside the unchanged four-member tar and are
+uploaded with the archive/checksum by CI using explicit versioned filenames.
+They bind the final map to the exact tested binary, record tool/link command output,
+and preserve installed package/source versions and file hashes where available.
+See [builder evidence and limits](builds.md#builderlink-evidence-not-distribution-approval).
+Review the normalized raw map rather than treating every traced file or GCC
+candidate as an actual contribution. The actual PR run's system candidates and
+exact Ubuntu package/source evidence are now recorded in the reviewed Ubuntu
+profile below. The [fresh 0.0.1 CI gate and matching raw-map/ELF checks](builds.md#current-001-public-pipeline-evidence)
+passed; repeat these checks for each new asset before distribution. A successful collection,
+profile match, or build alone is not distribution approval.
 
 ## License inventory and verification
 
@@ -99,7 +124,7 @@ toolchain's notice file was used with explicit read authorization.
 
 For approved dependency/toolchain/builder changes, with exact cached crate sources,
 the installed toolchain's Rust documentation, native GCC driver, `dpkg-query`,
-and installed package copyright/common-license files available:
+and installed package copyright/common-license files matching one reviewed profile:
 
 ```sh
 python3 scripts/third-party-notices.py --write
@@ -108,23 +133,84 @@ python3 tests/test_notices.py
 ```
 
 Review the inventory and full-text diff; generation is not legal approval.
-`--check` is the cheap build gate: it compares a deterministic parsed
-Cargo manifest/lock fingerprint (excluding only this project's version) and
-exact Rust version. It does not regenerate or prove attribution completeness.
-`test_notices.py` reproduces and compares the entire notice using the cached
-sources, installed Rust notices, system object hashes, package/source versions,
-and complete installed system notices/licenses. Run it on the actual packaging
-builder before release; it detects builder drift without hardcoding this host's
-glibc/GCC versions. `--check` intentionally does not verify system provenance or
-the newly linked ELF. Regeneration's Debian/Ubuntu package-discovery procedure
-has only been exercised on this local builder. Its checked-in glibc source-header
-evidence must match the installed source package/version; generation rejects a
-mismatch rather than extending exceptions to other versions. A different builder
-needs its own reviewed source evidence, not a new runtime distro constraint.
-This is not evidence for Ubuntu 24.04. It is a focused local check, not added to
-the existing CI helper-test step by this change. Neither command installs tools
-or downloads dependencies. Reassess new custom license paths/inline attribution
-requirements rather than assuming filename matching covers future packages.
+`--check` is the pre-build gate: it compares a deterministic parsed Cargo
+manifest/lock fingerprint (excluding only this project's version), exact Rust
+version, and actual installed system inputs against either reviewed builder.
+Matching includes resolved GCC candidate paths/hashes, exact binary/source package
+versions and complete installed copyright/common-license bytes. Both checked-in
+profiles and their exact source evidence are mandatory; notice-text hashes and
+source-evidence hashes are checked, and the canonical system section must equal
+its checked-in-data rendering. Missing, changed or unreviewed inputs fail before
+Cargo/PTYs; `--write` also refuses an unreviewed host rather than silently capturing
+it. The two profiles are explicit, not a generic builder/plugin mechanism.
+
+Generation renders both conservative labeled profiles in stable order, producing
+the same canonical notice on either builder. It does not overwrite the reviewed
+records from the current host. `test_notices.py` reproduces the entire notice from
+cached crates, installed Rust notices and reviewed system data, and tests both
+profile matches plus drift/missing/tampered evidence. Full regeneration requires
+the installed Rust documentation; the CI build's mandatory `--check` does not.
+Neither command downloads dependencies or proves attribution completeness or
+newly linked ELF contributions. These are builder controls, not runtime distro
+constraints. Reassess changed builders, custom license paths and inline attribution
+requirements explicitly rather than assuming filename matching covers future inputs.
+
+### Ubuntu 24.04 system profile
+
+`LICENSES/ubuntu-24.04-system.json` records actual candidates from public PR run
+[38812409902](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38812409902),
+commit `47b5a5774eb6227809c222323668a6c1e5b35b2f`, artifact `12008823316`.
+Its binary SHA256 is `63857e066f8e4c7821114107292e5e973aaab0b12144ab13b1a63e59611bace1`;
+its normalized map SHA256 is `ef6bbe624753a8a54c94a0592f155c90fecfa0fdf5f66ebbd3271ccb5c3432b6`.
+All 14 collected GCC candidates, including `crt1.o`, matched bytes extracted from
+the exact official Ubuntu `.deb` packages. The canonical profile uses the same 13
+startup/runtime queries as the local notice inventory (excluding `crt1.o`).
+
+| Inputs | Binary/source package version |
+| --- | --- |
+| glibc startup/nonshared/development inputs and runtime/loader | `libc6-dev:amd64`, `libc6:amd64`; `glibc 2.39-0ubuntu8.9` |
+| GCC CRT/static runtime/development linker inputs | `libgcc-13-dev:amd64`; `gcc-13 13.3.0-6ubuntu2~24.04.1` |
+| Dynamic GCC runtime | `libgcc-s1:amd64`; `gcc-14 14.2.0-4ubuntu2~24.04.1` |
+
+Exact package archive paths, sizes and SHA256 values are preserved in the profile;
+downloads used `https://archive.ubuntu.com/ubuntu/` plus those paths. On
+2026-10-15 all seven downloaded packages (including matching `gcc-13-base`,
+`gcc-14-base` copyright providers and `base-files`) matched Ubuntu's official
+`noble-updates/main/binary-amd64/Packages.xz`. That index matched its `InRelease`
+hash; `gpgv` verified the latter with Ubuntu archive key
+`F6ECB3762474EDA9D21B7022871920D1991BC93C` from the installed archive keyring.
+The profile preserves all exact package copyright texts and referenced full common
+licenses. Common-license donor `base-files 13ubuntu10.5` is **not** claimed to be
+the runner's installed version: the gate checks those license bytes, not the donor
+package version. None of these packages was installed for this verification.
+
+[Exact Ubuntu glibc source evidence](../LICENSES/glibc-2.39-0ubuntu8.9-startup.txt)
+records the DSC and both archive URLs/sizes/hashes, complete patched-file hashes
+and all eight full exception headers. Archive sizes/hashes matched the exact
+`glibc_2.39-0ubuntu8.9.dsc`; `dpkg-source --no-check -x` successfully applied the
+entire Ubuntu patch series before the headers were extracted. The DSC signature
+was not verified: HTTPS primary-source retrieval and matching DSC checksums are
+the stated source-provenance boundary, distinct from signed binary-index checking.
+As for the local profile, `csu/init.c` and `csu/static-reloc.c` have no such exception.
+Do not extend the eight file-specific exceptions to those or other sources.
+
+On 2026-10-16 the bound map and exact downloaded ELF from this run were checked
+against the verified package objects and patched source. The map contains
+`Scrt1.o` ABI-note, unwind and `_start` sections, `crti.o`/`crtn.o` init/fini
+sections, and GCC CRT contributions; no static `libc_nonshared.a`, `libgcc.a` or
+`libgcc_eh.a` contributions appear. The ELF and map lack `_IO_stdin_used`
+(`csu/init.c` data) and `_dl_relocate_static_pie`. The patched `csu/Makefile`
+identifies `Scrt1.o` inputs as `start.os`, `abi-note.o` and `init.o`; the unused
+`init.c` data is discarded. This checks that run's actual startup contributions,
+not arbitrary later builds or a universal glibc exception.
+
+The retained local copy of the old PR artifact carries the old local-only notices; it is evidence for
+its candidate bytes, not a corrected distribution asset. The fresh
+[0.0.1 pipeline verification](builds.md#current-001-public-pipeline-evidence)
+passed the new mandatory matching-profile gate, all four full PTYs and
+packaging/upload, independent four-member tar/checksum/canonical-notice checks,
+and matching raw-map/ELF reconciliation. Final distribution approval remains pending;
+these artifact-specific checks must be repeated for new assets.
 
 ### Installed system provenance and verified startup exceptions
 
@@ -221,23 +307,29 @@ reverify the four-member archive whenever notices change, and reassess if
 libraries are bundled, source versions change, or linking changes. No universal
 clearance or other-platform execution result is established by this evidence.
 
-The current four-member asset was rebuilt and verified on 2026-10-15, with all
+The earlier local-only-notice four-member asset was rebuilt and verified on
+2026-10-15, with all
 four full PTYs and matching final binary/map evidence. Both isolated real-Herdr
 0.9.5 harnesses passed; [current native evidence and hashes](installation.md#native-distribution-acceptance)
 are distinct from the retained historical two-member evidence. This remains
-local preparation, not publication or final release approval.
+local preparation, not publication or final release approval. Those native results
+precede dual-profile notice regeneration. The
+[subsequent local native acceptance](installation.md#dual-profile-local-acceptance)
+passed against the repackaged dual-profile asset; public acceptance is still pending.
 
 ## Public CI and later publication remain separate
 
 The existing **Linux gates** job accepts `push`, `pull_request`, and manual
 `workflow_dispatch` on an existing ref. Every invocation remains public-only,
 read-only, and uses the same gates and helper. Only successful packaging writes
-the exact versioned name to step outputs; upload selects just its tar and
-checksum, never a `target/builds/` wildcard. There is no tag trigger or release
+the exact versioned name to step outputs; upload selects its tar, archive
+checksum, provenance JSON and link map, never a `target/builds/` wildcard. There is no tag trigger or release
 publication job.
 
-The helper-test step includes `python3 tests/test_version.py`,
-`python3 tests/test_build_linux.py`, `python3 tests/test_install_binary.py`, and
+The helper-test step includes `python3 tests/test_pr_source_policy.py`,
+`python3 tests/test_version.py`,
+`python3 tests/test_build_linux.py`, `python3 tests/test_build_provenance.py`,
+`python3 tests/test_install_binary.py`, and
 `python3 tests/test_distribution_helpers.py`,
 also present in the local preflight list above. Full notice reproduction is an
 additional local-builder check, not an existing CI helper step. Installer unit tests use synthetic assets
@@ -245,22 +337,33 @@ and isolated destinations, not a live installation or real Herdr integration.
 Distribution helper tests validate fixture preparation and current PTY cells
 without launching Herdr; the native opt-in harness remains outside CI.
 
-Prepared CI release-preflight is not an executed CI run or a dry-run publication.
-Public CI and downloaded pipeline-artifact verification require a later public
-run and their own remote approvals. Before any tag, push, or publication, obtain
+The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
+passed the gates, explicit-target build, all four full isolated PTYs, packaging,
+and upload on Ubuntu 24.04. This is not a dry-run release publication.
+Independent [downloaded pipeline-artifact verification](builds.md#downloaded-public-pipeline-verification)
+passed on 2026-10-15, including all four full local PTYs against the downloaded
+binary. The later [0.0.1 public pipeline](builds.md#current-001-public-pipeline-evidence)
+passed the new Ubuntu builder gate and matching system/link provenance checks.
+The [release-procedure local trial](installation.md#pipeline-asset-local-trial)
+passed using that public CI artifact, not a released asset or public download-mode
+installation. Publication and public acceptance remain outstanding. Before any tag, push, or publication, obtain
 explicit approval for that action and the reviewed version/ref/assets. A proposed
-tag convention is `v<version>` (for example `v0.1.0`); no tag is created here.
+tag convention is `v<version>` (for example `v0.0.1`); no tag is created here.
 
-Local Linux x86_64 evidence uses glibc 2.43. It does not prove the intended Ubuntu
-24.04 CI runtime, a minimum glibc version, or another distribution. The separate
+Local Linux x86_64 evidence uses glibc 2.43. The public CI run separately verifies
+its Ubuntu 24.04 isolated test environment, not live Herdr integration there,
+a minimum glibc version, or another distribution. The separate
 [native Herdr 0.9.3 local managed lifecycle test](installation.md#native-distribution-acceptance)
 passed on 2026-10-14, including replacement and return with a test-only version
-fixture. The current four-member asset passed both 0.9.5 native harnesses on
+fixture. The earlier local-only-notice four-member asset passed both 0.9.5 native harnesses on
 2026-10-15, including notice retention and version-specific registration/uninstall
 checks. Neither run proves new-runtime upgrade compatibility or the separate
-Herdr update command. The local-only installer is separate from public distribution;
+Herdr update command. The public installer route is prepared, not yet accepted;
 no public installer readiness or actual GitHub release automation is claimed.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
 The selected future source is `eisenhauer-dev/herdr-crossroads`; public repository
-access was verified on 2026-10-15. Release tag/asset availability,
-run/upload/download evidence and final release approval remain open.
+access was verified on 2026-10-15. Public CI execution and upload are verified;
+release tag/asset availability, the public install/update/return cycle, and final
+release approval remain open. The pipeline-asset local trial does not close those
+gates. Downloaded pipeline-artifact verification is
+recorded in the build guide; it is not a released-asset installation test.

@@ -10,11 +10,13 @@ binary="$binary_dir/herdr-crossroads"
 output="$CARGO_TARGET_DIR/builds"
 version=$(python3 scripts/check-version.py)
 archive="herdr-crossroads-$version-$target.tar.gz"
+stem="$output/${archive%.tar.gz}"
 mkdir -p "$output"
-trap 'status=$?; if [ "$status" -ne 0 ]; then rm -f "$output/$archive" "$output/$archive.sha256"; fi; rm -f "$output/$archive.tmp" "$output/$archive.sha256.tmp"; exit "$status"' 0
+trap 'status=$?; if [ "$status" -ne 0 ]; then rm -f "$output/$archive" "$output/$archive.sha256" "$stem.provenance.json" "$stem.link.map"; fi; rm -f "$output/$archive.tmp" "$output/$archive.sha256.tmp"; exit "$status"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 rm -f "$output/$archive" "$output/$archive.sha256" \
+    "$stem.provenance.json" "$stem.link.map" \
     "$output/$archive.tmp" "$output/$archive.sha256.tmp"
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
@@ -25,7 +27,7 @@ fi
 python3 scripts/third-party-notices.py --check
 # Never let a stale binary stand in for this build's output.
 rm -f "$binary" "$binary.sha256"
-cargo build --release --locked --target "$target"
+python3 scripts/build-provenance.py "$target" "$binary" "$stem"
 test -f "$binary"
 test -x "$binary"
 for gate in latency render keymaps hints; do
@@ -46,3 +48,4 @@ mv "$output/$archive.tmp" "$output/$archive"
 )
 printf 'Built and passed all four full PTYs: target/builds/%s\n' "$archive"
 printf 'Archive checksum: target/builds/%s.sha256\n' "$archive"
+printf 'Builder evidence (not distribution approval): target/builds/%s.provenance.json and target/builds/%s.link.map\n' "${archive%.tar.gz}" "${archive%.tar.gz}"

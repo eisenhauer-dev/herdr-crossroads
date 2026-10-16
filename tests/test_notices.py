@@ -1,9 +1,12 @@
 """Notice reproduction from the offline graph and installed Rust notice source."""
 
 import html
+import copy
+import json
 from pathlib import Path
 import runpy
 import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -12,30 +15,98 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NoticeTests(unittest.TestCase):
-    def test_verified_glibc_startup_headers_are_delivered(self):
-        path = ROOT / "LICENSES/glibc-2.43-2ubuntu2.4-startup.txt"
-        self.assertTrue(path.is_file(), "exact glibc startup exception headers must be checked in")
-        text = path.read_text()
-        for source in ["sysdeps/x86_64/start.S", "sysdeps/x86_64/crti.S", "sysdeps/x86_64/crtn.S",
-                       "csu/abi-note.c", "stdlib/atexit.c", "stdlib/at_quick_exit.c",
-                       "sysdeps/pthread/pthread_atfork.c", "debug/stack_chk_fail_local.c"]:
-            self.assertIn("File: " + source + "\n", text)
-        self.assertEqual(text.count("gives you unlimited"), 8)
+    def test_check_rejects_unreviewed_builder_even_when_cargo_and_rust_match(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
-        self.assertTrue(html.escape(text) in generator["generate"](),
-                        "full verified startup header artifact must accompany the binary notices")
+        original = generator["command"]
+
+        def command(*args):
+            result = original(*args)
+            return result + "+rebuilt" if (args[:2] == ("dpkg-query", "-W")
+                                           and "${Version}" in args[2]) else result
+
+        with patch.dict(generator["main"].__globals__, command=command):
+            with patch.object(sys, "argv", ["third-party-notices.py", "--check"]):
+                with self.assertRaisesRegex(ValueError, "reviewed system builder"):
+                    generator["main"]()
+
+    def test_reviewed_profiles_require_untampered_sources_and_notice_bytes(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        original = Path.read_bytes
+        targets = ["LICENSES/ubuntu-24.04-system.json",
+                   "LICENSES/local-glibc-2.43-system.json",
+                   "LICENSES/glibc-2.39-0ubuntu8.9-startup.txt",
+                   "LICENSES/glibc-2.43-2ubuntu2.4-startup.txt"]
+        for target in targets:
+            for missing in [False, True]:
+                def read(path):
+                    if path == ROOT / target:
+                        if missing:
+                            raise FileNotFoundError(target)
+                        data = original(path)
+                        if target.endswith(".json"):
+                            profile = json.loads(data)
+                            profile["notices"][0]["text"] += "tampered"
+                            return json.dumps(profile).encode()
+                        return data + b"tampered"
+                    return original(path)
+                with self.subTest(target=target, missing=missing), patch.object(Path, "read_bytes", read):
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        generator["system_notices"]()
+
+    def test_both_reviewed_builders_match_but_unknown_or_incomplete_inputs_fail(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        baseline = generator["system_notices"]()
+        for name in ["local-glibc-2.43", "ubuntu-24.04"]:
+            profile = json.loads((ROOT / f"LICENSES/{name}-system.json").read_text())
+            with patch.dict(generator["system_notices"].__globals__,
+                            installed_system=lambda: (profile["candidates"], profile["notices"])):
+                output = generator["system_notices"]()
+                self.assertEqual(output, baseline)
+                self.assertIn(profile["label"], "\n".join(output))
+            for field in ["resolved", "sha256", "packages"]:
+                candidates = copy.deepcopy(profile["candidates"])
+                candidates[0][field] = "different"
+                with patch.dict(generator["system_notices"].__globals__,
+                                installed_system=lambda: (candidates, profile["notices"])):
+                    with self.assertRaisesRegex(ValueError, "reviewed system builder"):
+                        generator["system_notices"]()
+            with patch.dict(generator["system_notices"].__globals__,
+                            installed_system=lambda: (profile["candidates"][:-1], profile["notices"])):
+                with self.assertRaisesRegex(ValueError, "reviewed system builder"):
+                    generator["system_notices"]()
+            notices = copy.deepcopy(profile["notices"])
+            notices[0]["text"] += "changed installed license"
+            with patch.dict(generator["system_notices"].__globals__,
+                            installed_system=lambda: (profile["candidates"], notices)):
+                with self.assertRaisesRegex(ValueError, "reviewed system builder"):
+                    generator["system_notices"]()
+
+    def test_verified_glibc_startup_headers_are_delivered(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        generated = generator["generate"]()
+        for version in ["2.43-2ubuntu2.4", "2.39-0ubuntu8.9"]:
+            path = ROOT / f"LICENSES/glibc-{version}-startup.txt"
+            self.assertTrue(path.is_file(), "exact glibc startup exception headers must be checked in")
+            text = path.read_text()
+            for source in ["sysdeps/x86_64/start.S", "sysdeps/x86_64/crti.S", "sysdeps/x86_64/crtn.S",
+                           "csu/abi-note.c", "stdlib/atexit.c", "stdlib/at_quick_exit.c",
+                           "sysdeps/pthread/pthread_atfork.c", "debug/stack_chk_fail_local.c"]:
+                self.assertIn("File: " + source + "\n", text)
+            self.assertEqual(text.count("gives you unlimited"), 8)
+            self.assertTrue(html.escape(text) in generated,
+                            "full verified startup header artifact must accompany the binary notices")
 
     def test_glibc_startup_exception_evidence_requires_matching_source_package(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         original = generator["command"]
 
         def command(*args):
-            if args[:3] == ("dpkg-query", "-W", "-f=${source:Package} ${source:Version}"):
-                return "glibc 2.44-1"
+            if args[:3] == ("dpkg-query", "-W", "-f=${Version} ${source:Package} ${source:Version}"):
+                return "2.44-1 glibc 2.44-1"
             return original(*args)
 
         with patch.dict(generator["system_notices"].__globals__, command=command):
-            with self.assertRaisesRegex(ValueError, "glibc startup source evidence"):
+            with self.assertRaisesRegex(ValueError, "reviewed system builder"):
                 generator["system_notices"]()
 
     def test_ambiguous_system_object_ownership_is_rejected(self):
@@ -51,18 +122,18 @@ class NoticeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ambiguous package ownership"):
                 generator["system_notices"]()
 
-    def test_system_package_version_drift_changes_generated_inventory(self):
+    def test_system_package_version_drift_requires_review_not_automatic_regeneration(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         original = generator["command"]
-        baseline = generator["system_notices"]()
 
         def command(*args):
             result = original(*args)
             return result + "+rebuilt" if (args[:2] == ("dpkg-query", "-W")
-                                           and "${binary:Package}" in args[2]) else result
+                                           and "${Version}" in args[2]) else result
 
         with patch.dict(generator["system_notices"].__globals__, command=command):
-            self.assertNotEqual(generator["system_notices"](), baseline)
+            with self.assertRaisesRegex(ValueError, "reviewed system builder"):
+                generator["system_notices"]()
 
     def test_system_notices_preserve_installed_copyright_and_full_licenses(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
