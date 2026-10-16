@@ -3,22 +3,32 @@
 This process prepares reviewable versioned Linux assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The current preparation version is `0.1.0`, the first regular Linux release, for
-`x86_64-unknown-linux-gnu` only. The fresh local build and artifact gates passed;
-see [current local evidence](builds.md#current-010-local-preparation-evidence) and
-`target/regular-release/local-verification.json`, separate from historical receipts.
-The local binary contains personal build paths and is not a publication candidate;
-only subsequently reviewed clean CI assets are proposed. Separate CI, public
-installation and publication remain pending and require their own approvals.
-No `0.1.0` publication or public installation success is claimed. The completed public installation,
+The current version is `0.1.0`, the first regular Linux release, for
+`x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
+tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
+publication as the regular [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0),
+not a prerelease, with exactly four reviewed clean CI assets.
+
+- [Fresh CI artifact verification](builds.md#regular-010-public-pipeline-evidence)
+  and all four public-download hash comparisons passed. The local binary with
+  personal build paths was not published; historical assets were not reused.
+- [Public installation](installation.md#regular-010-public-installation) passed:
+  release-tag-verified, source-SHA-pinned native navigation, plus separate unpinned
+  CLI installation from merged main. No `0.1.0` second-runtime upgrade cycle was tested.
+- PR #10 merged as `9ed72efed62672a1cee087bb9d3e353cce52276b`; its tree
+  `a18018e4a56c60d7ba814e6e44a6de2d0a595db2` matches reviewed release source.
+- Future commits, tags, pushes, CI execution and publication require their own
+  approvals; this completed publication grants no standing authorization.
+
+The completed historical public installation,
 update and return test used `0.0.1 → 0.0.2 → 0.0.1`, with each version built and
 checked independently. Test publications should be marked as GitHub prereleases;
-new commits, tags, pushes, CI execution and publication still require separate approval. A GitHub
+their canonical versions remain stable `X.Y.Z`. A GitHub
 prerelease flag does not change the canonical `X.Y.Z` version accepted by the tools.
 Historical `0.1.0` evidence below is not proof for the new regular release, even
-though the version matches. The current run generated fresh build/map/archive
-evidence despite a matching binary hash from unchanged toolchain/dependencies and
-Rust source/version; never rename or reuse historical assets as a new release.
+though the version matches. Fresh local and CI runs generated their own
+build/map/archive evidence despite matching historical binary hashes from unchanged
+toolchain/dependencies and Rust source/version; never rename or reuse historical assets as a new release.
 
 On 2026-10-16, reviewed source `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`
 was published as the non-latest
@@ -54,7 +64,7 @@ behavior-RED timing gap and glibc DSC-signature limitation remain. Post-merge
 passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`,
 including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
 all four full PTYs, packaging and upload. These are test-version results, not the
-fresh gates or publication approval for the current `0.1.0` preparation.
+fresh gates or separate publication approval for the regular `0.1.0` release above.
 
 ## Version and asset contract
 
@@ -72,7 +82,7 @@ the prepared route downloads the exact version from GitHub Releases. Publication
 of both test prereleases and execution of the full public cycle are recorded
 above; this verified test cycle is not regular-release approval.
 
-For the prepared `0.1.0`, the only supported target produces:
+For `0.1.0`, the only supported target produces:
 
 ```text
 target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
@@ -406,8 +416,9 @@ fixture. The earlier local-only-notice four-member asset passed both 0.9.5 nativ
 2026-10-15, including notice retention and version-specific registration/uninstall
 checks. Neither run proves new-runtime upgrade compatibility or the separate
 Herdr update command. The separate pinned public 0.0.1 tests passed as recorded above;
-the later full public cycle passed separately. No GitHub release automation or
-regular-release approval is claimed.
+the later full public cycle passed separately. Those historical tests did not
+authorize the regular release; its separate approval and publication are recorded
+at the start of this guide. No GitHub release automation is implemented.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
 The public source is `eisenhauer-dev/herdr-crossroads`; public repository
 access was verified on 2026-10-15. Public CI execution and upload are verified;

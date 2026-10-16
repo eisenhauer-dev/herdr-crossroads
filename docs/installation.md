@@ -1,15 +1,16 @@
 # Binary installation
 
-Crossroads `0.1.0` is in local preparation as the first regular Linux release,
-for `x86_64-unknown-linux-gnu` only; it is not published or publicly installation-tested.
-The fresh local build and artifact gates passed; see
-[current local evidence](builds.md#current-010-local-preparation-evidence) and its
-separate receipt `target/regular-release/local-verification.json`. The local binary
-contains personal build paths and is not a publication candidate; subsequently
-reviewed clean CI assets, public installation and publication remain pending,
-subject to separate approvals. Historical local `0.1.0` artifacts below must
-not be reused or renamed as new-release proof. `0.0.2` remains the latest published
-test version. The version-pinned binary installer uses a manifest `[[build]]` hook:
+Crossroads `0.1.0` is the first regular Linux release, for
+`x86_64-unknown-linux-gnu` only, published as
+[Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
+on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
+Its [public installation checks](#regular-010-public-installation) passed on Herdr 0.9.5.
+
+The local binary with personal build paths was not published; see
+[CI artifact evidence](builds.md#regular-010-public-pipeline-evidence).
+Historical `0.1.0` artifacts below were not renamed or reused.
+`0.0.2` remains the latest published test version.
+The version-pinned binary installer uses a manifest `[[build]]` hook:
 `command = ["python3", "scripts/install-binary.py"]`. It installs the agreed
 version into the manifest's fixed `target/release/herdr-crossroads` path. It does
 not build, execute the binary, or register/activate a plugin. By default it
@@ -43,7 +44,7 @@ runtime still requires `stty` and a running Herdr session (manifest minimum 0.9.
 Python is an installation/test prerequisite, not a plugin runtime dependency.
 No tooling is installed by this helper.
 
-For the current preparation version, the required files (not yet published) are:
+For the current published version, the installer requires:
 
 ```text
 herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
@@ -136,8 +137,9 @@ it does not resolve from a plugin registry.
 
 The primary installation syntax is
 `herdr plugin install eisenhauer-dev/herdr-crossroads`. It follows the public default
-branch; its version-pinned hook requires matching published assets. The prepared
-`0.1.0` route cannot succeed before publication and has not been publicly tested.
+branch; its version-pinned hook requires matching published assets. This unpinned
+`0.1.0` command passed isolated public CLI installation; pinned native navigation
+was tested separately, as recorded below.
 See [README installation](../README.md#installation) for the explicit source
 clone/build/link alternative.
 
@@ -235,6 +237,35 @@ The old no-registry assumption was replaced with the upstream version-specific
 contract, not with permission to skip registration checks. The real CLI used
 only the isolated fake API/local Git fixtures and did not invoke Rust/Cargo or
 change the personal installation.
+
+## Regular 0.1.0 public installation
+
+- On 2026-10-16 the regular Latest `v0.1.0` release published exactly four clean CI
+  assets from reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51`. All four
+  public downloads matched the [approved CI hashes](builds.md#regular-010-public-pipeline-evidence).
+- The primary-owned real Herdr 0.9.5 native harness passed public installation
+  after verifying `v0.1.0` against that source SHA and installing the exact SHA.
+  Its isolated real server/client passed popup opening, search, stable-ID focus,
+  reopening/closing, exact binary/notice checks, configuration retention, no
+  Rust/Cargo, uninstall, owned shutdown and temporary cleanup.
+- Separately, the actual unpinned README command
+  `herdr plugin install eisenhauer-dev/herdr-crossroads` passed isolated Herdr 0.9.5
+  CLI installation from main `9ed72efed62672a1cee087bb9d3e353cce52276b` after PR #10.
+  Expected source commit, exact binary/notices and registry checks, uninstall and
+  temporary HOME/XDG cleanup passed with only Git/Python on PATH and no Rust/Cargo.
+  **No real server was started in this CLI check; it is not unpinned native navigation.**
+- The merged main tree `a18018e4a56c60d7ba814e6e44a6de2d0a595db2` matches reviewed
+  release source. The published archive SHA256 is
+  `d55b5bc611f74a7f1a61de789428e01fcf9b414640153c796f10a6a8a049304e`;
+  binary SHA256 is `63857e066f8e4c7821114107292e5e973aaab0b12144ab13b1a63e59611bace1`.
+- Receipts: `target/regular-release/public-acceptance.json` and
+  `target/regular-release/unpinned-installation.json` (ignored local evidence).
+  These checks test one released runtime, not a second-runtime `0.1.0` upgrade
+  cycle, personal-host setup or universal platform/runtime compatibility. The
+  older `0.0.1 → 0.0.2 → 0.0.1` public update cycle below remains separate evidence.
+- The remote release notes' installation-pending statement records the publication
+  checkpoint; these subsequent checks do not rewrite those notes. The historical
+  policy behavior-RED gap and unverified glibc DSC signature remain limitations.
 
 ## Public acceptance
 
@@ -450,8 +481,9 @@ not released-asset installation, public source/download mode, or the real public
 `0.0.1 → 0.0.2 → 0.0.1` cycle. The replacement is still the synthetic trailer
 fixture; the actual `herdr plugin update` command was not executed. No tag or
 GitHub Release existed at the time of this trial. Subsequent 0.0.1 publication
-and the later full public cycle are recorded above; regular release approval
-remains open. This does not extend the recorded runtime
+and the later full public cycle are recorded above. Regular-release approval was
+still open at that checkpoint; the subsequent `0.1.0` publication and installation
+checks are recorded separately above. This does not extend the recorded runtime
 or license/security scope.
 
 ## Dual-profile local acceptance
