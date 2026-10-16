@@ -1,4 +1,8 @@
-"""Installer tests: synthetic ELF and mocked HTTP, no network, Herdr or Rust."""
+"""Installer tests: synthetic ELF and mocked HTTP, no network, Herdr or Rust.
+
+The full historical notice fixture is exercised separately by test_notices.py
+on builders with the cached sources and Rust documentation installed.
+"""
 
 import hashlib
 import io
@@ -33,7 +37,7 @@ class InstallBinaryTests(unittest.TestCase):
             source = ROOT / "scripts" / name
             if source.exists():
                 shutil.copy2(source, self.repo / "scripts" / name)
-        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml", "LICENSE", "THIRD-PARTY-NOTICES.md"]:
             if not (ROOT / name).exists():
                 continue
             shutil.copy2(ROOT / name, self.repo / name)
@@ -60,7 +64,7 @@ class InstallBinaryTests(unittest.TestCase):
                        ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)]
             members += [(name, (self.repo / name).read_bytes() if (self.repo / name).exists()
                          else b"missing notices", tarfile.REGTYPE)
-                        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]]
+                         for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]]
         archive = self.assets / ARCHIVE
         with tarfile.open(archive, "w:gz") as package:
             for name, contents, kind in members:
@@ -101,16 +105,84 @@ class InstallBinaryTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), ELF, "validated binary must replace previous runtime file")
         self.assertEqual(self.binary.stat().st_mode & 0o777, 0o755)
         self.assertEqual(result.stdout, f"Installed {ARCHIVE} at target/release/herdr-crossroads\n")
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
             self.assertEqual((self.binary.parent / name).stat().st_mode & 0o777, 0o644)
+
+    def check_published_html_requires_exact_version_and_equivalent_trusted_markdown(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        # Reproduce the exact published source notice without storing a second
+        # multi-megabyte license fixture or reaching the network in tests.
+        legacy = generator["generate_html"]().replace("\r\n", "\n").encode()
+        self.assertEqual(hashlib.sha256(legacy).hexdigest(),
+                         "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174")
+        checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
+        members = [("herdr-crossroads", ELF, tarfile.REGTYPE),
+                   ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
+                   ("LICENSE", (self.repo / "LICENSE").read_bytes(), tarfile.REGTYPE),
+                   ("THIRD-PARTY-NOTICES.html", legacy, tarfile.REGTYPE)]
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = self.repo / name
+            path.write_text(path.read_text().replace('version = "0.0.1"', 'version = "0.1.0"'))
+        archive = ARCHIVE.replace("0.0.1", "0.1.0")
+        with patch.dict(globals(), ARCHIVE=archive):
+            self.package(members=members)
+            from test_distribution import prepare_fixture
+            fixture = self.base / "distribution-reference"
+            fixture.mkdir()
+            _, _, payloads = prepare_fixture(fixture, self.assets, public="0.1.0")
+            self.assertEqual(payloads, {"0.1.0": ELF})
+
+            def reject_reference():
+                with tempfile.TemporaryDirectory(dir=self.base, prefix="bad-reference-") as temporary:
+                    with patch.dict(prepare_fixture.__globals__, ROOT=self.repo), self.assertRaises(AssertionError):
+                        prepare_fixture(Path(temporary), self.assets, public="0.1.0")
+
+            result = self.install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.binary.read_bytes(), ELF)
+            self.assertEqual((self.binary.parent / "THIRD-PARTY-NOTICES.md").read_bytes(),
+                             (self.repo / "THIRD-PARTY-NOTICES.md").read_bytes())
+            self.assertFalse((self.binary.parent / "THIRD-PARTY-NOTICES.html").exists())
+            self.binary.write_bytes(b"previous binary")
+            self.binary.chmod(0o751)
+            for kind in [tarfile.REGTYPE, tarfile.SYMTYPE, tarfile.LNKTYPE]:
+                with self.subTest(kind=kind):
+                    self.package(members=members[:-1] + [
+                        ("THIRD-PARTY-NOTICES.html", legacy + b"tampered", kind)])
+                    self.reject()
+                    reject_reference()
+            for bad in [members + [members[-1]], members[:-1],
+                        members + [("THIRD-PARTY-NOTICES.md", b"extra", tarfile.REGTYPE)],
+                        members[:2] + [("LICENSE", b"changed", tarfile.REGTYPE)] + members[3:]]:
+                self.package(members=bad)
+                self.reject()
+                reject_reference()
+            self.package(members=members)
+            notice = self.repo / "THIRD-PARTY-NOTICES.md"
+            notice.write_bytes(notice.read_bytes() + b"changed")
+            self.reject()
+            reject_reference()
+            shutil.copy2(ROOT / notice.name, notice)
+            # New Markdown builds use the unchanged version too.
+            self.package()
+            result = self.install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.binary.write_bytes(b"previous binary")
+            self.binary.chmod(0o751)
+        # Exact historic bytes are not an alternate format for other versions.
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = self.repo / name
+            path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "0.0.1"'))
+        self.package(members=members)
+        self.reject()
 
     def test_missing_tampered_or_nonregular_notices_preserve_binary(self):
         checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
         good = [("herdr-crossroads", ELF, tarfile.REGTYPE),
                 ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE)]
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
-            other = "LICENSE" if name != "LICENSE" else "THIRD-PARTY-NOTICES.html"
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
+            other = "LICENSE" if name != "LICENSE" else "THIRD-PARTY-NOTICES.md"
             base = good + [(other, (ROOT / other).read_bytes() if (ROOT / other).exists()
                             else b"missing notices", tarfile.REGTYPE)]
             for additions in [[], [(name, b"tampered", tarfile.REGTYPE)],
@@ -125,7 +197,7 @@ class InstallBinaryTests(unittest.TestCase):
     def test_notice_destination_symlinks_rejected_before_binary_replacement(self):
         victim = self.base / "victim"
         victim.write_bytes(b"keep")
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             path = self.binary.parent / name
             path.symlink_to(victim)
             self.reject()
@@ -198,7 +270,7 @@ class InstallBinaryTests(unittest.TestCase):
         self.assertEqual([url for url, _ in requests], [base + ARCHIVE, base + ARCHIVE + ".sha256"])
         self.assertTrue(all(0 < timeout <= 30 for _, timeout in requests))
         self.assertEqual(self.binary.read_bytes(), ELF)
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
 
     def test_public_default_uses_agreed_version_not_latest_or_older_asset(self):
@@ -317,7 +389,7 @@ class InstallBinaryTests(unittest.TestCase):
         good = [("herdr-crossroads", ELF, tarfile.REGTYPE),
                 ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
                 ("LICENSE", (ROOT / "LICENSE").read_bytes(), tarfile.REGTYPE),
-                ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes(), tarfile.REGTYPE)]
+                ("THIRD-PARTY-NOTICES.md", (ROOT / "THIRD-PARTY-NOTICES.md").read_bytes(), tarfile.REGTYPE)]
         cases = [good[:1], good + [good[0]], good + [("extra", b"", tarfile.REGTYPE)],
                  [("../escape", ELF, tarfile.REGTYPE), *good[1:]],
                  [("/escape", ELF, tarfile.REGTYPE), *good[1:]]]
@@ -343,7 +415,7 @@ class InstallBinaryTests(unittest.TestCase):
         self.package(members=[("herdr-crossroads", ELF, tarfile.CONTTYPE),
                               ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
                               ("LICENSE", (ROOT / "LICENSE").read_bytes(), tarfile.REGTYPE),
-                              ("THIRD-PARTY-NOTICES.html", (ROOT / "THIRD-PARTY-NOTICES.html").read_bytes(), tarfile.REGTYPE)])
+                              ("THIRD-PARTY-NOTICES.md", (ROOT / "THIRD-PARTY-NOTICES.md").read_bytes(), tarfile.REGTYPE)])
         self.reject()
 
     def test_unsupported_hosts_fail_before_installation(self):
@@ -388,7 +460,7 @@ class InstallBinaryTests(unittest.TestCase):
                  "(_ for _ in ()).throw(OSError('forced binary failure')) "
                  "if dst == 'herdr-crossroads' else replace(src, dst, **kw); ")
         self.reject(patch)
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
+        for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
 
 

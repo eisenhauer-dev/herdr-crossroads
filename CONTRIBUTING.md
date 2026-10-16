@@ -417,7 +417,9 @@ by the user; see [themes](docs/themes.md) for its write/delete contract.
 
 The project uses the [MIT license](LICENSE).
 Binary archives and installed payloads must retain `LICENSE` and
-`THIRD-PARTY-NOTICES.html`. Dependency/toolchain changes require reviewing and
+`THIRD-PARTY-NOTICES.md`. The existing `v0.1.0` release retains its original HTML;
+the installer accepts only its pinned, full-text-equivalent notice bytes.
+Dependency/toolchain changes require reviewing and
 regenerating the exact-version notice inventory; see
 [notice maintenance and final link-map verification](docs/releases.md#license-inventory-and-verification).
 Run `python3 tests/test_notices.py` on the actual packaging builder with cached

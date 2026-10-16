@@ -18,6 +18,12 @@ import urllib.request
 import zlib
 
 
+# Immutable v0.1.0 source 490b0d74dc866b6ed83786f7aaa5657c35db5c51,
+# and its full-text-equivalent Markdown (including original crate line endings).
+LEGACY_NOTICE_SHA256 = "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174"
+LEGACY_MARKDOWN_SHA256 = "ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56"
+
+
 def require_https(url):
     parsed = urllib.parse.urlsplit(url)
     if (parsed.scheme != "https" or not parsed.hostname
@@ -101,18 +107,32 @@ def install():
         raise ValueError("expanded archive exceeds size limit")
     with tarfile.open(fileobj=io.BytesIO(expanded), mode="r:") as package:
         members = package.getmembers()
+        notice_name = "THIRD-PARTY-NOTICES.md"
+        names = {member.name for member in members}
+        if version == "0.1.0" and names == {
+                "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}:
+            notice_name = "THIRD-PARTY-NOTICES.html"
         if (len(members) != 4 or {member.name for member in members}
-                != {"herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}
+                != {"herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", notice_name}
                 or any(member.type not in [tarfile.REGTYPE, tarfile.AREGTYPE]
                        or member.issparse() for member in members)):
             raise ValueError("archive must contain exactly the four regular release members")
         binary = package.extractfile("herdr-crossroads").read()
         checksum = package.extractfile("herdr-crossroads.sha256").read()
         notices = {}
-        for name in ["LICENSE", "THIRD-PARTY-NOTICES.html"]:
-            notices[name] = package.extractfile(name).read()
-            if notices[name] != (root / name).read_bytes():
+        for name in ["LICENSE", notice_name]:
+            data = package.extractfile(name).read()
+            destination = "THIRD-PARTY-NOTICES.md" if name == notice_name else name
+            trusted = (root / destination).read_bytes()
+            if name == "THIRD-PARTY-NOTICES.html":
+                # Pin BOTH representations: a later inventory cannot silently
+                # stand in for the licenses accompanying the published binary.
+                if (hashlib.sha256(data).hexdigest() != LEGACY_NOTICE_SHA256
+                        or hashlib.sha256(trusted).hexdigest() != LEGACY_MARKDOWN_SHA256):
+                    raise ValueError("legacy release notice does not match trusted Markdown inventory")
+            elif data != trusted:
                 raise ValueError(f"release notice does not match trusted checkout: {name}")
+            notices[destination] = trusted
     verify_checksum(binary, checksum, "herdr-crossroads")
     if (len(binary) < 64 or binary[:7] != b"\x7fELF\x02\x01\x01"
             or binary[16:18] not in [b"\x02\x00", b"\x03\x00"]
