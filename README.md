@@ -83,12 +83,13 @@ and [synthetic previews](docs/media/README.md).
 - Git to obtain/update a source checkout. Python 3.11+ is also used for local
   tests, not plugin runtime.
 
-Crossroads 0.0.2 is the current Linux-only test-version preparation. The public
-acceptance sequence is 0.0.1 → 0.0.2 → 0.0.1, before 0.1.0 as the first regular
-Linux release. Version 0.0.1 is a published non-latest prerelease; 0.0.2 assets
-are not yet published. The
-[verified 0.0.1 CI artifact](docs/builds.md#current-001-public-pipeline-evidence)
-records the exact assets subsequently published for 0.0.1; it is not 0.0.2 evidence.
+Crossroads 0.0.2 is the current Linux-only test version. Both 0.0.1 and 0.0.2
+are retained non-latest prereleases with exactly four reviewed CI assets each.
+The real public 0.0.1 → 0.0.2 → 0.0.1 install/update/return cycle passed on
+2026-10-16 with Herdr 0.9.5; see [public lifecycle evidence](docs/installation.md#public-installupdatereturn-cycle).
+This verified test cycle is not approval for 0.1.0 as the first regular Linux release. The
+[verified 0.0.2 CI artifact](docs/builds.md#current-002-public-pipeline-evidence)
+records the exact published assets separately from 0.0.1 and local builds.
 Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
@@ -132,11 +133,10 @@ An explicit absolute `CROSSROADS_ASSET_DIR` selects trusted local assets instead
 empty/relative values fail without network fallback. It never compiles. Linking does not execute this
 hook, so the source build-then-link route above is unchanged. See
 [binary installation](docs/installation.md) for safety checks, requirements,
-and isolated tests. **Version 0.0.2 publication and acceptance are pending.**
-The published test prerelease's pinned route is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`.
-Its isolated Herdr 0.9.5 public CLI-install and pinned native single-version tests
-passed on 2026-10-16; the real update/return cycle remains unrun.
+and isolated tests. The current published test prerelease's pinned route is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.2`.
+The isolated Herdr 0.9.5 public cycle passed initial unpinned installation,
+actual plugin update to 0.0.2 and pinned return to 0.0.1 on 2026-10-16.
 `herdr plugin install herdr-crossroads` is not valid
 shorthand. Native local managed installation was tested; see
 [its scope and evidence limits](docs/installation.md#native-distribution-acceptance).
@@ -194,7 +194,8 @@ guide][herdr-config].
 **Execution status:** the source-build/link, launch-binding, reload and
 configuration-directory examples remain unexecuted on a personal host. Local
 managed install/reinstall/version-return/uninstall and popup search/focus passed
-in the isolated native sandbox; this does not validate public installation.
+in the isolated native sandbox. Public installation/update/return passed separately
+in the isolated Herdr 0.9.5 cycle, not on a personal host.
 Example syntax/lifecycle comes from Herdr's versioned
 [plugin guide][herdr-plugins], [configuration guide][herdr-config], and
 [v0.9.3 CLI implementation][herdr-cli]. The historical capture used
@@ -221,13 +222,13 @@ If the checkout path changes, link the new root explicitly.
 
 Herdr itself is separate: use `herdr update` only for Herdr-installer-managed
 installations; otherwise update through the package manager. Herdr 0.9.3 has no
-`plugin update` command; 0.9.5 provides one, but this command was not exercised
-by the native acceptance test. The tested managed route reinstalls a reviewed ref.
+`plugin update` command; 0.9.5 provides one, exercised by the real public cycle.
+The offline managed route instead reinstalls a reviewed ref.
 Crossroads has no automatic updater. Close it before reinstalling a reviewed ref
 with matching trusted assets (public Release or explicit local override), or uninstalling. A return to a previous ref
-also requires that version's assets. The isolated native test verified replacement
-and return using a test-only version fixture, not compatibility with a newly
-released runtime. See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
+also requires that version's assets. Historical offline tests used a test-only
+replacement fixture; the later [public cycle](docs/installation.md#public-installupdatereturn-cycle)
+used the two real prerelease runtimes. See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
 
 To uninstall **this local link only**:
 

@@ -200,8 +200,10 @@ the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts, not a published release. The separate
 [binary installer](docs/installation.md) uses Python 3.11+ standard library,
 without Rust/Cargo. Its default version-pinned Release download route passed the
-isolated Herdr 0.9.5 public CLI-install and pinned native tests for published 0.0.1; current 0.0.2
-publication and full public-cycle acceptance remain pending. Explicit local assets
+isolated Herdr 0.9.5 public CLI-install and pinned native tests for published 0.0.1.
+Both test prereleases are now published; the actual unpinned install/update and
+pinned return cycle passed on 2026-10-16. This verified test cycle is not
+regular-release approval. Explicit local assets
 stay offline with no network
 fallback. Run its isolated tests with
 `python3 tests/test_install_binary.py`; they use synthetic ELF headers and never
@@ -319,6 +321,22 @@ metadata rejection, but no live fork-PR rejection is claimed. The app binding
 is not a claim of absolute spoof resistance: other Actions workflows share the
 same app, and administrators retain power to change workflows and protection.
 Review workflow changes and keep check names unique.
+
+The actual internal-source positive case also passed on 2026-10-16:
+[PR #8](https://github.com/eisenhauer-dev/herdr-crossroads/pull/8) had both required
+checks green, including [PR source policy run 38877336973](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336973)
+and [Linux gates run 38877336960, attempt 2](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336960/attempts/2).
+It merged as `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`; the merged tree matched
+reviewed source `c24df0876dae2a219bb833695829f7dc99433ae2` exactly. Strict checks
+and administrator enforcement were preserved. This does not replace the expressly
+waived live fork-negative test. Attempt 1 failed in an unchanged transport fixture
+with `ExecutableFileBusy` rather than expected `Other`; the unchanged rerun passed,
+without assertion or gate changes. Its root cause remains uncertain. The historical
+source-policy behavior-RED timing gap remains a limitation, not retroactive TDD proof.
+[Post-merge main CI run 38878662737](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38878662737)
+passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`,
+including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
+all four full PTYs, packaging and upload.
 
 GitHub's documentation checked on 2026-10-16 says the default public-repository
 `pull_request_target` event policy is currently in evaluate mode and will be
