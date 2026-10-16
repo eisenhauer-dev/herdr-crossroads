@@ -6,7 +6,7 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-The current preparation version is `0.0.2`. On 2026-10-16 its fresh local build
+The current test version is `0.0.2`. On 2026-10-16 its fresh local build
 passed formatting, Clippy, 258 Rust tests, the matching-builder notice gate, all
 four full release PTYs and packaging. Separate artifact verification confirmed
 exactly four regular root-owned tar members, both checksums, canonical notices,
@@ -25,12 +25,55 @@ covered glibc/GCC contributions, with no static system archive contributions,
 RPATH/RUNPATH or uncovered init contributions. The ELF dynamically needs libc,
 libgcc and the loader. Receipt: `target/public-cycle/0.0.2-verification.json`.
 This is local artifact evidence, not an Ubuntu/minimum-runtime claim or public
-acceptance; the glibc DSC-signature limitation remains. Version 0.0.2 publication
-and the real public update/return cycle remain pending. The `0.0.1` evidence below
-remains bound to its original assets.
+acceptance; the glibc DSC-signature limitation remains. This local binary contains
+personal build paths and was **not published**; only the clean reviewed CI assets
+below were published. The `0.0.1` evidence remains bound to its original assets.
 
-The older build and native results below are historical `0.1.0` evidence, not
-verification of `0.0.1`. A fresh local `0.0.1` build on 2026-10-16 passed formatting,
+## Current 0.0.2 public pipeline evidence
+
+On 2026-10-16 public PR [run 38877336960, attempt 2](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336960/attempts/2)
+passed the Linux gates, exact-builder notice check, all four full PTYs, packaging
+and upload. Attempt 1 failed in an unchanged transport fixture with
+`ExecutableFileBusy` rather than expected `Other`; the unchanged rerun passed
+without assertion or gate changes. The root cause remains uncertain.
+
+Artifact `12035673226` records reviewed source
+`c24df0876dae2a219bb833695829f7dc99433ae2`. The actual PR checkout was
+`6919b48116fb27bc2f130d7290c8d11a48d3552a`; its tree
+`10096479692e19c0ab4aa8d41117f45954c04629` equals the reviewed source tree.
+
+| Downloaded 0.0.2 evidence | SHA256 |
+| --- | --- |
+| Actions ZIP | `6db6f71c14538fb492a29127651fc9a1da8d0df19897b0500ef52caad395a3e8` |
+| Archive | `12b0aec9b8370b5cd30c70733d788034fb6f7c38e2b77f026f6b81d4bdec2a16` |
+| Binary | `588f25fef39752bfaab8218768e8587afcc067a71fca2dfff5d6af27b103f015` |
+| Normalized map | `6fb4a859e747b13cba3123e20dd74e06e8a07e0ef4e4c9a556376694cdff4b42` |
+| Provenance JSON | `0891df959f83f127ddfd4b7be6116ab5cf68d97dc704b469c9d7b7f0925bf4de` |
+| Archive checksum file | `2a7484ab7dae100c17b2be19e51199b06413019152054cea72cf303de25476a5` |
+
+Independent verification checked the ZIP digest and exact four assets, both
+checksums, canonical notices, and binary/map binding. The tar has exactly four
+regular root-owned members, binary mode `0755` and other modes `0644`. All 13
+profile candidates and all 14 collected candidates matched the fully reviewed
+0.0.1 package/source identities and bytes. Matching ELF/map review found 14 covered
+startup rows, dynamic libc/libgcc/loader dependencies, no static system archive
+contributions, RPATH/RUNPATH or uncovered startup symbols, and no personal home
+prefix. All four fresh local PTYs also passed against the downloaded CI binary.
+Receipt: `target/public-pipeline/38877336960/verification.json`.
+
+Those exact four assets were published as the retained non-latest
+[v0.0.2 prerelease](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.0.2),
+whose tag points to the reviewed source above. The [real public lifecycle](installation.md#public-installupdatereturn-cycle)
+then passed. This is artifact-specific evidence, not regular-release approval,
+a minimum-runtime claim or a universal legal/security guarantee. The glibc
+DSC-signature and historical behavior-RED timing limitations remain. The receipt's
+publication-pending entry describes its earlier verification checkpoint, not the
+subsequent publication/cycle result.
+
+## Local 0.0.1 preflight evidence
+
+The older build and native `0.1.0` results later in this guide are historical,
+not verification of `0.0.1`. A fresh local `0.0.1` build on 2026-10-16 passed formatting,
 Clippy, 258 Rust tests, the matching-builder notice gate, all four full release
 PTYs and packaging. Separate archive/ELF/map checks confirmed four regular members,
 numeric root ownership, preserved source modes (binary `0775`, other files `0664`
@@ -99,7 +142,8 @@ from reviewed source `1610de9c969a487bb639881cd0c71fe1ee0e3ee2`.
 The isolated Herdr 0.9.5 public CLI-install and pinned native single-version tests
 passed on 2026-10-16. All four public asset downloads matched the approved hashes;
 [main CI run 38871442877](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38871442877)
-also passed. The two-version cycle remains unrun. The local receipt is
+also passed. The later [two-version cycle](installation.md#public-installupdatereturn-cycle)
+also passed. The single-version local receipt is
 `target/public-cycle/0.0.1-verification.json`.
 
 ## Build and verify locally
@@ -260,11 +304,12 @@ binary is not automatically placed at that path by the build helper. The separat
 [binary installer](installation.md) validates the tar and atomically installs
 that binary at the manifest path without Rust/Cargo. An explicit trusted local
 asset directory selects offline installation; otherwise it uses the prepared
-version-pinned GitHub Release route; 0.0.2 still awaits publication and acceptance.
+version-pinned GitHub Release route; both test prereleases are now published and
+the isolated real public cycle passed, without regular-release approval.
 The [source build-then-link route](../README.md#installation)
 also remains available. The public source is
 `eisenhauer-dev/herdr-crossroads`; public repository access was verified on
-2026-10-15. The published 0.0.1 prerelease is separate from current 0.0.2 preparation.
+2026-10-15. The published 0.0.1 and 0.0.2 prereleases have separate reviewed assets.
 
 ## Runtime and verification limits
 
