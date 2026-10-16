@@ -13,7 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = "x86_64-unknown-linux-gnu"
-ARCHIVE = f"herdr-crossroads-0.1.0-{TARGET}.tar.gz"
+ARCHIVE = f"herdr-crossroads-0.0.1-{TARGET}.tar.gz"
 GATES = ["latency", "render", "keymaps", "hints"]
 
 
@@ -85,7 +85,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
         for name in [ARCHIVE, ARCHIVE + ".sha256", ARCHIVE.removesuffix('.tar.gz') + '.provenance.json', ARCHIVE.removesuffix('.tar.gz') + '.link.map']:
             (self.output / name).write_text("stale artifact\n")
         (self.output / "unrelated.txt").write_text("keep\n")
-        (self.output / f"herdr-crossroads-0.0.9-{TARGET}.tar.gz").write_text("prior version\n")
+        (self.output / f"herdr-crossroads-0.0.0-{TARGET}.tar.gz").write_text("prior version\n")
 
     def tool(self, name, text):
         path = self.bin / name
@@ -154,7 +154,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
 
     def test_version_mismatch_blocks_build_and_all_gates(self):
         plugin = self.repo / "herdr-plugin.toml"
-        plugin.write_text(plugin.read_text().replace('version = "0.1.0"', 'version = "0.2.0"'))
+        plugin.write_text(plugin.read_text().replace('version = "0.0.1"', 'version = "0.2.0"'))
         result = self.build()
         self.assertNotEqual(result.returncode, 0, "version mismatch must block packaging")
         self.assertEqual(self.calls(), [], "version mismatch must fail before Cargo")
@@ -188,17 +188,17 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
 
     def test_prior_versions_are_not_reused_or_removed(self):
         self.assertEqual(self.build().returncode, 0)
-        self.assertEqual((self.output / f"herdr-crossroads-0.0.9-{TARGET}.tar.gz").read_text(), "prior version\n")
+        self.assertEqual((self.output / f"herdr-crossroads-0.0.0-{TARGET}.tar.gz").read_text(), "prior version\n")
 
     def test_agreed_version_determines_artifact_name_without_workflow_side_effects(self):
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
             path = self.repo / name
             text = path.read_text()
             if name == "Cargo.lock":
-                text = text.replace('name = "herdr-crossroads"\nversion = "0.1.0"',
+                text = text.replace('name = "herdr-crossroads"\nversion = "0.0.1"',
                                     'name = "herdr-crossroads"\nversion = "2.3.4"')
             else:
-                text = text.replace('version = "0.1.0"', 'version = "2.3.4"')
+                text = text.replace('version = "0.0.1"', 'version = "2.3.4"')
             path.write_text(text)
         metadata = self.repo / "workflow-output"
         metadata.write_text("keep\n")
@@ -220,7 +220,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
                 self.assertNotEqual(self.build().returncode, 0)
                 self.assertEqual(self.calls(), [])
                 self.assertEqual(self.binary.read_text(), "stale binary\n")
-                path.write_text('version = "0.1.0"\n')
+                path.write_text('version = "0.0.1"\n')
 
     def test_workflow_step_outputs_exact_name_only_after_success(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
@@ -233,7 +233,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
                 metadata.write_text("")
                 self.env["BUILD_STATUS"] = "19" if failure == "build" else "0"
                 (self.repo / "herdr-plugin.toml").write_text(
-                    'version = "0.2.0"\n' if failure == "version" else 'version = "0.1.0"\n')
+                    'version = "0.2.0"\n' if failure == "version" else 'version = "0.0.1"\n')
                 result = subprocess.run(["sh", "-e", "-c", script], cwd=self.repo,
                                         env=self.env, text=True, capture_output=True)
                 if failure:

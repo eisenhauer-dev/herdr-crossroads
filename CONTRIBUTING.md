@@ -4,13 +4,33 @@
 
 Repository write access is limited to the owner and collaborators explicitly
 designated by the owner; currently only the owner is a collaborator. Other
-contributors work in forks and submit pull requests. Anyone may clone the public
-repository. Updates to `main` must use
+contributors work in forks and open pull requests targeting `develop`, not `main`.
+Anyone may clone the public repository. The contribution flow is:
+
+- Fork or internal branch → `develop`: contributions are integrated and tested here.
+- Internal branch → `main`: only branches from `eisenhauer-dev/herdr-crossroads`
+  are accepted. This is not restricted to the branch named `develop`.
+- Fork → `main`: not accepted; target `develop` instead. Fork pull requests to
+  `develop` remain welcome.
+
+The owner controls which changes and commits move from development into a
+release, and when. This routing policy does not automatically merge, close, tag,
+or release anything. The source-repository check is prepared locally in
+`.github/workflows/pr-source-policy.yml`; remote activation and enforcement remain
+pending. The policy alone does not prevent opening or merging a fork pull request.
+
+CI runs for pull requests targeting both `develop` and `main`, including fork
+pull requests; the `pull_request` trigger has no target-branch filter. Push-triggered
+CI remains limited to `main`. Running CI on `develop` does not itself establish
+a required-check branch-protection rule there.
+
+Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
 force pushes and branch deletion are disabled. No independent approval is
 required solely to let the owner merge their own pull request. The `Linux gates`
 check from the GitHub Actions app is mandatory for all pull requests targeting
-`main`, including fork contributions and the owner's own branches. Branches must
+`main`, including the owner's own branches. This existing check does not enforce
+the source-repository routing policy above. Branches must
 be up to date with `main` before merging. Pending, missing or failed required
 checks block merging, including for administrators. GitHub also treats `skipped`
 and `neutral` check conclusions as passing; do not weaken the public CI job with
@@ -189,8 +209,8 @@ approval requirements and execution status in the installation guide.
 and managed lifecycle; it passed on Herdr 0.9.3 on 2026-10-14, including replacement
 and version return with a test-only fixture, not a newly released runtime.
 See [native evidence and limits](docs/installation.md#native-distribution-acceptance).
-Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its eight
-pure helper tests do not launch Herdr or any subprocess. Both real-Herdr harnesses
+Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its
+helper tests do not launch Herdr or any subprocess. Both real-Herdr harnesses
 remain explicit opt-in, outside discovery and CI.
 
 Coverage has no numeric minimum initially. Record the baseline, explain decreases
@@ -267,6 +287,54 @@ see the [contribution workflow](#public-contribution-workflow) for the accepted
 check-conclusion limits. Local hooks alone cannot enforce this protection.
 No private-repository Actions execution is claimed or required.
 
+### Prepared PR source check (not yet a remote merge gate)
+
+The separate **PR source policy** job uses `pull_request_target` for `opened`,
+`synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
+Unlike the ordinary CI workflow, GitHub takes this workflow from the base
+repository's **default branch**, not from the PR's merge commit. After review,
+the workflow must therefore reach the default branch (`main`) before relying
+on it. It leaves `Linux gates` unchanged.
+
+The public-only job uses the standard Ubuntu 24.04 runner, a five-minute timeout,
+and `permissions: {}`. It runs only inline Python standard-library code against
+`GITHUB_EVENT_PATH`: no checkout, PR code, actions, dependencies, downloads,
+caches, secrets, or API access. For `main`, the event repository, PR base repository,
+and PR head repository must all have matching positive integer repository IDs.
+Missing, null, malformed or mismatched identities fail closed. Branch names and
+owner names do not establish repository identity: any internal source branch is
+allowed, while a fork branch named `develop` is not. For `develop`, internal and
+fork sources are allowed. The check never closes a PR.
+
+Activation requires separately approved remote configuration: after reviewed
+adoption on `main` and verification of actual check runs, require **PR source
+policy** from the GitHub Actions app for `main`, alongside **Linux gates**, with
+administrator enforcement and no bypass. Verify fork rejection and internal
+branch acceptance remotely before treating the gate as enforced. The app binding
+is not a claim of absolute spoof resistance: other Actions workflows share the
+same app, and administrators retain power to change workflows and protection.
+Review workflow changes and keep check names unique.
+
+GitHub's documentation checked on 2026-10-16 says the default public-repository
+`pull_request_target` event policy is currently in evaluate mode and will be
+enforced for affected repositories on **2026-11-02**. An applicable event policy
+explicitly allowing this trusted workflow's event may therefore also require
+separate remote approval/configuration. Missing or blocked runs must not be
+mistaken for passing enforcement. GitHub may also suppress this event for certain
+SHA-like source branch names; such branches are not excluded by the local policy,
+but a missing required check can still block merging.
+See [securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
+and [event behavior and branch filters](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
+No API call, remote setting change, or remote enforcement verification is part
+of this local preparation.
+
+Run `python3 tests/test_pr_source_policy.py` locally (also included in CI's helper
+checks). It executes the workflow's actual inline policy with isolated event
+fixtures under `/tmp/opencode`, covering internal branches, forks, same-name fork
+branches, malformed identities, and untrusted strings. Textual checks cover the
+event, runner, permissions, and no-checkout/no-secrets contract; these are not a
+full YAML/Actions validator or proof of remote execution or branch protection.
+
 Public negative verification on 2026-10-15 used temporary
 [PR #6](https://github.com/eisenhauer-dev/herdr-crossroads/pull/6), with `main`
 already included in the head branch and no merge conflicts. With `[skip ci]`,
@@ -325,8 +393,10 @@ Run `python3 tests/test_notices.py` on the actual packaging builder with cached
 locked dependencies, installed Rust documentation, GCC, `dpkg-query`, and system
 copyright/full-license files to reproduce the full notice artifact, including
 package versions and startup/runtime object hashes. The build
-helper performs the cheaper manifest/lock/toolchain staleness check. This does
-not verify system provenance or final ELF contributions. Exact glibc startup
+helper checks manifest/lock/toolchain staleness and matches system candidate hashes,
+package/source versions and complete installed notice bytes against a reviewed
+builder profile. This does not establish actual final ELF/link contributions.
+Exact glibc startup
 exception headers and archive provenance are checked in under `LICENSES/` and
 embedded in the generated notices. Keep source versions matched, review the final
 binary/link map, and repack/reverify assets after notice changes; see the linked

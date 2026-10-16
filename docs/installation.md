@@ -1,6 +1,7 @@
 # Binary installation
 
-Crossroads 0.1.0 has a version-pinned binary installer and a manifest `[[build]]` hook:
+Crossroads 0.0.1 is the current test-version preparation, with a version-pinned
+binary installer and a manifest `[[build]]` hook:
 `command = ["python3", "scripts/install-binary.py"]`. It installs the agreed
 version into the manifest's fixed `target/release/herdr-crossroads` path. It does
 not build, execute the binary, or register/activate a plugin. By default it
@@ -24,8 +25,8 @@ No tooling is installed by this helper.
 For the current agreed version, the exact files (public or local) are:
 
 ```text
-herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 The [build helper](builds.md) produces these in `target/builds/`. From the trusted
@@ -111,7 +112,7 @@ checking out `FETCH_HEAD`. A single slug such as `herdr-crossroads` fails usage;
 it does not resolve from a plugin registry.
 
 For the selected source, the prepared public pinned syntax is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`
 with `CROSSROADS_ASSET_DIR` absent. Set the absolute local override to use trusted
 offline assets instead. **This is pending syntax, not a currently runnable public
 installation instruction or an existing public release.** Noninteractive callers additionally need `--yes`; review the
@@ -163,6 +164,9 @@ The separate **main-owned, opt-in** harness requires approval and an explicit re
 Herdr **0.9.3 or 0.9.5** executable and actual trusted release assets; other
 versions are rejected:
 
+The current default fixtures require matching `0.0.1` assets; historical `0.1.0`
+assets are not selected or renamed.
+
 ```sh
 python3 tests/test_herdr_install.py --herdr-bin /absolute/path/to/herdr --asset-dir /absolute/path/to/trusted/assets
 ```
@@ -204,13 +208,18 @@ change the personal installation.
 
 ## Public acceptance preparation
 
+The planned test sequence is `0.0.1 → 0.0.2 → 0.0.1`, before the first regular
+Linux release `0.1.0`. These need separately built, reviewed and approved public
+assets; historical `0.1.0`/trailer-fixture results below do not satisfy that gate.
+The `0.0.2` version and its publication are not prepared by this version change.
+
 Both harnesses also accept an explicit public mode. **Not executed; blocked on
 an approved published tag/Release and its reviewed commit.** Only the owning main
 session may run these after checking isolation and publication approval:
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 python3 tests/test_herdr_install.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.1.0 --public-commit "$REVIEWED_COMMIT"
-PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.1.0 --public-commit "$REVIEWED_COMMIT"
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_herdr_install.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.0.1 --public-commit "$REVIEWED_COMMIT"
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.0.1 --public-commit "$REVIEWED_COMMIT"
 ```
 
 Set `REVIEWED_COMMIT` to the reviewed full 40-character commit SHA of the approved
@@ -231,8 +240,8 @@ is still checked against that SHA afterward. Native result records distinguish
 `verified_release_tag` from the installed `ref` (the SHA).
 
 The reviewed checkout's agreed version still determines the binary asset route:
-for version 0.1.0 the production installer fetches the exact archive/checksum
-under Release `v0.1.0`, not a SHA-named Release. Binary/notice comparisons and
+for version 0.0.1 the production installer fetches the exact archive/checksum
+under Release `v0.0.1`, not a SHA-named Release. Binary/notice comparisons and
 managed-path checks remain mandatory. No credentials, personal HOME/XDG paths or
 inherited Git configuration are used. Herdr must be the explicit real ELF
 executable and report **0.9.5**. HOME/XDG isolation is not a filesystem sandbox;
@@ -245,10 +254,96 @@ uninstall, retained state and owned shutdown. Native public mode uses a 200×50 
 and the unmodified public popup manifest, not the fixture-only 90% dimensions.
 Both keep the restricted no-Cargo/Rust tool PATH and temporary HOME/XDG isolation
 under `/tmp/opencode`. Neither creates public tags/releases or mutates the remote.
-Public mode tests one real version only: it does **not** claim second-runtime
-upgrade/return compatibility or run the local synthetic negative-asset cases.
+These single-version invocations test one real version only: they do **not** claim
+second-runtime upgrade/return compatibility or run local synthetic negative-asset cases.
 The emitted archive hash identifies the reviewed reference archive; binary bytes
 are compared with that reference. Local fixture results remain separate evidence.
+
+### Public install/update/return cycle (not executed)
+
+The native harness additionally supports the real `0.0.1 → 0.0.2 → 0.0.1` cycle
+on Herdr **0.9.5**. This is separate from both the public single-version pinned
+mode above and the offline synthetic `0.1.1` trailer fixture below. **The example
+is unexecuted and requires publication, asset review and explicit execution
+approval; it is not evidence of public acceptance.** No local version change,
+tag, Release, main change or publication is performed by the harness.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/test_distribution.py --herdr-bin /absolute/path/to/herdr-0.9.5 --asset-dir /absolute/path/to/reviewed/release-assets --public-ref v0.0.1 --public-commit "$REVIEWED_INITIAL_COMMIT" --public-update-ref v0.0.2 --public-update-commit "$REVIEWED_UPDATE_COMMIT"
+```
+
+Replace the placeholders with two separately reviewed full lowercase 40-character
+commits and actual asset paths. The second ref/commit pair is opt-in and requires
+the complete first pair. Cycle versions must be exactly `v0.0.1` and `v0.0.2`,
+with distinct commits, binary hashes and archive hashes. Both version-specific
+archives and their adjacent `.sha256` files must already coexist in `--asset-dir`.
+They are immutable reference inputs, not download overrides. No synthetic trailer
+is created in either public mode. Before starting the owned server or installing,
+both archives/checksums/notices and both public tag-to-reviewed-commit bindings
+are checked. Incomplete/floating inputs, missing or unexpected remote records,
+and mismatched bindings fail closed.
+
+The owning primary/operator controls the sequence and stdin manually:
+
+1. Obtain approval for execution against reviewed main `0.0.1`. Hold an
+   **exclusive main freeze during the entire initial unpinned operation, including
+   checkout and hook execution**. The harness verifies public default `HEAD` is
+   `refs/heads/main` at the exact initial reviewed commit, then runs
+   `herdr plugin install eisenhauer-dev/herdr-crossroads --yes` **without `--ref`**.
+2. After installation assertions and successful initial native navigation, the
+   harness prints a checkpoint naming the required reviewed `0.0.2` commit and
+   waits on its original stdin, preserving the same isolated HOME/XDG/session.
+   Only after the user separately authorizes that concrete remote `0.0.2` change
+   may the primary arrange publication/main transition outside the harness.
+   The initial freeze may be released at this checkpoint. Establish an exclusive
+   freeze at the reviewed update commit before confirming.
+3. Send exactly `update <REVIEWED_UPDATE_COMMIT>` followed by newline to that
+   stdin. EOF, other text or an unterminated confirmation aborts without executing
+   update. Keep stdin interactive or retain a primary-owned writable stdin pipe;
+   do not prefill confirmation, close stdin or use an automatic approval feeder.
+   The harness does not poll main or mutate the remote. It verifies the update tag
+   and default main commit, then runs the actual
+   `herdr plugin update herdr-crossroads --yes` (no `--ref` exists on update).
+4. After update assertions/navigation, the harness returns using the existing
+   tag-verified `install --ref <REVIEWED_INITIAL_COMMIT>` path. This return does
+   not require moving main back. Uninstall, retained-state and owned shutdown
+   checks complete the same session's cycle.
+
+Each unpinned operation has exact main and tag checks before and after execution.
+**These checks do not eliminate a branch race**: hooks could execute an unreviewed
+checkout if main changes between checks, even if it later changes back. Exclusive
+main ownership/freeze throughout checkout and hooks is a required external safety
+condition, not a guarantee implemented by this harness. Do not run the cycle when
+that condition cannot be maintained. Release tags must also remain reviewed and
+stable; postchecks detect changes but cannot undo executed hooks.
+
+The source contract was checked against Herdr **v0.9.5**, 2026-10-16:
+[`plugin_update` and `git_checkout`](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs)
+reuse the installed requested ref, fetching `HEAD` when absent;
+[`PluginSourceInfo`](https://github.com/herdrdev/herdr/blob/v0.9.5/src/api/schema/plugins.rs)
+omits `requested_ref` on serialization when absent. The harness requires that
+field to be **absent**, not JSON `null`, after initial install/update, and equal
+to the exact initial SHA after return. Resolved commit/version, source identity,
+managed path, binary and notice bytes/modes, registry and navigation assertions
+remain mandatory at every step, as do retained state, no Cargo/Rust, unchanged
+reference assets, uninstall and owned shutdown. Receipts distinguish `install`,
+`update`, and `return`, with reviewed release tag and archive/binary hashes;
+per-step receipts alone do not prove final cleanup or independent acceptance.
+
+## Local 0.0.1 preflight
+
+On 2026-10-16 the freshly built local `0.0.1` archive passed both isolated Herdr
+0.9.5 harnesses: five CLI cases (success, missing asset, missing checksum, bad
+hash, wrong target) and the native offline lifecycle with opening, search/focus,
+replacement/return, notice retention, uninstall and owned shutdown. HOME/XDG and
+the session were temporary under `/tmp/opencode`; personal configuration was not
+used. Archive SHA256 is
+`93a61fa1972774b7f3c92bc5c1f799752efb3b2a510f3661407971438fabd6c1`, binary SHA256
+`4db948b2abaf09c9d9899274fcba8174116130b53245de5e664e6846fd2bd998`.
+The replacement still used the explicitly synthetic offline `0.1.1` trailer
+fixture, not a real second runtime. Neither public mode nor the actual Herdr
+update command was executed. These are local preflight results, not public
+acceptance or release approval; the public `0.0.1/0.0.2` gate remains open.
 
 ## Dual-profile local acceptance
 
@@ -302,13 +397,14 @@ versions must retain plugin config/state markers; remove only fixture-owned
 retained data after shutting down the owned session.
 
 Crossroads supplies no automatic updater. Herdr 0.9.3 has no `plugin update`
-command; 0.9.5 has one, but it is not exercised by this harness. Managed replacement
+command; the opt-in public cycle above exercises the 0.9.5 command. Default offline managed replacement
 uses `plugin install OWNER/REPO --ref <reviewed-ref>` again with matching trusted
 local assets; returning to a previous ref needs its matching assets too. The
 pinned public syntax above remains pending publication and acceptance.
 
-The original 0.1.0 fixture uses the validated local archive and its unchanged
-binary. The temporary 0.1.1 fixture appends an inert marker to that same runtime
+The current original-version fixture uses the matching local `0.0.1` archive and
+its unchanged binary; the historical runs below used `0.1.0`. The temporary
+`0.1.1` fixture appends an inert marker to that same runtime
 payload to distinguish hashes; it is **test data, not a released 0.1.1 binary or
 proof of new-runtime upgrade compatibility**. Results record archive and binary SHA256 values. Version
 changes and tags belong only in the temporary fixture repository, never in the

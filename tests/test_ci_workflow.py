@@ -58,6 +58,7 @@ jobs:
             "cargo clippy --locked --all-targets -- -D warnings",
             "cargo test --locked",
             "python3 tests/test_git_hooks.py",
+            "python3 tests/test_pr_source_policy.py",
             "python3 tests/test_version.py",
             "python3 tests/test_build_linux.py",
             "python3 tests/test_build_provenance.py",

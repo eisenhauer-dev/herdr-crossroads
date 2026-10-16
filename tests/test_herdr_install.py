@@ -28,8 +28,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commit=None):
-    version_number = public_version(public_ref, public_commit) if public_ref else "0.1.0"
-    requested_ref = public_commit if public_ref else "v0.1.0"
+    version_number = public_version(public_ref, public_commit) if public_ref else "0.0.1"
+    requested_ref = public_commit if public_ref else "v0.0.1"
     owner, repository = SOURCE.split("/") if public_ref else ("fixture", "crossroads")
     source_slug = owner + "/" + repository
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cli-") as temporary:
@@ -125,7 +125,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
         for args in ([] if public_ref else [["init", "--quiet"], ["add", "."],
                      ["-c", "user.name=Installer Fixture", "-c", "user.email=fixture@example.invalid",
                       "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Installer fixture"],
-                     ["tag", "v0.1.0"]]):
+                     ["tag", "v0.0.1"]]):
             result = command([git, *args], cwd=repo)
             assert result.returncode == 0, result.stderr
         commit = public_commit if public_ref else command([git, "rev-parse", "HEAD"], cwd=repo).stdout.strip()
@@ -163,7 +163,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                                 source = params["source"]
                                 managed = Path(source["managed_path"]).resolve()
                                 assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"]))
-                                assert source["requested_ref"] == "v0.1.0"
+                                assert source["requested_ref"] == "v0.0.1"
                                 assert source["resolved_commit"] == commit
                                 assert source["owner"] == "fixture" and source["repo"] == "crossroads"
                                 binary = managed / "target/release/herdr-crossroads"
@@ -177,7 +177,7 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                                 linked.append(managed)
                                 response = {"type": "plugin_linked", "plugin": {
                                     "plugin_id": "herdr-crossroads", "name": "Herdr Crossroads",
-                                    "version": "0.1.0", "min_herdr_version": "0.9.1",
+                                    "version": "0.0.1", "min_herdr_version": "0.9.1",
                                     "manifest_path": params["path"], "plugin_root": str(managed),
                                     "enabled": params["enabled"], "source": source}}
                             else:
@@ -268,7 +268,7 @@ def main():
     with herdr.open("rb") as executable:
         if executable.read(4) != b"\x7fELF" or not os.access(herdr, os.X_OK):
             parser.error("Herdr must be a real executable ELF, not a PATH shim")
-    version = args.public_ref[1:] if args.public_ref else "0.1.0"
+    version = args.public_ref[1:] if args.public_ref else "0.0.1"
     for case in (["success"] if args.public_ref else ["success", "missing-asset", "missing-checksum", "bad-hash", "wrong-target"]):
         run_case(herdr, args.asset_dir, f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz",
                  case, args.public_ref, args.public_commit)

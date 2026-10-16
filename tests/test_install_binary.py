@@ -16,7 +16,7 @@ import urllib.error
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ARCHIVE = "herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz"
+ARCHIVE = "herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz"
 # Header-only fixture is intentionally not a runnable binary.
 ELF = b"\x7fELF\x02\x01\x01" + bytes(9) + b"\x03\x00\x3e\x00\x01\x00\x00\x00" + bytes(40)
 
@@ -143,9 +143,9 @@ class InstallBinaryTests(unittest.TestCase):
     def test_agreed_version_selects_only_that_version(self):
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
             path = self.repo / name
-            path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "2.3.4"'))
+            path.write_text(path.read_text().replace('version = "0.0.1"', 'version = "2.3.4"'))
         self.reject()
-        name = ARCHIVE.replace("0.1.0", "2.3.4")
+        name = ARCHIVE.replace("0.0.1", "2.3.4")
         data = (self.assets / ARCHIVE).read_bytes()
         (self.assets / name).write_bytes(data)
         (self.assets / (name + ".sha256")).write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
@@ -153,7 +153,7 @@ class InstallBinaryTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), ELF)
 
     def test_missing_exact_version_does_not_select_older_asset(self):
-        (self.assets / ARCHIVE).rename(self.assets / ARCHIVE.replace("0.1.0", "0.0.9"))
+        (self.assets / ARCHIVE).rename(self.assets / ARCHIVE.replace("0.0.1", "0.0.0"))
         self.reject()
 
     def test_explicit_empty_directory_and_each_asset_are_required(self):
@@ -186,7 +186,7 @@ class InstallBinaryTests(unittest.TestCase):
 
     def test_public_default_downloads_only_pinned_archive_and_checksum(self):
         requests = self.public_install()
-        base = "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v0.1.0/"
+        base = "https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v0.0.1/"
         self.assertEqual([url for url, _ in requests], [base + ARCHIVE, base + ARCHIVE + ".sha256"])
         self.assertTrue(all(0 < timeout <= 30 for _, timeout in requests))
         self.assertEqual(self.binary.read_bytes(), ELF)
@@ -196,8 +196,8 @@ class InstallBinaryTests(unittest.TestCase):
     def test_public_default_uses_agreed_version_not_latest_or_older_asset(self):
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
             path = self.repo / name
-            path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "2.3.4"'))
-        name = ARCHIVE.replace("0.1.0", "2.3.4")
+            path.write_text(path.read_text().replace('version = "0.0.1"', 'version = "2.3.4"'))
+        name = ARCHIVE.replace("0.0.1", "2.3.4")
         data = (self.assets / ARCHIVE).read_bytes()
         (self.assets / name).write_bytes(data)
         (self.assets / (name + ".sha256")).write_text(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
@@ -346,7 +346,7 @@ class InstallBinaryTests(unittest.TestCase):
 
     def test_version_mismatch_preserves_binary(self):
         path = self.repo / "herdr-plugin.toml"
-        path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "0.2.0"'))
+        path.write_text(path.read_text().replace('version = "0.0.1"', 'version = "0.2.0"'))
         self.reject()
 
     def test_destination_and_ancestor_symlinks_rejected(self):
