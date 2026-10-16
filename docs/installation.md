@@ -38,8 +38,10 @@ There is no short-name registry.
 ## Requirements and local use
 
 Use a trusted checkout and trusted asset source on Linux x86_64 with glibc and
-Python **3.11+**, standard library only. No Rust/Cargo is required to install a
-prebuilt binary. Git is required for Herdr's managed source checkout; plugin
+Python **3.11+**, standard library only. An existing `curl` on `PATH` is preferred
+for public downloads; it is optional, and Python's urllib is used only when curl
+is absent. No Rust/Cargo is required to install a prebuilt binary.
+Git is required for Herdr's managed source checkout; plugin
 runtime still requires `stty` and a running Herdr session (manifest minimum 0.9.1).
 Python is an installation/test prerequisite, not a plugin runtime dependency.
 No tooling is installed by this helper.
@@ -84,11 +86,34 @@ The selected archive and its adjacent checksum must exist. Checksum records must
 be exactly lowercase SHA256, two spaces, the portable expected filename, and a
 newline. Both archive and internal binary hashes are checked.
 
-Public downloads use Python's system TLS trust, a 30-second socket timeout per
-request, at most 64 MiB for the archive and 1 KiB for its checksum, and no retries.
-HTTPS redirects (including GitHub's signed asset URLs) are permitted; non-HTTPS
-or credentialed redirects are rejected before following them. Inherited proxies
-are disabled. The expanded gzip payload is limited to 128 MiB in either mode.
+Public downloads prefer curl discovered with `shutil.which("curl")`. Curl retains
+its native certificate-chain and hostname verification and trust configuration;
+the installer does not disable verification, change Python's strict TLS settings,
+or modify system trust. This permits environments where curl verifies a
+TLS-inspection chain but Python rejects it (for example, the reported Python
+3.14.4/OpenSSL 3.5.5 `Missing Authority Key Identifier` failure on GitHub's
+redirected release-assets host). It is not a guarantee for every TLS-inspection
+configuration: the selected client's trust must already be configured correctly.
+
+Curl's first argument is `--disable` to ignore curlrc, and the installer sets
+`--proto =https --proto-redir =https --disallow-username-in-url --location --fail
+--silent --show-error --noproxy '*' --max-time 30`. HTTPS redirects (including
+GitHub's signed asset URLs) are permitted; non-HTTPS or credentialed initial URLs
+and redirects are rejected. Inherited proxies are disabled. Curl has a
+30-second **total transfer deadline** per download. Only if curl is absent,
+urllib uses Python's system TLS trust and its existing 30-second **socket
+timeout**, not a total transfer deadline. Neither client retries, and a curl
+failure never falls back to urllib. An installed curl that cannot execute or
+does not support a required option also fails closed; no version detection or
+tool installation is performed.
+
+Both public-download paths use Python bounded reads: at most 64 MiB for the
+archive and 1 KiB for its checksum, checked by reading at most one extra byte.
+This also bounds unknown-length curl output without relying on `Content-Length`
+or curl's version-dependent `--max-filesize` behavior. Curl children are killed
+if still running and reaped on oversized output or read errors; pipes are closed.
+Local `CROSSROADS_ASSET_DIR` mode invokes neither download client and retains its
+existing local-file behavior. The expanded gzip payload is limited to 128 MiB in either mode.
 Missing release/assets/checksums, HTTP/network/TLS failures and invalid payloads
 fail before replacing the previous binary. Network access belongs only to
 installation: opening/searching the runtime does not download or update anything.
@@ -197,12 +222,21 @@ Additional primary contracts (Herdr **v0.9.5**, checked 2026-10-15):
 
 From the repository root, `python3 tests/test_install_binary.py` runs isolated
 standard-library tests with header-only synthetic ELF bytes. It covers exact
-version selection, mocked pinned HTTPS downloads, missing assets/network errors,
+version selection, mocked pinned HTTPS downloads and fixture curl subprocesses,
+curl preference despite Python strict-TLS errors, absent-curl TLS failure,
+required curl security arguments, no fallback on curl failures/unsupported options,
+unknown-length bounded output and child/pipe cleanup, missing assets/network errors,
 download/expansion limits, redirect transport/credential rejection, checksums,
 malformed/member attacks, host/ELF rejection,
 symlink rejection, and prior-binary preservation on validation/staging/replace
 failures. No Herdr or Rust command is invoked and nothing is installed in the
-live checkout. Synthetic success is not actual executable verification.
+live checkout. Curl transport/redirect policy is checked through its arguments,
+not live HTTPS requests; fixture exit statuses simulate curl failures.
+The credentialed-redirect boundary was additionally checked against upstream
+[curl 8.18.0 option wiring](https://github.com/curl/curl/blob/curl-8_18_0/src/config2setopts.c#L1013-L1014),
+[redirect parsing](https://github.com/curl/curl/blob/curl-8_18_0/lib/http.c#L3331-L3347),
+and [username/password rejection](https://github.com/curl/curl/blob/curl-8_18_0/lib/url.c#L1755-L1765).
+Synthetic success is not actual executable or TLS-inspection-environment verification.
 Notice retention, missing/tampered/malformed notice members and notice-destination
 symlinks are included. The historical 0.9.3 results below used earlier two-member
 assets. On 2026-10-15 both real-Herdr harnesses passed with Herdr 0.9.5 and the
