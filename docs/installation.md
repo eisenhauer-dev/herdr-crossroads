@@ -83,10 +83,18 @@ Setup validates existing/proposed TOML with stdlib `tomllib` and appends only th
 Layouts that cannot accept an appended `[[keys.command]]` (such as an inline
 `command = []` array) fail without rewriting; use manual setup for those layouts.
 Existing bytes/comments and file permissions are preserved; new config files are
-mode 0600 and missing parent directories 0700. Existing symlink/nonregular targets
-and symlink ancestors are refused, including dangling links. Staging uses an
-exclusive temporary file in the target parent, flushed/synced and atomically
-replaced only after rechecking original metadata and bytes. Handled pre-replacement
+mode 0600 and missing parent directories 0700. Relative or absolute symlinks,
+including chains and symlinked config directories, are followed without replacing
+the links: only the final resolved regular file is updated. Relative link targets
+may contain `..`; the selected environment path restrictions above are unchanged.
+Output reports both the selected config path and resolved target when they differ,
+so check which dotfiles file will be edited. Dangling links, loops and nonregular
+targets (including directories and FIFOs) are refused without creating missing
+link targets. An ordinary missing config can still be created.
+Staging uses an exclusive temporary file in the resolved target parent, anchored
+by no-follow directory descriptors, flushed/synced and atomically replaced only
+after rechecking original metadata/bytes and the selected path's resolved target
+and file identity. Handled pre-replacement
 failures leave the existing file unchanged and clean the helper's staging file;
 new empty parents can remain. Forced termination can leave a staging file. This is
 not a hostile-filesystem sandbox or power-loss durability guarantee: **do not edit
@@ -142,8 +150,9 @@ primary contracts:
 
 `python3 tests/test_setup_keybind.py` from the repository root covers manifest and
 README contracts, isolated subprocess success/idempotence/path selection, conflict
-and malformed-config rejection, permissions/comment preservation, unsafe targets,
-and injected staging/replace/concurrent-change failures under `/tmp/opencode`.
+and malformed-config rejection, permissions/comment and symlink preservation,
+dangling/loop/nonregular target rejection, and injected staging/replace,
+concurrent-edit and path-redirection failures under `/tmp/opencode`.
 No real Herdr invocation, personal config write, reload or host key launch was
 executed for this feature. The historical installation/runtime evidence below is
 unchanged and does not verify the new action end-to-end.

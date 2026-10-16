@@ -21,6 +21,7 @@ pub(super) fn focus(pane_id: &str) -> io::Result<()> {
     )?;
     stream.write_all(b"\n")?;
     let deadline = Instant::now() + Duration::from_millis(500);
+    stream.set_nonblocking(true)?;
     let mut reply = Vec::new();
     loop {
         if reply.len() >= 16 * 1024 {
@@ -33,18 +34,16 @@ pub(super) fn focus(pane_id: &str) -> io::Result<()> {
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
             .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "pane.focus reply timed out"))?;
-        stream.set_read_timeout(Some(remaining))?;
         let mut byte = [0];
-        let n = stream.read(&mut byte).map_err(|error| {
-            if matches!(
-                error.kind(),
-                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-            ) {
-                io::Error::new(io::ErrorKind::TimedOut, "pane.focus reply timed out")
-            } else {
-                error
+        let n = match stream.read(&mut byte) {
+            Ok(n) => n,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(remaining.min(Duration::from_millis(1)));
+                continue;
             }
-        })?;
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if Instant::now() >= deadline {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

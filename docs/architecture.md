@@ -133,8 +133,10 @@ anchored by each view's layout. The main loop checks interactive size about ever
 Only confirmation in Select with a visible candidate emits a pane ID. `actions`
 executes that result through `focus`, which
 sends `pane.focus` over `HERDR_SOCKET_PATH` and validates reply ID, result type,
-exact pane ID, and `focused: true`. Reply reading has a 500-ms overall deadline
-and a 16-KiB limit; this is not a general socket-connect/write timeout promise.
+exact pane ID, and `focused: true`. After the request and newline are written,
+nonblocking reply reading has a 500-ms overall deadline and a 16-KiB limit.
+When no bytes are ready, it sleeps for at most 1 ms before checking the deadline
+again; this is not a general socket-connect/write timeout promise.
 Stale/error replies fail without choosing another target. Help, search, themes,
 empty results, and error-page close do not focus panes. Terminal ownership restores
 the saved `stty` state, shows the cursor, and pops an owned Kitty mode on normal

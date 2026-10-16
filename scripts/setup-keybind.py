@@ -91,6 +91,22 @@ def is_launch_key(raw):
     return raw.startswith("prefix+") and raw[len("prefix+"):].strip() == "f"
 
 
+def resolved_config_path(path):
+    """Resolve existing links strictly, allowing only genuinely missing components."""
+    missing = []
+    while True:
+        try:
+            path.lstat()
+            break
+        except FileNotFoundError:
+            missing.append(path.name)
+            path = path.parent
+    try:
+        return path.resolve(strict=True).joinpath(*reversed(missing))
+    except RuntimeError as error:  # Python 3.11/3.12 report symlink loops this way.
+        raise ValueError(f"cannot resolve config path: {error}") from error
+
+
 def parent_directory(path):
     """Create missing parents, refusing symlink ancestors, anchored by descriptors."""
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -135,13 +151,15 @@ def snapshot(directory, name):
 
 
 def setup():
-    path = config_path()
+    selected = config_path()
+    path = resolved_config_path(selected)
+    reported = str(selected) if selected == path else f"{selected} (resolved target: {path})"
     directory = parent_directory(path)
     staging = None
     try:
         original, data = snapshot(directory, path.name)
         if has_launch_binding(data):
-            print(f"Already configured prefix+f in {path}; no changes. Reload explicitly if needed.")
+            print(f"Already configured prefix+f in {reported}; no changes. Reload explicitly if needed.")
             return
         proposed = data + BINDING
         has_launch_binding(proposed)  # Validate append without rewriting existing TOML/comments.
@@ -158,13 +176,25 @@ def setup():
         if ((file_identity(current) if current else None)
                 != (file_identity(original) if original else None) or current_data != data):
             raise ValueError("config changed before write; stop concurrent edits and retry")
+        try:
+            if resolved_config_path(selected) != path:
+                raise ValueError("config target redirected")
+            try:
+                reachable = selected.stat()
+            except FileNotFoundError:
+                reachable = None
+            if ((file_identity(reachable) if reachable else None)
+                    != (file_identity(current) if current else None)):
+                raise ValueError("config target identity changed")
+        except (OSError, ValueError) as error:
+            raise ValueError("config changed before write; stop concurrent edits and retry") from error
         os.replace(staging, path.name, src_dir_fd=directory, dst_dir_fd=directory)
         staging = None
     finally:
         if staging is not None:
             os.unlink(staging, dir_fd=directory)
         os.close(directory)
-    print(f"Added prefix+f to {path}. Now run: herdr server reload-config")
+    print(f"Added prefix+f to {reported}. Now run: herdr server reload-config")
 
 
 if __name__ == "__main__":

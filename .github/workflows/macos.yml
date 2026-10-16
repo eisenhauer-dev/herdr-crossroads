@@ -1,0 +1,74 @@
+name: macOS preparation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS preparation (${{ matrix.host }})
+    if: github.event.repository.private == false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            machine: arm64
+            host: aarch64-apple-darwin
+          - runner: macos-15-intel
+            machine: x86_64
+            host: x86_64-apple-darwin
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+      EXPECTED_HOST: ${{ matrix.host }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate native tooling and prepare isolated test directory
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "$EXPECTED_MACHINE"
+          xcrun --find clang
+          xcrun --show-sdk-path
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustc -vV | grep -Fx "host: $EXPECTED_HOST"
+          cargo --version
+          python3 -c 'import sys; assert sys.version_info >= (3, 11), sys.version; import pty, termios, tomllib'
+          test ! -L /tmp/opencode
+          mkdir -p -m 700 /tmp/opencode
+          test -O /tmp/opencode && test -w /tmp/opencode
+      - name: Check workflow contract
+        run: python3 tests/test_macos_workflow.py
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Check Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Run Cargo tests
+        run: cargo test --locked
+      - name: Build native release binary
+        run: cargo build --release --locked
+      - name: Run full release PTY latency gate
+        timeout-minutes: 5
+        run: python3 -u tests/pty_latency.py target/release/herdr-crossroads
+      - name: Run full release PTY render gate
+        timeout-minutes: 5
+        run: python3 -u tests/pty_render.py target/release/herdr-crossroads
+      - name: Run full release PTY keymaps gate
+        timeout-minutes: 5
+        run: python3 -u tests/pty_keymaps.py target/release/herdr-crossroads
+      - name: Run full release PTY hints gate
+        timeout-minutes: 5
+        run: python3 -u tests/pty_hints.py target/release/herdr-crossroads
