@@ -6,6 +6,28 @@ preparation, not published releases. The build helper makes no tags, publication
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
+The older build and native results below are historical `0.1.0` evidence, not
+verification of `0.0.1`. A fresh local `0.0.1` build on 2026-10-16 passed formatting,
+Clippy, 258 Rust tests, the matching-builder notice gate, all four full release
+PTYs and packaging. Separate archive/ELF/map checks confirmed four regular members,
+numeric root ownership, preserved source modes (binary `0775`, other files `0664`
+on this host), both checksums, exact notice bytes and the reviewed local builder's
+13 candidate identities. Installed modes are normalized separately by the installer.
+
+| Local 0.0.1 evidence | SHA256 |
+| --- | --- |
+| Archive | `93a61fa1972774b7f3c92bc5c1f799752efb3b2a510f3661407971438fabd6c1` |
+| Binary | `4db948b2abaf09c9d9899274fcba8174116130b53245de5e664e6846fd2bd998` |
+| Normalized map | `c2cbea47445841df8ba5c8dd1947b9c0d020ce90eaff7ce004281f1e62b6b70f` |
+
+The bound map again contains only the covered glibc startup sections and GCC CRT
+contributions, with no static `libc_nonshared.a`, `libgcc.a` or `libgcc_eh.a` members.
+The PIE dynamically needs libc, libgcc and the loader, has no RPATH/RUNPATH, and
+lacks `_IO_stdin_used` and `_dl_relocate_static_pie`. This is artifact-specific local
+evidence, not public CI, distribution acceptance, or a legal/security guarantee.
+The documented source-signature limits remain. Existing historical local artifacts
+were not renamed or removed. See [local installation checks](installation.md#local-001-preflight).
+
 ## Build and verify locally
 
 Run from a trusted checkout on native Linux x86_64. Have Rust/Cargo, a system
@@ -59,13 +81,13 @@ Only after all four full PTYs pass does it package the archive. A successful
 invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
 
 ```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.link.map
 ```
 
-These names use the current agreed version `0.1.0`, not a fixed literal in the
+These names use the current test-preparation version `0.0.1`, not a fixed literal in the
 helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
@@ -153,7 +175,7 @@ this is not evidence of the Ubuntu 24.04 runner's glibc version.
 Verify the archive from the repository root:
 
 ```sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+(cd target/builds && sha256sum -c herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
 ```
 
 After extracting the tar into a separate empty directory, run
@@ -228,6 +250,10 @@ On 2026-10-15, artifact `11993142568` from the public main run above was
 downloaded and checked independently. Its source commit was
 `5239c17dd0548f55c76d380998e327a6766e86dd`, version `0.1.0`, target
 `x86_64-unknown-linux-gnu`.
+
+The historical `0.1.0` CI artifacts were deleted remotely on 2026-10-16 with user
+approval. Retained local copies and these verification records are historical
+evidence, not currently downloadable CI assets or renamed `0.0.1` assets.
 
 - Archive SHA256: `153b261e467d98e364968ca964e7864e77efb4a89ae8f103b150deaf6baffddf`.
 - Binary SHA256: `63857e066f8e4c7821114107292e5e973aaab0b12144ab13b1a63e59611bace1`.

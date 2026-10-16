@@ -3,7 +3,14 @@
 This process prepares reviewable versioned Linux assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The current version remains `0.1.0`; no version bump is part of this preparation.
+The current preparation version is `0.0.1`. The planned public installation,
+update and return test uses `0.0.1 → 0.0.2 → 0.0.1`, with each version built and
+checked independently. Only after Linux acceptance is `0.1.0` planned as the first
+regular Linux release. Test publications should be marked as GitHub prereleases;
+their exact commits, tags and assets still require separate approval. A GitHub
+prerelease flag does not change the canonical `X.Y.Z` version accepted by the tools.
+Historical `0.1.0` evidence below is not evidence for these new test versions;
+never rename an old asset to a new version.
 
 ## Version and asset contract
 
@@ -20,13 +27,13 @@ an explicit trusted local asset directory selects offline installation, otherwis
 the prepared route downloads the exact version from GitHub Releases. Publication
 and public acceptance remain pending.
 
-For `0.1.0`, the only supported target produces:
+For `0.0.1`, the only supported target produces:
 
 ```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.link.map
 ```
 
 The tar contains the exact tested executable, preserving its executable mode,
@@ -49,6 +56,7 @@ cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 tests/test_git_hooks.py
+python3 tests/test_pr_source_policy.py
 python3 tests/test_version.py
 python3 tests/test_build_linux.py
 python3 tests/test_build_provenance.py
@@ -56,8 +64,8 @@ python3 tests/test_install_binary.py
 python3 tests/test_distribution_helpers.py
 python3 tests/test_notices.py
 sh scripts/build-linux.sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-tar -tvzf target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+(cd target/builds && sha256sum -c herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
+tar -tvzf target/builds/herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 The helper builds the locked optimized explicit-target binary and runs all four
@@ -196,7 +204,7 @@ identifies `Scrt1.o` inputs as `start.os`, `abi-note.o` and `init.o`; the unused
 `init.c` data is discarded. This checks that run's actual startup contributions,
 not arbitrary later builds or a universal glibc exception.
 
-The old PR artifact still carries the old local-only notices; it is evidence for
+The retained local copy of the old PR artifact carries the old local-only notices; it is evidence for
 its candidate bytes, not a corrected distribution asset. A fresh CI run must pass
 the new mandatory matching-profile gate, all four full PTYs and packaging/upload;
 then independently check the four-member tar, checksums and exact canonical notice
@@ -317,7 +325,8 @@ the exact versioned name to step outputs; upload selects its tar, archive
 checksum, provenance JSON and link map, never a `target/builds/` wildcard. There is no tag trigger or release
 publication job.
 
-The helper-test step includes `python3 tests/test_version.py`,
+The helper-test step includes `python3 tests/test_pr_source_policy.py`,
+`python3 tests/test_version.py`,
 `python3 tests/test_build_linux.py`, `python3 tests/test_build_provenance.py`,
 `python3 tests/test_install_binary.py`, and
 `python3 tests/test_distribution_helpers.py`,
@@ -335,7 +344,7 @@ passed on 2026-10-15, including all four full local PTYs against the downloaded
 binary. The public release-procedure trial and matching CI system/link provenance
 remain outstanding. Before any tag, push, or publication, obtain
 explicit approval for that action and the reviewed version/ref/assets. A proposed
-tag convention is `v<version>` (for example `v0.1.0`); no tag is created here.
+tag convention is `v<version>` (for example `v0.0.1`); no tag is created here.
 
 Local Linux x86_64 evidence uses glibc 2.43. The public CI run separately verifies
 its Ubuntu 24.04 isolated test environment, not live Herdr integration there,

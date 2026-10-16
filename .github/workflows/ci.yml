@@ -43,6 +43,7 @@ jobs:
         run: python3 tests/test_git_hooks.py
       - name: Check Linux build helper
         run: |
+          python3 tests/test_pr_source_policy.py
           python3 tests/test_version.py
           python3 tests/test_build_linux.py
           python3 tests/test_build_provenance.py

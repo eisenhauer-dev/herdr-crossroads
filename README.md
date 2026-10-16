@@ -83,13 +83,16 @@ and [synthetic previews](docs/media/README.md).
 - Git to obtain/update a source checkout. Python 3.11+ is also used for local
   tests, not plugin runtime.
 
-Crossroads 0.1.0 declares Linux only. Local verification is on Linux x86_64;
+Crossroads 0.0.1 is the Linux-only test-version preparation. The planned public
+acceptance sequence is 0.0.1 → 0.0.2 → 0.0.1, before 0.1.0 as the first regular
+Linux release; no matching public test assets are available yet.
+Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
 host-command examples below were checked against v0.9.3 sources. On 2026-10-14,
 an isolated native Herdr 0.9.3 server/client test verified local managed
 installation, search/focus, replacement, version return, and uninstall at 160×40
-with a fixture-only 90% popup manifest. The current license-bearing binary archive
+with a fixture-only 90% popup manifest. The historical 0.1.0 license-bearing binary archive
 also passed isolated real-Herdr 0.9.5 CLI and server/client installation tests on
 2026-10-15, including delivered notices, search/focus, replacement/return and
 uninstall; see [scope and hashes](docs/installation.md#native-distribution-acceptance).
@@ -129,7 +132,7 @@ hook, so the source build-then-link route above is unchanged. See
 and isolated tests. **Public installation is prepared, not yet available or
 accepted:** no matching tag/Release exists as of 2026-10-15. Once published and
 accepted, the pinned route is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`;
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`;
 this is not currently a runnable public install instruction.
 `herdr plugin install herdr-crossroads` is not valid
 shorthand. Native local managed installation was tested; see
