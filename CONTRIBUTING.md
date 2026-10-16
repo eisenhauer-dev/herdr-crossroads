@@ -197,7 +197,16 @@ builders fail rather than generating host-specific distribution notices; see
 [notice maintenance and source provenance](docs/releases.md#license-inventory-and-verification).
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
-prepares versioned artifacts, not a published release. The separate
+prepares versioned artifacts, not a published release. The current preparation
+version is `0.1.0`, the first regular Linux release for `x86_64-unknown-linux-gnu`
+only. The fresh local build and artifact gates passed, recorded separately in
+`target/regular-release/local-verification.json`; see
+[current local evidence](docs/builds.md#current-010-local-preparation-evidence).
+The local binary contains personal build paths and is not a publication candidate.
+Separate clean CI, public installation and publication remain pending and require
+their own approvals. Historical `0.1.0` assets must not be reused or renamed as
+new-release proof. No `0.1.0` publication
+or public installation success is claimed. The separate
 [binary installer](docs/installation.md) uses Python 3.11+ standard library,
 without Rust/Cargo. Its default version-pinned Release download route passed the
 isolated Herdr 0.9.5 public CLI-install and pinned native tests for published 0.0.1.

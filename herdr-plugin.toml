@@ -1,6 +1,6 @@
 id = "herdr-crossroads"
 name = "Herdr Crossroads"
-version = "0.0.2"
+version = "0.1.0"
 min_herdr_version = "0.9.1"
 platforms = ["linux"]
 
