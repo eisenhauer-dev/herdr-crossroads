@@ -10,7 +10,9 @@ import platform
 import re
 import runpy
 import secrets
+import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import urllib.parse
@@ -39,6 +41,25 @@ class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def download(url, limit):
     require_https(url)
+    curl = shutil.which("curl")
+    if curl is not None:
+        # Keep curl's native TLS verification; ignore curlrc and inherited proxies.
+        command = [curl, "--disable", "--proto", "=https", "--proto-redir", "=https",
+                   "--disallow-username-in-url", "--location", "--fail", "--silent", "--show-error",
+                   "--noproxy", "*", "--max-time", "30", "--url", url]
+        with subprocess.Popen(command, stdout=subprocess.PIPE) as child:
+            try:
+                # Bound unknown-length responses too, including on older curl.
+                data = child.stdout.read(limit + 1)
+                if len(data) > limit:
+                    raise ValueError("release download exceeds size limit")
+                if child.wait() != 0:
+                    raise ValueError(f"curl release download failed (exit status {child.returncode})")
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+        return data
     # No inherited proxy credentials or alternate proxy transport; use system TLS trust.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTPSRedirectHandler())
     with opener.open(url, timeout=30) as response:
