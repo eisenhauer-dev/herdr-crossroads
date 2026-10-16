@@ -3,8 +3,8 @@
 This process prepares reviewable versioned Linux assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The current preparation version is `0.0.2`. The planned public installation,
-update and return test uses `0.0.1 → 0.0.2 → 0.0.1`, with each version built and
+The current test version is `0.0.2`. The completed public installation,
+update and return test used `0.0.1 → 0.0.2 → 0.0.1`, with each version built and
 checked independently. Only after Linux acceptance is `0.1.0` planned as the first
 regular Linux release. Test publications should be marked as GitHub prereleases;
 their exact commits, tags and assets still require separate approval. A GitHub
@@ -20,9 +20,33 @@ with the exact four assets recorded in
 public CLI-install and pinned native single-version tests passed; all four public
 downloads matched the approved hashes, and
 [main CI run 38871442877](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38871442877)
-passed. The actual install/update/return cycle remains unrun. The fresh
-[local 0.0.2 build and artifact verification](builds.md) passed; publication and
-public-cycle acceptance remain pending. No regular 0.1.0 release is prepared here.
+passed. Reviewed source `c24df0876dae2a219bb833695829f7dc99433ae2` was subsequently
+published as the retained non-latest
+[v0.0.2 prerelease](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.0.2),
+with exactly four [reviewed clean CI assets](builds.md#current-002-public-pipeline-evidence).
+The local 0.0.2 binary contained personal build paths and was not published.
+Both prereleases remain available with their own four assets. The actual
+[public install/update/return cycle](installation.md#public-installupdatereturn-cycle)
+passed with Herdr 0.9.5 on 2026-10-16: unpinned initial main
+`24e60502de675ca1d6d501ae1cc03421276a03c4`, actual unpinned update to merged main
+`80a15b34bbfc247b26f8f9737e8d84ba76a71e1d` (tree exactly matching reviewed 0.0.2
+source), and pinned return to the 0.0.1 release SHA. The primary manually confirmed
+the authorized transition only after initial navigation, maintaining the required
+external main freezes. Native navigation, notices, no Rust/Cargo, config retention,
+uninstall, owned shutdown and temporary cleanup all passed; receipts are
+`target/public-cycle/acceptance.json` and `target/public-cycle/main-transition.json`.
+
+Both required PR #8 checks passed, including the actual internal-positive source
+policy run. The live fork-negative test was expressly waived, not executed.
+The 0.0.2 Linux gates passed on attempt 2 after an unchanged transport fixture
+failed with `ExecutableFileBusy` rather than expected `Other`; neither assertions
+nor gates changed, and the root cause remains uncertain. The historical policy
+behavior-RED timing gap and glibc DSC-signature limitation remain. Post-merge
+[main CI run 38878662737](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38878662737)
+passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`,
+including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
+all four full PTYs, packaging and upload. No regular 0.1.0 release is approved
+or prepared here.
 
 ## Version and asset contract
 
@@ -37,7 +61,8 @@ The separate [binary installation hook](installation.md) reuses this checker
 without invoking Rust/Cargo. It requires Python 3.11+ standard library only;
 an explicit trusted local asset directory selects offline installation, otherwise
 the prepared route downloads the exact version from GitHub Releases. Publication
-of 0.0.2 and the full public acceptance cycle remain pending.
+of both test prereleases and execution of the full public cycle are recorded
+above; this verified test cycle is not regular-release approval.
 
 For `0.0.2`, the only supported target produces:
 
@@ -327,7 +352,8 @@ are distinct from the retained historical two-member evidence. This remains
 local preparation, not publication or final release approval. Those native results
 precede dual-profile notice regeneration. The
 [subsequent local native acceptance](installation.md#dual-profile-local-acceptance)
-passed against the repackaged dual-profile asset; public acceptance is still pending.
+passed against the repackaged dual-profile asset. Public acceptance was still
+pending at that historical checkpoint; the later real cycle is recorded above.
 
 ## Public CI and later publication remain separate
 
@@ -358,8 +384,8 @@ binary. The later [0.0.1 public pipeline](builds.md#current-001-public-pipeline-
 passed the new Ubuntu builder gate and matching system/link provenance checks.
 The [release-procedure local trial](installation.md#pipeline-asset-local-trial)
 passed using that public CI artifact, not a released asset or public download-mode
-installation. The later 0.0.1 publication and pinned public tests are recorded above;
-0.0.2 publication and full public acceptance remain outstanding. Before any tag, push, or publication, obtain
+installation. The later publications of both test prereleases and the completed
+real public cycle are recorded above. Before any new tag, push, or publication, obtain
 explicit approval for that action and the reviewed version/ref/assets. A proposed
 tag convention is `v<version>` (for example `v0.0.2`); no tag is created here.
 
@@ -372,11 +398,13 @@ fixture. The earlier local-only-notice four-member asset passed both 0.9.5 nativ
 2026-10-15, including notice retention and version-specific registration/uninstall
 checks. Neither run proves new-runtime upgrade compatibility or the separate
 Herdr update command. The separate pinned public 0.0.1 tests passed as recorded above;
-no full-cycle acceptance or actual GitHub release automation is claimed.
+the later full public cycle passed separately. No GitHub release automation or
+regular-release approval is claimed.
 The opt-in real-Herdr sandbox test is main-owned, not a routine release command.
 The public source is `eisenhauer-dev/herdr-crossroads`; public repository
 access was verified on 2026-10-15. Public CI execution and upload are verified;
-0.0.2 tag/asset availability, the public install/update/return cycle, and final
-release approval remain open. The pipeline-asset local trial does not close those
-gates. Downloaded pipeline-artifact verification is
+0.0.2 tag/assets and the actual public cycle were subsequently verified as recorded
+above. Neither the verified test cycle nor the pipeline-asset local trial constitutes
+regular-release approval.
+Downloaded pipeline-artifact verification is
 recorded in the build guide; it is not a released-asset installation test.
