@@ -85,7 +85,9 @@ and [synthetic previews](docs/media/README.md).
 
 Crossroads 0.0.1 is the Linux-only test-version preparation. The planned public
 acceptance sequence is 0.0.1 → 0.0.2 → 0.0.1, before 0.1.0 as the first regular
-Linux release; no matching public test assets are available yet.
+Linux release; no matching public Release assets are available yet. The
+[verified 0.0.1 CI artifact](docs/builds.md#current-001-public-pipeline-evidence)
+is build evidence, not a published Release.
 Local verification is on Linux x86_64;
 macOS, Windows, other architectures, SSH sessions, and every outer-terminal/key
 combination are not live-verified. The theme palette is based on Herdr v0.9.1;
@@ -130,7 +132,7 @@ empty/relative values fail without network fallback. It never compiles. Linking 
 hook, so the source build-then-link route above is unchanged. See
 [binary installation](docs/installation.md) for safety checks, requirements,
 and isolated tests. **Public installation is prepared, not yet available or
-accepted:** no matching tag/Release exists as of 2026-10-15. Once published and
+accepted:** no matching tag/Release exists as of 2026-10-16. Once published and
 accepted, the pinned route is
 `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.1`;
 this is not currently a runnable public install instruction.
