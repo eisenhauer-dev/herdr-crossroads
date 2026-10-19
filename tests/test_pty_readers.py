@@ -26,10 +26,11 @@ import time
 sys.dont_write_bytecode = True
 sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
 from pty_render import frame
-from pty_keymaps import read_until, read_frame, drain, read_search_escape
+from pty_keymaps import DrawReader, read_until, read_frame, drain, read_search_escape
 reader, writer = os.pipe()
 os.write(writer, {payload!r})
 os.close(writer)
+output = DrawReader(reader)
 expected_error = {error!r}
 try:
     try:
@@ -62,13 +63,13 @@ finally:
         self.check_reader("read_until(reader, b'end')", b"end", b"end")
 
     def test_keymap_frame_eof_after_marker(self):
-        self.check_reader("read_frame(reader)", b"frame\x1b[?25h", "frame\x1b[?25h")
+        self.check_reader("read_frame(output)", b"frame\x1b[?25h", "frame\x1b[?25h")
 
     def test_keymap_expected_frame_eof(self):
-        self.check_reader("read_frame(reader, expected=lambda raw: False)", error="EOF")
+        self.check_reader("read_frame(output, expected=lambda raw: False)", error="EOF")
 
     def test_escape_frame_eof(self):
-        self.check_reader("read_search_escape(reader, time.monotonic(), 'codex', [])", b"\x1b[H", error="EOF")
+        self.check_reader("read_search_escape(output, time.monotonic(), 'codex', [])", b"\x1b[H", error="EOF")
 
     def test_drain_eof(self):
         self.check_reader("drain(reader)", b"tail\x1b[?25h", b"tail\x1b[?25h")
@@ -117,7 +118,7 @@ class EscapeObservationTests(unittest.TestCase):
         try:
             os.write(reader, b"\x1b")
             lines, _ = pty_keymaps.screen(self.frame(help_search=help_search).decode(), 80, 15)
-            return pty_keymaps.read_search_escape(reader, start, "codex", lines)
+            return pty_keymaps.read_search_escape(pty_keymaps.DrawReader(reader), start, "codex", lines)
         finally:
             stop.set()
             worker.join(timeout=1)
@@ -165,7 +166,7 @@ class EscapeObservationTests(unittest.TestCase):
                      patch.object(pty_keymaps.select, "select", return_value=([123], [], [])), \
                      patch.object(pty_keymaps.os, "read", side_effect=read), \
                      self.assertRaisesRegex(AssertionError, "Esc resolved before its deadline"):
-                    pty_keymaps.read_search_escape(123, 0.0, "codex", lines)
+                    pty_keymaps.read_search_escape(pty_keymaps.DrawReader(123), 0.0, "codex", lines)
 
     def test_fast_send_waits_for_matching_complete_selection_without_quiet_gap(self):
         reader, writer = socket.socketpair()
@@ -173,6 +174,7 @@ class EscapeObservationTests(unittest.TestCase):
         self.addCleanup(writer.close)
         popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
         popup.master, popup.width, popup.height = reader.fileno(), 80, 15
+        popup.output = pty_keymaps.DrawReader(popup.master)
         intermediate = self.frame(False).replace(b"  > codex", b"  > Claude")
         final = self.frame(False)
         writer.sendall(intermediate + final)
@@ -187,6 +189,71 @@ class EscapeObservationTests(unittest.TestCase):
             actual = popup.send(b"\x1b\x1b[A", expected=lambda raw: pty_keymaps.screen(raw, 80, 15)[0] == expected)
         self.assertEqual(actual, expected)
         self.assertEqual(writer.recv(4), b"\x1b\x1b[A")
+
+    def test_expected_frame_batches_ready_bytes_without_consuming_the_next_draw(self):
+        reader, writer = socket.socketpair()
+        self.addCleanup(reader.close)
+        self.addCleanup(writer.close)
+        first, second = self.frame(), self.frame(False)
+        output = pty_keymaps.DrawReader(reader.fileno())
+        writer.sendall(first + second)
+        read = os.read
+        calls = []
+
+        def counted_read(fd, size):
+            calls.append(size)
+            return read(fd, size)
+
+        with patch.object(pty_keymaps.os, "read", side_effect=counted_read):
+            raw = pty_keymaps.read_frame(output, expected=lambda raw: True)
+        self.assertEqual(raw, first.decode())
+        self.assertLessEqual(len(calls), 2, "ready frame bytes must not require per-byte system calls")
+        self.assertEqual(pty_keymaps.read_frame(output, expected=lambda raw: True), second.decode())
+
+    def test_buffered_early_navigation_cannot_gain_a_late_receive_timestamp(self):
+        reader, writer = socket.socketpair()
+        self.addCleanup(reader.close)
+        self.addCleanup(writer.close)
+        output = pty_keymaps.DrawReader(reader.fileno())
+        writer.sendall(self.frame() + self.frame(False))
+        start = time.monotonic()
+        pty_keymaps.read_frame(output, expected=lambda raw: True)
+        lines, _ = pty_keymaps.screen(self.frame().decode(), 80, 15)
+        # Processing a previous draw cannot make read-ahead navigation look timely.
+        with patch.object(pty_keymaps.time, "monotonic", return_value=start + 0.105), \
+             self.assertRaisesRegex(AssertionError, "Esc resolved before its deadline"):
+            pty_keymaps.read_search_escape(output, start, "codex", lines)
+
+    def test_complete_sequence_delayed_by_timeout_is_not_observed_as_immediate(self):
+        reader, writer = socket.socketpair()
+        self.addCleanup(reader.close)
+        self.addCleanup(writer.close)
+        popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
+        popup.master, popup.width, popup.height = reader.fileno(), 80, 15
+        popup.output = pty_keymaps.DrawReader(popup.master)
+        final = self.frame(False)
+        errors = []
+
+        def emit():
+            try:
+                self.assertEqual(writer.recv(4), b"\x1b\x1b[A")
+                time.sleep(0.100)
+                writer.sendall(final)
+            except BaseException as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=emit)
+        worker.start()
+        try:
+            start = time.monotonic()
+            popup.send(b"\x1b\x1b[A", expected=lambda raw: raw == final.decode())
+            elapsed = time.monotonic() - start
+            self.assertGreaterEqual(elapsed, 0.095, "a real 100-ms wait must still fail the fast-input bound")
+        finally:
+            worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+            if errors:
+                raise errors[0]
 
     def test_coalesced_search_and_select_are_checked_separately(self):
         raw = self.observe([(0.105, self.frame() + self.frame(False))])

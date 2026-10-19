@@ -86,18 +86,23 @@ documentation verification.
 
 ### Experimental macOS checks
 
-The separate `.github/workflows/macos.yml` prepares native checks for Apple
+The separate `.github/workflows/macos.yml` runs native checks for Apple
 Silicon (`macos-15`) and Intel (`macos-15-intel`). These are versioned standard
 [GitHub-hosted runners](https://docs.github.com/actions/reference/runners/github-hosted-runners),
 free for public repositories (documentation checked 2026-10-16), not larger paid
-runners. The existing required `Linux gates` check remains unchanged; preparing
-this workflow does not configure additional required checks or start a CI run.
+runners. The existing required `Linux gates` check remains unchanged; this
+workflow does not configure additional required checks.
 
 The macOS workflow runs formatting, Clippy, Cargo tests, a release build, and all
-four complete PTY harnesses. See [macOS local test preparation](docs/keymaps.md#macos-local-test-preparation-unverified)
-for prerequisites and coverage gaps. Neither architecture has been executed
-as part of this preparation. Passing automated checks would not establish a
-minimum macOS version or replace real Herdr popup, navigation, and focus testing.
+four complete PTY harnesses. At `fa535ba414067bae6df59d6e4394d94149ee0f4b`,
+[macOS run 39223794908](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794908)
+passed on native Apple Silicon and Intel, including all four full PTYs on each;
+the matching [Linux run 39223794899](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794899)
+also passed. See [macOS local verification](docs/keymaps.md#macos-local-verification)
+for prerequisites and coverage gaps. The user waived actual Mac Herdr live
+acceptance on 2026-10-19; that gate is **waived, not passed**. Automated evidence
+does not establish a minimum macOS version or real Herdr popup, navigation, and
+focus behavior. Exact runner OS builds and Python versions are not recorded here.
 The manifest, managed installer, and published binaries remain Linux-only.
 
 ## Optional local pre-commit and pre-push checks
@@ -249,6 +254,64 @@ baseline and reproducible native LLVM measurement. Coverage supplements, never
 replaces, the hard formatting, Clippy, Cargo-test, and complete optimized-release
 PTY gates above.
 
+## Making a change
+
+1. Read the affected module, tests, and [architecture](docs/architecture.md).
+   Keep `main.rs` thin and respect existing module responsibilities.
+2. Keep the change narrowly scoped. For behavior changes, first demonstrate a
+   failing regression, implement the smallest fix, then rerun the focused test.
+   Exercise relevant boundaries, errors, and preserved behavior; never weaken a
+   failing assertion just to get green. Docs-only changes need validation, not
+   invented failing tests.
+3. Reconcile user-facing docs with final implementation and tests. Put detailed
+   behavior in `docs/`, not a per-function API catalog. Avoid speculative options,
+   compatibility promises, or unmeasured performance claims.
+4. Run formatting, Clippy with warnings denied, Cargo tests, and applicable PTY
+   gates. Review your diff for unrelated changes and unintended generated/config
+   files.
+5. In a contribution, explain the problem, scope, source evidence, test commands
+   and results, limitations, and any unexecuted examples. Report toolchain and
+   platform details for input/rendering regressions.
+
+For bug reports, include expected/observed behavior, minimal reproduction steps,
+Herdr/plugin versions, terminal and content dimensions, OS/architecture, and
+whether the issue occurs with default configuration. Share only a minimal,
+sanitized configuration or fixture; do not post sockets, private workspace names,
+credentials, or full personal config/logs.
+
+## Safety and ownership
+
+Crossroads stays navigation-only. It must not install/update during opening or
+search, rewrite native prefix `g`/`t`, or change other plugins. Only the explicitly
+invoked `setup-keybind` action may append the agreed host launch binding; install,
+startup and popup runtime must not alter Herdr config. Preserve conflicts and
+existing config bytes; see [setup safeguards](docs/installation.md#keyboard-launch-setup).
+Tests should use isolated fake executables and sockets, never a live session by
+accident. Keep plugin configuration precedence, strict validation, exact pane-ID
+focus, terminal-control sanitization, and terminal restoration covered when
+touching those areas. Theme persistence is plugin-owned and explicitly initiated
+by the user; see [themes](docs/themes.md) for its write/delete contract.
+
+The project uses the [MIT license](LICENSE).
+Binary archives and installed payloads must retain `LICENSE` and
+`THIRD-PARTY-NOTICES.md`. The existing `v0.1.0` release retains its original HTML;
+the installer accepts only its pinned, full-text-equivalent notice bytes.
+Dependency/toolchain changes require reviewing and
+regenerating the exact-version notice inventory; see
+[notice maintenance and final link-map verification](docs/releases.md#license-inventory-and-verification).
+Run `python3 tests/test_notices.py` on the actual packaging builder with cached
+locked dependencies, installed Rust documentation, GCC, `dpkg-query`, and system
+copyright/full-license files to reproduce the full notice artifact, including
+package versions and startup/runtime object hashes. The build
+helper checks manifest/lock/toolchain staleness and matches system candidate hashes,
+package/source versions and complete installed notice bytes against a reviewed
+builder profile. This does not establish actual final ELF/link contributions.
+Exact glibc startup
+exception headers and archive provenance are checked in under `LICENSES/` and
+embedded in the generated notices. Keep source versions matched, review the final
+binary/link map, and repack/reverify assets after notice changes; see the linked
+evidence above.
+
 ## Automated checks
 
 `.github/workflows/ci.yml` defines one stable **Linux gates** job for pushes to
@@ -319,6 +382,12 @@ and an up-to-date branch before merging into `main`, including for administrator
 see the [contribution workflow](#public-contribution-workflow) for the accepted
 check-conclusion limits. Local hooks alone cannot enforce this protection.
 No private-repository Actions execution is claimed or required.
+
+## Policy implementation and verification record
+
+The following retains the dated policy evidence and implementation details;
+start with the [contribution workflow](#public-contribution-workflow) and
+[change procedure](#making-a-change) for current contributor guidance.
 
 ### Active PR source merge gate
 
@@ -398,61 +467,3 @@ edits were fully reverted, restoring the file tree of the already-green
 [main run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190),
 and the PR was manually closed without merging. No protection rule was changed.
 This verification did not create a fork PR or test `skipped`/`neutral` conclusions.
-
-## Making a change
-
-1. Read the affected module, tests, and [architecture](docs/architecture.md).
-   Keep `main.rs` thin and respect existing module responsibilities.
-2. Keep the change narrowly scoped. For behavior changes, first demonstrate a
-   failing regression, implement the smallest fix, then rerun the focused test.
-   Exercise relevant boundaries, errors, and preserved behavior; never weaken a
-   failing assertion just to get green. Docs-only changes need validation, not
-   invented failing tests.
-3. Reconcile user-facing docs with final implementation and tests. Put detailed
-   behavior in `docs/`, not a per-function API catalog. Avoid speculative options,
-   compatibility promises, or unmeasured performance claims.
-4. Run formatting, Clippy with warnings denied, Cargo tests, and applicable PTY
-   gates. Review your diff for unrelated changes and unintended generated/config
-   files.
-5. In a contribution, explain the problem, scope, source evidence, test commands
-   and results, limitations, and any unexecuted examples. Report toolchain and
-   platform details for input/rendering regressions.
-
-For bug reports, include expected/observed behavior, minimal reproduction steps,
-Herdr/plugin versions, terminal and content dimensions, OS/architecture, and
-whether the issue occurs with default configuration. Share only a minimal,
-sanitized configuration or fixture; do not post sockets, private workspace names,
-credentials, or full personal config/logs.
-
-## Safety and ownership
-
-Crossroads stays navigation-only. It must not install/update during opening or
-search, rewrite native prefix `g`/`t`, or change other plugins. Only the explicitly
-invoked `setup-keybind` action may append the agreed host launch binding; install,
-startup and popup runtime must not alter Herdr config. Preserve conflicts and
-existing config bytes; see [setup safeguards](docs/installation.md#keyboard-launch-setup).
-Tests should use isolated fake executables and sockets, never a live session by
-accident. Keep plugin configuration precedence, strict validation, exact pane-ID
-focus, terminal-control sanitization, and terminal restoration covered when
-touching those areas. Theme persistence is plugin-owned and explicitly initiated
-by the user; see [themes](docs/themes.md) for its write/delete contract.
-
-The project uses the [MIT license](LICENSE).
-Binary archives and installed payloads must retain `LICENSE` and
-`THIRD-PARTY-NOTICES.md`. The existing `v0.1.0` release retains its original HTML;
-the installer accepts only its pinned, full-text-equivalent notice bytes.
-Dependency/toolchain changes require reviewing and
-regenerating the exact-version notice inventory; see
-[notice maintenance and final link-map verification](docs/releases.md#license-inventory-and-verification).
-Run `python3 tests/test_notices.py` on the actual packaging builder with cached
-locked dependencies, installed Rust documentation, GCC, `dpkg-query`, and system
-copyright/full-license files to reproduce the full notice artifact, including
-package versions and startup/runtime object hashes. The build
-helper checks manifest/lock/toolchain staleness and matches system candidate hashes,
-package/source versions and complete installed notice bytes against a reviewed
-builder profile. This does not establish actual final ELF/link contributions.
-Exact glibc startup
-exception headers and archive provenance are checked in under `LICENSES/` and
-embedded in the generated notices. Keep source versions matched, review the final
-binary/link map, and repack/reverify assets after notice changes; see the linked
-evidence above.

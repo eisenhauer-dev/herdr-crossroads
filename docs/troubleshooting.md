@@ -8,11 +8,13 @@ Key names below are defaults; use your effective [keymaps](keymaps.md) if change
 
 The manifest starts `./target/release/herdr-crossroads` from the plugin root;
 a source-only clone is not ready to launch. Either build from source or use the
-[local binary installer](installation.md) with matching trusted versioned assets.
-The manifest's Python build hook installs local assets without Rust/Cargo or
-downloads; linking does not execute that hook. Keep the plugin root and executable
-in place. The selected future source is `eisenhauer-dev/herdr-crossroads`, not an
-established public release or download endpoint.
+[binary installer](installation.md). The manifest's Python build hook needs no
+Rust/Cargo: by default it downloads the matching version's archive and checksum
+from `https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v<VERSION>/`.
+An explicit `CROSSROADS_ASSET_DIR` selects trusted local assets instead, with no
+network fallback; linking does not execute the hook. Keep the plugin root and
+executable in place. The regular `v0.1.0` release and test prereleases are public;
+see [public installation evidence](installation.md#regular-010-public-installation).
 
 These read-only checks belong in the **linked checkout root**, in a shell inside
 the intended running Herdr session:
@@ -36,15 +38,20 @@ Building writes `target/`; linking registers the plugin globally for your user
 and creates plugin directories. Neither is a read-only diagnostic. Do not run
 install/update/uninstall commands merely to check registration.
 
-For managed installation, an absent `CROSSROADS_ASSET_DIR`, mismatched versions,
-missing archives/checksums, or rejected hashes/ELF headers prevents registration.
-Do not bypass validation or fall back to an untrusted download. Close Crossroads
-before reinstalling a reviewed ref or uninstalling: uninstall does not terminate
-an already running popup. Managed uninstall removes its checkout but retains
-plugin config/state; local-link uninstall leaves the source checkout intact.
+For managed installation, an unset `CROSSROADS_ASSET_DIR` selects the public
+download route. A supplied value must be a nonempty absolute trusted directory
+containing the matching version's archive and checksum. Invalid overrides,
+download failures, mismatched versions, missing archives/checksums, or rejected
+hashes/ELF headers prevent registration. Do not bypass validation or fall back to
+an untrusted download. Close Crossroads before reinstalling a reviewed ref or
+uninstalling: uninstall does not terminate an already running popup. Herdr 0.9.3
+managed uninstall removes its checkout; 0.9.5 clears registration but can retain
+server-pinned generations until consumers exit, with later reclamation untested.
+Both retain plugin config/state; local-link uninstall leaves the source checkout
+intact. See [native lifecycle details](installation.md#native-distribution-acceptance).
 The isolated Herdr 0.9.3 install/search/focus/replacement/version-return/uninstall
 test [passed locally](installation.md#native-distribution-acceptance). It does
-not establish public installation or personal-host setup; the earlier fake-API
+not itself establish public installation or personal-host setup; the earlier fake-API
 CLI tests retain their narrower scope.
 
 ## The open command returns, but no popup is visible
