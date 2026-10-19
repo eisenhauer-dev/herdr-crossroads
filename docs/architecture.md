@@ -3,13 +3,24 @@
 Crossroads is a Rust terminal-popup process, not an embedded Herdr extension.
 Herdr launches the manifest's `crossroads` pane entrypoint with the plugin root
 as working directory and supplies runtime environment context. The manifest
-declares Linux, minimum Herdr 0.9.1, popup placement, and a release-binary path;
+declares Linux/macOS, minimum Herdr 0.9.1, popup placement, and a release-binary path;
 it declares a Python binary-installer build hook and the global `setup-keybind`
 action. Managed installation invokes the build hook; linking a source checkout
 does not. Only explicit invocation of `setup-keybind` may append the agreed host
 launch binding. Opening or searching the popup invokes neither path and does not
 install/update binaries or change host configuration. There are no startup or
 event hooks. See [installation and setup safeguards](installation.md).
+
+The checkout prepares unreleased 0.2.0 for Linux x86_64 glibc and macOS 15.0+
+ARM64/Intel; published 0.1.0 stays Linux-only. Installation selects the running
+process architecture, validates ELF/Mach-O and archive/checksum/notice contracts,
+and places the payload at the same entrypoint path without Cargo. Native release
+helpers bind a fresh final link/map to the exact four-PTY-tested executable;
+Darwin ad-hoc signing is link-time only, with no Developer ID or notarization.
+CI's real-Herdr local-fixture install gate then tests that installed binary before
+artifact upload, without a server/popup. [Current three-platform distribution CI](builds.md#current-020-three-platform-ci-evidence)
+passed; independent review and final acceptance remain pending. The macOS live
+acceptance waiver is not an automated-installation waiver.
 
 ## Module responsibilities
 

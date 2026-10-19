@@ -65,9 +65,11 @@ jobs:
             "python3 tests/test_install_binary.py",
             "python3 tests/test_setup_keybind.py",
             "python3 tests/test_distribution_helpers.py",
+            "python3 tests/test_release_install_helpers.py",
             "sh scripts/build-linux.sh",
+            'python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"',
         ]
-        actual = re.findall(r"^\s+(?:run: )?((?:cargo |python3 tests/|sh scripts/).*)$", self.workflow, re.M)
+        actual = re.findall(r"^\s+(?:run: )?((?:cargo |python3 (?:-u )?tests/|sh scripts/).*)$", self.workflow, re.M)
         self.assertEqual(actual, ["cargo --version", *commands])
         self.assertNotIn("--input-protocol", self.workflow)
         self.assertNotIn("tests/test_distribution.py", self.workflow)
@@ -105,6 +107,17 @@ jobs:
         self.assertNotIn("target/builds/*", self.workflow)
         self.assertNotIn("if: always()", self.workflow)
         self.assertNotIn("target/release/", self.workflow)
+
+    def test_real_installation_precedes_upload_with_hash_pinned_herdr(self):
+        reader = "python3 -B -m unittest discover -s tests -p test_pty_readers.py"
+        self.assertIn(reader, self.workflow)
+        self.assertLess(self.workflow.index(reader), self.workflow.index("sh scripts/build-linux.sh"))
+        self.assertLess(self.workflow.index("Install and test packaged binary through real Herdr"),
+                        self.workflow.index("Upload tested Linux build"))
+        self.assertIn("https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64", self.workflow)
+        self.assertIn("14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d", self.workflow)
+        self.assertIn('assert hashlib.sha256(data).hexdigest()', self.workflow)
+        self.assertIn('with path.open("xb") as output:', self.workflow)
 
 
 if __name__ == "__main__":

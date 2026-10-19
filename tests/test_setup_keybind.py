@@ -22,7 +22,7 @@ class SetupKeybindTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="crossroads-keybind-", dir="/tmp/opencode")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.config = self.root / "config.toml"
         self.env = {"HOME": str(self.root / "home"), "PATH": "",
                     "HERDR_CONFIG_PATH": str(self.config), "PYTHONDONTWRITEBYTECODE": "1"}

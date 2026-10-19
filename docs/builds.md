@@ -1,15 +1,132 @@
-# Tested Linux build artifacts
+# Build artifacts and verification
 
-The local build helper and CI job support exactly
-`x86_64-unknown-linux-gnu`. Artifacts are version-named for local release
+The Linux helper retains `x86_64-unknown-linux-gnu`; the macOS helper prepares
+`aarch64-apple-darwin` and `x86_64-apple-darwin`. Artifacts are version-named for local release
 preparation; building does not publish releases. The build helper makes no tags, publication,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-The current version is `0.1.0`, the first regular Linux release, published as
+The checkout prepares **0.2.0, not yet released**. The latest published version is
+`0.1.0`, the first regular Linux release, published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Historical local/CI `0.1.0` artifacts below were not reused or renamed.
+
+## macOS 0.2.0 preparation
+
+Both Apple Silicon and Intel require **macOS 15.0+**. From the repository root on
+each native architecture, `sh scripts/build-macos.sh` selects the corresponding
+explicit Rust target and sets `MACOSX_DEPLOYMENT_TARGET=15.0`. It requires native
+Rust/Cargo **1.99.0**, Python 3.11+, a POSIX shell, `stty`, Git, Apple command-line
+tools/SDK (`xcrun`, clang, `lipo`, `otool`, `codesign`), cached locked dependencies
+and Rust documentation, and the owned writable `/tmp/opencode` PTY directory.
+It installs no tooling. Rosetta is rejected as a release builder.
+
+The helper validates versions/notices, forces a fresh final link, verifies the
+binary/evidence hash binding, then runs all four full PTYs against that exact
+explicit-target executable. Link-time ad-hoc signing occurs **before** testing;
+there is no post-test signing, stripping or other binary mutation. These are
+**not Developer ID signed or notarized** assets; ad-hoc signing and SHA256 do not
+authenticate a publisher or establish Gatekeeper acceptance.
+
+For each target, output under `target/builds/` uses
+`herdr-crossroads-0.2.0-<target>` with `.tar.gz`, `.tar.gz.sha256`,
+`.provenance.json`, and `.link.map` suffixes. The archive has the same four-member
+contract as Linux, normalized root ownership and modes 0755 (binary)/0644 (others).
+Handled build, notice, inspection, PTY or packaging failures remove the selected
+version's outputs; unrelated versions remain. Never infer success from stale files.
+
+Darwin provenance records the actual Apple link map/object inventory, link command
+and diagnostics, native OS/toolchain/SDK versions, `lipo`/`otool` inspections,
+ad-hoc signature display/verification, and bound binary/map hashes. The collector
+preserves opaque non-UTF-8 Apple symbol bytes while normalizing repository paths;
+the recorded map hash covers the resulting bytes. Object validation remains strict.
+The collector
+requires a thin native executable with `LC_BUILD_VERSION` minimum **15.0**, accepts
+only project/dependency/Rust-library map inputs, linker-synthesized entries,
+and Rust's generated `release/deps/rustcXXXXXX/symbols.o` when its canonical
+target-specific path also appears in the same link's trace. The temporary suffix
+must be six ASCII alphanumeric characters; other nested objects remain rejected.
+Rust generates this symbol-reference object in
+[`link.rs` at the toolchain source commit](https://github.com/rust-lang/rust/blob/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/compiler/rustc_codegen_ssa/src/back/link.rs#L2621-L2626).
+SDK `.tbd` entries are recorded separately in `sdk_stub_inputs`, with canonical
+paths, SHA256 hashes and matching trace paths from the same link. These dynamic
+interfaces must resolve inside the selected SDK and have UTF-8 TAPI v4 signatures;
+this is not a full YAML validator. Unknown formats, binary impostors and escaping
+symlinks fail closed. The distinction follows the
+[LLVM 20.1.8 text-stub format](https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/llvm/lib/TextAPI/TextStub.cpp#L153-L156):
+SDK interfaces are not statically incorporated implementation code.
+The collector allows only the external OS dylibs `/usr/lib/libSystem.B.dylib` and
+`/usr/lib/libiconv.2.dylib`. Unknown static
+inputs, dylibs or map layouts fail for review. OS dylibs/SDK are not bundled;
+these records are not a universal attribution or licensing verdict.
+
+Both native architectures at `fdb0988` reported exactly these install names in
+[run 39263352762](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39263352762).
+The locked [libc 0.2.189 Apple declarations](https://github.com/rust-lang/libc/blob/0.2.189/src/unix/bsd/apple/mod.rs#L5251-L5265)
+explicitly link `iconv` outside `rustc-dep-of-std`. This is an existing native
+dependency, not a new bundled library. Apple's published
+[libiconv-107 metadata](https://github.com/apple-oss-distributions/libiconv/blob/libiconv-107/libiconv.plist)
+and [license texts](https://github.com/apple-oss-distributions/libiconv/blob/libiconv-107/libiconv.txt)
+identify BSD terms, not GNU libiconv's LGPL terms. That source tag is not a verified
+revision match for the runner's OS library. No OS library implementation is included
+in the four-member archive; the static-input gate remains unchanged. The existing
+Cargo/Rust notices therefore remain unchanged rather than attributing an unverified
+Apple source revision as bundled code.
+
+`third-party-notices.py --check --target <target>` checks the actual offline,
+locked normal/build Cargo graph against the existing full-text notices and Rust
+standard-library attribution. Linux system profiles remain conservatively retained;
+Darwin does not query GCC/dpkg or pretend those Linux objects were linked.
+The final map and SDK/system-library evidence still require artifact-specific review.
+
+## Current 0.2.0 three-platform CI evidence
+
+On 2026-10-19, [Linux run 39279008880](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39279008880)
+and both native Apple Silicon/Intel jobs in [macOS run 39279009119](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39279009119)
+passed every step, including the full PTYs, native packaging, isolated real-Herdr
+0.9.5 install/reinstall and negative/config-retention checks, all four full PTYs
+against each installed binary, and exact four-asset uploads. Each packager tests
+its exact fresh final-link binary with all four full PTYs; macOS additionally
+retains the four original full-PTY steps. These results supersede the distribution
+evidence gap after the earlier `6f91a3f` PTY-only checkpoint. Installation used
+local fixture Git/assets through actual Herdr 0.9.5, not published 0.2.0 downloads
+or a real server/popup; see [installation scope](installation.md#automated-release-installation-gate).
+
+The candidate head is `66c191e36f8733b4374b51c6b785f7bc6e09c109`. GitHub tested
+the PR's synthetic merge `6aed9fa94d5b0881749d7f71afa0bdd86d5e6f86`, with parents
+`5867263348523490a9da20e9cec825c428926fd0` and the candidate head. The owning session
+verified via GitHub's Git commit API that its tree
+`689ffa760bce752101ac04293d4a456a46303af6` matches the local candidate head's tree.
+Both Darwin provenance files record the synthetic merge commit and clean source
+status: this is matching-tree evidence, **not a claim that the head SHA was
+directly built**, nor a prediction or authorization of a future merge SHA.
+
+The owning session downloaded all three targets' four-asset sets under
+`target/ci-evidence/66c191e/{linux,macos}/`. Standard-library verification passed
+external archive SHA256, the four-member contract/internal binary checksum,
+provenance binary/map hash bindings, and byte equality of `LICENSE` and
+`THIRD-PARTY-NOTICES.md` with the checkout. Independent Mach-O byte parsing
+confirmed each native CPU, macOS minimum **15.0**, exactly the two permitted
+system dylib install names above, and a code-signature load command. Native CI's
+signature verification reports valid-on-disk ad-hoc signatures; static checks on
+the Linux host are not native execution or native signature verification.
+
+| Target | Binary SHA256 | Link-map SHA256 |
+| --- | --- | --- |
+| `x86_64-unknown-linux-gnu` | `bfe9106604d5ca2ac6847fd8ea538997bb9fc81ef13422a5ddc451f66d9e9ab0` | `a2359b544cecdcc59aeb1a311e8df2322ac66d730260aa5d47101018f6a83134` |
+| `aarch64-apple-darwin` | `2f5ea68077fea16f208f7b736931abb03959fc7a756c03eaa7a3287e234c5981` | `99fcccb56edcf264e706d5886c812adc109591b31ae8fb390b7bf0de1a6aeec4` |
+| `x86_64-apple-darwin` | `e1cf8526820fc24413ce26e51f5b2f8742f06848f0a1c8c8e40ba0d104971e70` | `33b25d6dd5e2749e2bd80bd2ffd543707ff0be623cfbb7e789a1d837f73d6f79` |
+
+Both Darwin records use Xcode 16.4 / SDK 15.5 and report macOS 15.7.9 (24G830),
+with 15 ARM64 and 16 Intel SDK stub records. This is not a macOS-version test
+matrix or an exact Apple OS-library source-revision match; the libc/libiconv
+attribution limits above remain. Independent combined review has **not** been
+performed and final acceptance is pending. True macOS Herdr live-popup acceptance
+is **waived, not passed**; automated distribution was not waived. No Rosetta
+execution, Developer ID signing/notarization or public 0.2.0 download is proven.
+**0.2.0 is not released**; no release, tag, merge or publication is authorized by
+this evidence. Published 0.1.0 remains the immutable Linux-only Latest release.
 
 ## Build and verify locally
 
@@ -64,13 +181,13 @@ Only after all four full PTYs pass does it package the archive. A successful
 invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
 
 ```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.link.map
 ```
 
-These names use the current regular-release version `0.1.0`, not a fixed literal in the
+These names use the checkout version `0.2.0`, not a fixed literal in the
 helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
@@ -87,8 +204,8 @@ checksums the tar. Checksum entries contain filenames, not checkout paths.
 Checksums detect corruption, not authenticity or publisher identity.
 
 This describes new local/CI builds, not a replacement of the published `v0.1.0`
-assets, which still contain `THIRD-PARTY-NOTICES.html`. The version remains
-`0.1.0`; identical artifact filenames do not imply identical archive bytes.
+assets, which still contain `THIRD-PARTY-NOTICES.html`. They remain immutable;
+new 0.2.0 outputs are separate artifacts.
 Do not publish or replace assets without separate approval. The current installer
 supports that exact historical HTML through the
 [pinned compatibility contract](installation.md#validation-and-failure-behavior).
@@ -165,7 +282,7 @@ this is not evidence of the Ubuntu 24.04 runner's glibc version.
 Verify the archive from the repository root:
 
 ```sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+(cd target/builds && sha256sum -c herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
 ```
 
 After extracting the tar into a separate empty directory, run

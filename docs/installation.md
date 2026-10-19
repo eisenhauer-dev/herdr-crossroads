@@ -1,5 +1,10 @@
 # Binary installation
 
+The checkout prepares **0.2.0, not yet released**, retaining Linux x86_64 glibc
+and adding Apple Silicon/Intel **macOS 15.0+**. Published **0.1.0 remains
+Linux-only and immutable**. Native packaging and isolated real-Herdr installation
+CI passed on all three targets; see [candidate evidence and remaining limits](builds.md#current-020-three-platform-ci-evidence).
+
 Crossroads `0.1.0` is the first regular Linux release, for
 `x86_64-unknown-linux-gnu` only, published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
@@ -49,8 +54,8 @@ The global `setup-keybind` action runs `python3 scripts/setup-keybind.py` from t
 plugin root. Python **3.11+** must still be available on the server's `PATH`.
 Installation/build hooks, startup and opening Crossroads never run this helper;
 only explicit invocation opts into the host-config write. Existing installs need
-the updated checkout/manifest containing the action; the Rust runtime and published
-binary are unchanged, so no new binary release is needed.
+a reviewed checkout/manifest containing the action and its matching binary assets.
+The entrypoint and optional binding remain unchanged for 0.2.0.
 
 **Wait for completion before reloading.** A successful invoke response means the
 action started, not that setup succeeded. Repeat the log command and match the
@@ -159,7 +164,8 @@ unchanged and does not verify the new action end-to-end.
 
 ## Requirements and local use
 
-Use a trusted checkout and trusted asset source on Linux x86_64 with glibc and
+Use a trusted checkout and trusted asset source on Linux x86_64 with glibc or
+macOS 15.0+ (Apple Silicon/Intel), with
 Python **3.11+**, standard library only. An existing `curl` on `PATH` is preferred
 for public downloads; it is optional, and Python's urllib is used only when curl
 is absent. No Rust/Cargo is required to install a prebuilt binary.
@@ -168,12 +174,24 @@ runtime still requires `stty` and a running Herdr session (manifest minimum 0.9.
 Python is an installation/setup/test prerequisite, not a popup runtime dependency.
 No tooling is installed by this helper.
 
-For the current published version, the installer requires:
+For the current checkout, the installer requires the agreed version's archive
+and adjacent checksum for exactly one target:
 
 ```text
-herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz[.sha256]
+herdr-crossroads-0.2.0-aarch64-apple-darwin.tar.gz[.sha256]
+herdr-crossroads-0.2.0-x86_64-apple-darwin.tar.gz[.sha256]
 ```
+
+`[.sha256]` denotes the additional checksum file, not a literal filename.
+Selection uses the **running Python process architecture**, not physical hardware:
+ARM64 selects `aarch64-apple-darwin`; an x86_64 process under Rosetta selects the
+Intel asset. Actual Rosetta execution has **not** been proven. Older or unknown
+macOS versions, unsupported architectures and Linux non-glibc hosts fail closed.
+The macOS release build explicitly targets 15.0 on both architectures; this is an
+approved deployment minimum, not proof of testing every supported OS version.
+macOS assets are link-time ad-hoc signed, **not Developer ID signed or notarized**;
+no Gatekeeper acceptance is claimed. Do not disable system security to install.
 
 The [build helper](builds.md) produces these in `target/builds/`. From the trusted
 checkout, the following **changes the runtime binary**, but does not link it:
@@ -247,9 +265,11 @@ bytes exactly; missing, tampered or malformed notice payloads fail even if the
 outer checksum was recomputed. Older two-member assets are no longer accepted.
 Duplicates, unexpected members,
 path traversal, absolute names, directories, symlinks, and hardlinks fail. No tar
-paths are extracted. The binary must have a little-endian ELF64 x86-64 executable
-header; this sanity check is not proof that it runs, is trustworthy, or supports
-a particular glibc version.
+paths are extracted. Linux requires a little-endian ELF64 x86-64 executable
+header. Darwin requires a thin little-endian Mach-O64 executable with the selected
+CPU and a bounded, unambiguous macOS `LC_BUILD_VERSION`, not iOS/simulator/Catalyst
+or a binary requiring a newer OS than the host. These sanity checks do not prove
+execution, publisher authenticity, signature trust or minimum-runtime compatibility.
 
 The unchanged public `v0.1.0` assets instead contain `THIRD-PARTY-NOTICES.html`.
 For version `0.1.0` only, the current installer accepts that exact four-member
@@ -263,9 +283,9 @@ Markdown rather than HTML. Different HTML, another version, mixed layouts, or
 changed Markdown are rejected; this is not general HTML compatibility. Future
 inventory changes must explicitly reconcile this pin rather than bypass it.
 The old source-SHA-pinned checkout continues using its own HTML installer and
-trusted HTML notices unchanged. No new release or version bump accompanies this
-format conversion; unpinned installation from the changed checkout can still
-install the original public `v0.1.0` archive.
+trusted HTML notices unchanged. The earlier format conversion did not replace
+the public asset. A 0.2.0 checkout instead requires 0.2.0 assets; it cannot silently
+fall back to the public `v0.1.0` archive.
 
 After validation, all three payload files are staged in exclusive temporary
 files in `target/release/`, flushed/synced, then individually atomically replaced:
@@ -306,6 +326,18 @@ was tested separately, as recorded below.
 See [README installation](../README.md#installation) for the explicit source
 clone/build/link alternative.
 
+**Publication order matters:** do not move the default branch to 0.2.0 without
+matching approved assets available, unless a separately approved, controlled
+publication window explicitly handles that gap. Otherwise the normal install
+command fails closed. During preparation, the published Linux fallback is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`.
+There is no published macOS fallback. Close the popup before update/reinstall;
+Herdr 0.9.5's `herdr plugin update herdr-crossroads` follows the installed source
+ref (an unpinned install follows default HEAD). To return to published Linux
+0.1.0, reinstall with `--ref v0.1.0` and its retained matching assets. Prefer a
+reviewed full commit SHA when a mutable tag is insufficient for your trust model.
+Plugin config/state is retained; launch-binding setup stays separately opt-in.
+
 For the retained published test prerelease, the public pinned syntax is
 `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.0.2`
 with `CROSSROADS_ASSET_DIR` absent. Set the absolute local override to use trusted
@@ -340,16 +372,42 @@ Additional primary contracts (Herdr **v0.9.5**, checked 2026-10-15):
 - [Upstream managed-installation and shared-registry fixtures](https://github.com/herdrdev/herdr/blob/v0.9.5/tests/cli/plugins.rs)
 - [Managed generation leases and reclamation](https://github.com/herdrdev/herdr/blob/v0.9.5/src/plugin_installations.rs)
 
+## Automated release installation gate
+
+`tests/test_release_install.py` takes an explicit Herdr 0.9.5 executable and the
+host's packaged archive as positional arguments. CI pins the Herdr download and
+SHA256 separately on Linux, native Apple Silicon and native Intel. This gate
+passed on all three targets in the [current candidate runs](builds.md#current-020-three-platform-ci-evidence);
+independent review and final acceptance remain pending.
+
+It uses temporary HOME/XDG/config paths, a local Git fixture pinned by full commit,
+file-only Git URL rewriting and trusted local assets. Real Herdr installs and
+reinstalls the manifest through the normal managed CLI, checks source identity,
+exact installed binary/notices/modes and config retention, then uninstalls.
+All four full fake-host PTYs run against the **installed binary**; no real Herdr
+server, client or popup starts. Rust/Cargo/rustup are denied on its restricted PATH.
+Negative checks cover wrong architecture/format, both checksums, missing/extra/
+unsafe/nonregular members, tampered notices, missing assets, simulated download
+failure and symlink destinations while preserving the previous executable.
+The optional setup helper is checked only against owned fixture config.
+
+This tests local-asset installation/distribution, not public Crossroads release
+downloads, a new-version update cycle, Rosetta execution or live popup routing.
+`tests/test_release_install_helpers.py` checks fixture/checksum construction only.
+Actual macOS Herdr live acceptance was **waived, not performed**; automated
+installation/distribution was **not waived**. Public release-asset downloading
+requires a later separately approved gate after manual publication.
+
 ## Focused verification
 
 From the repository root, `python3 tests/test_install_binary.py` runs isolated
-standard-library tests with header-only synthetic ELF bytes. It covers exact
+standard-library tests with synthetic ELF/Mach-O bytes. It covers exact
 version selection, mocked pinned HTTPS downloads and fixture curl subprocesses,
 curl preference despite Python strict-TLS errors, absent-curl TLS failure,
 required curl security arguments, no fallback on curl failures/unsupported options,
 unknown-length bounded output and child/pipe cleanup, missing assets/network errors,
 download/expansion limits, redirect transport/credential rejection, checksums,
-malformed/member attacks, host/ELF rejection,
+malformed/member attacks, host/ELF/Mach-O rejection,
 symlink rejection, and prior-binary preservation on validation/staging/replace
 failures. No Herdr or Rust command is invoked and nothing is installed in the
 live checkout. Curl transport/redirect policy is checked through its arguments,

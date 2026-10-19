@@ -18,6 +18,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NoticeTests(unittest.TestCase):
+    def test_darwin_graphs_are_covered_by_verbatim_checked_in_inventory(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        check = generator.get("check_darwin")
+        self.assertIsNotNone(check, "Darwin requires an explicit licensing gate, not Linux gcc/dpkg")
+        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin"]:
+            with patch.dict(check.__globals__, installed_system=lambda: self.fail("Darwin must not use Linux gcc/dpkg")):
+                check(target)
+
+    def test_darwin_notice_gate_rejects_missing_attribution_unknown_graph_or_rust_drift(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        check = generator["check_darwin"]
+        original = generator["command"]
+        for failure in ["crate", "rust", "graph"]:
+            def command(*args):
+                result = original(*args)
+                if failure == "rust" and args == ("rustc", "--version"):
+                    return result.replace("1.99.0", "1.99.1")
+                if failure == "graph" and args[:2] == ("cargo", "tree"):
+                    return result + "\nunreviewed-crate v1.0.0\n"
+                if failure == "crate" and args[:2] == ("cargo", "metadata"):
+                    data = json.loads(result)
+                    for package in data["packages"]:
+                        if package["name"] == "serde_json":
+                            package["version"] = "0.0.0"
+                    return json.dumps(data)
+                return result
+            with self.subTest(failure=failure), patch.dict(check.__globals__, command=command):
+                with self.assertRaises(ValueError):
+                    check("aarch64-apple-darwin")
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            check("unknown-apple-darwin")
+
+    def test_darwin_cli_runs_explicit_target_gate(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        with patch.dict(generator["main"].__globals__, check_darwin=lambda target: self.assertEqual(target, "aarch64-apple-darwin")):
+            with patch.object(sys, "argv", ["third-party-notices.py", "--check", "--target", "aarch64-apple-darwin"]):
+                generator["main"]()
+
     def test_published_html_requires_exact_version_and_equivalent_trusted_markdown(self):
         from test_install_binary import InstallBinaryTests
         fixture = InstallBinaryTests()

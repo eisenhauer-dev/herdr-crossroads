@@ -168,6 +168,31 @@ def assert_help_frame(raw, width=80, height=15, searching=False):
 NOTICE_END = b"  Press Enter/Esc/q to close."
 
 
+def assert_terminal_restored(master, slave, saved, active, key, output):
+    actual = termios.tcgetattr(slave)
+    if actual == saved:
+        return
+    # The cursor marker precedes stty restoration. Collect any later error output
+    # only after child.wait(), without waiting or retrying the attribute check.
+    tail = bytearray()
+    while select.select([master], [], [], 0)[0]:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            break
+        if not chunk:
+            break
+        tail.extend(chunk)
+    names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
+    changed = {name: (before, after) for name, before, after in zip(names, saved, actual) if before != after}
+    assert actual == saved, (f"terminal restoration failed: key={key!r} "
+                             f"platform={sys.platform}/{os.uname().machine} python={sys.version} "
+                             f"changed={changed!r} saved={saved!r} active={active!r} actual={actual!r} "
+                             f"output={output!r} post_exit_output={bytes(tail)!r}")
+
+
 def default_footer_lines(width, mode="select", table=False):
     # Independent expected effective default identities, all visible without paging.
     text = {
@@ -212,7 +237,7 @@ def assert_notice_style(raw):
 
 
 def search_cursor_cases(binary):
-    from pty_keymaps import Popup
+    from pty_keymaps import Popup, read_frame
 
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cursor-") as temporary:
         directory = Path(temporary)
@@ -223,20 +248,44 @@ def search_cursor_cases(binary):
         for width, height in ((80, 15), (142, 30)):
             for mode in ("Help", "Search"):
                 budget = width - 4 - len(mode) - 1
-                for query, expected_x in (("", 10), ("abc", 13), ("abc  ", 15),
-                                          ("x" * 200, 2 + budget - 1),
-                                          ("界" * 100, 2 + 8 + 2 * ((budget - 2 - 8) // 2) + 1)):
+                wide_count = (budget - 2 - 8) // 2
+                # screen() retains a blank continuation cell after wide glyphs.
+                for query, expected_x, visible_query in (
+                    ("", 10, ""), ("abc", 13, "abc"), ("abc  ", 15, "abc  "),
+                    ("x" * 200, 2 + budget - 1, "x" * (budget - 10) + "…"),
+                    ("界" * 100, 2 + 8 + 2 * wide_count + 1, "界 " * wide_count + "…"),
+                ):
                     popup = Popup(binary, directory, width=width, height=height)
                     try:
                         if mode == "Help":
                             popup.send(b"?")
                         popup.send(b"/")
+                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(mode)) + mode
+                        latest = None
+
+                        def final_query(raw):
+                            nonlocal latest
+                            # Every draw is a full repaint. Replaying the entire
+                            # typing history here is quadratic and can consume the
+                            # reader's deadline before the child finishes writing.
+                            raw = raw[raw.rfind("\x1b[H\x1b[J"):]
+                            lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                            latest = (lines[0], wraps, cursor)
+                            return wraps == 0 and lines[0] == expected_row and cursor == (True, expected_x, 0)
+
                         # Empty search also needs a complete fresh draw for cursor checks.
                         os.write(popup.master, query.encode() if query else b"\x7f")
-                        raw = frame(popup.master, b"\x1b[?25h")
+                        # Typing can produce many complete intermediate draws. Keep
+                        # the popup's frame boundaries and original bounded deadline.
+                        try:
+                            raw = read_frame(popup.output, expected=final_query)
+                        except AssertionError as error:
+                            error.add_note(f"width={width} mode={mode} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
+                            raise
                         lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
                         assert wraps == 0 and lines[0].endswith(mode), (lines, wraps)
                         assert cursor == (True, expected_x, 0), (width, mode, query, cursor, expected_x, lines[0])
+                        assert lines[0] == expected_row, lines
                         if len(query) < 10:
                             assert lines[0] == expected_search_row(width, query, mode), lines
                         else:
@@ -483,11 +532,12 @@ def main(binary):
                 initial = frame(master, NOTICE_END)
                 assert "\x1b[?25l" in initial, initial[-100:]
                 assert [line for line in screen(initial, 79, 15)[0] if line] == notice_lines(79, 15)
+                active = termios.tcgetattr(slave)
                 os.write(master, key)
                 restored = frame(master, b"\x1b[?25h")
                 assert "\x1b[?25h" in restored, restored[-100:]
                 assert child.wait(timeout=3) == 0, key
-                assert termios.tcgetattr(slave) == saved, key
+                assert_terminal_restored(master, slave, saved, active, key, initial + restored)
             finally:
                 if child is not None and child.poll() is None:
                     child.kill()
