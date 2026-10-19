@@ -39,6 +39,8 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Run Cargo tests
         run: cargo test --locked
+      - name: Check buffered PTY reader regressions
+        run: python3 -B -m unittest discover -s tests -p test_pty_readers.py
       - name: Check optional Git hooks
         run: python3 tests/test_git_hooks.py
       - name: Check Linux build helper
@@ -50,12 +52,29 @@ jobs:
           python3 tests/test_install_binary.py
           python3 tests/test_setup_keybind.py
           python3 tests/test_distribution_helpers.py
+          python3 tests/test_release_install_helpers.py
       - name: Build, test, and package Linux binary
         id: package
         run: |
           version=$(python3 scripts/check-version.py)
           sh scripts/build-linux.sh
           printf 'artifact=herdr-crossroads-%s-x86_64-unknown-linux-gnu\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Prepare pinned Herdr for isolated installation
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import runpy
+          download = runpy.run_path("scripts/install-binary.py")["download"]
+          data = download("https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64", 64 * 1024 * 1024)
+          assert hashlib.sha256(data).hexdigest() == "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d", "Herdr 0.9.5 checksum mismatch"
+          path = pathlib.Path("target/herdr-acceptance")
+          with path.open("xb") as output:
+              output.write(data)
+          path.chmod(0o755)
+          PY
+      - name: Install and test packaged binary through real Herdr
+        run: python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"
       - name: Upload tested Linux build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

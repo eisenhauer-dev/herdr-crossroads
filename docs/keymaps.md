@@ -396,8 +396,17 @@ and read for every byte. It retains read-ahead per popup, splits at complete cur
 markers, and preserves receive timestamps for buffered draws. This avoids charging
 thousands of reader system calls to a complete sequence's latency without losing
 later frames. Reader regressions check batching and retained frames, reject buffered
-early navigation even after delayed processing, and confirm that an actual 100-ms
-response delay still exceeds the unchanged 95-ms fast-input bound.
+early navigation even after delayed processing, and confirm that a modelled 100-ms
+response delay still exceeds the unchanged 95-ms fast-input bound. Precise timing
+predicates use a deterministic clock and scheduled input, not Python-thread wake-up
+times. Real socket/PTY frame separation and lifecycle checks remain separate;
+the full native PTY gates still measure actual elapsed time with unchanged bounds.
+Long-query render checks await the exact visible search row and editing cursor
+in a complete frame within the original three-second deadline, retaining read-ahead
+and rejecting intermediate query repaints. Each predicate parses only the latest
+full repaint rather than repeatedly replaying the typing history, so fixture
+parsing does not grow quadratically. Clipped text does not prove ingestion
+of the hidden query suffix.
 All standalone search Esc timing checks, including Help search, observe complete
 frames rather than treating any readable bytes as resolved input. A delayed
 search repaint must retain its entire screen, query and editing cursor; navigation
@@ -406,13 +415,23 @@ its contents and return to its keys-navigation footer. The check rejects a
 navigation frame whose first byte is received within the original 75-ms guard,
 even if its cursor marker arrives later,
 and requires a complete transition at 90–220 ms from the Esc write, without
-resetting the deadline for intervening frames. Reader regressions inject delayed
-Search output over sockets and real PTYs, including fragmented ANSI and coalesced
-frames, and reject early Select/Help navigation (including a 25-ms body with a
+resetting the deadline for intervening frames. Deterministic reader regressions
+schedule delayed Search output, including fragmented ANSI and coalesced frames,
+and reject early Select/Help navigation (including a 25-ms body with a
 105-ms final marker byte) and invalid or missing transitions. The late Kitty reply
 check still requires 150 ms without output: no repaint is expected there.
 These are receive-time observations,
 not internal-state timing or proof of the cause of any particular native macOS failure.
+
+The undersized-popup Enter/Esc/q render cases compare every `termios` attribute
+exactly once after successful child exit. On mismatch they report the changed
+fields, full saved/active/post-exit attributes, platform and Python version, and
+captured output including any immediately ready post-exit `stty` diagnostics.
+The active snapshot is taken before sending the close key. Failure-output
+collection neither waits nor retries restoration. These diagnostics do not
+establish the cause of the Intel installed-binary restoration failure in
+[macOS run 39318351418](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39318351418);
+native failure output with these details is still needed.
 
 The popup helper and standalone render cases retain the parent's slave descriptor
 until final output has been read, then close both descriptors. This avoids a last
@@ -465,5 +484,14 @@ Python versions are not recorded here. Record those details for future failures.
 
 The user waived actual Mac Herdr live acceptance on 2026-10-19: **waived, not
 passed**. Fake-host PTYs do not verify live popup, navigation, or focus behavior.
-The manifest, managed installer, and published binaries remain Linux-only.
-No minimum macOS version or general macOS support guarantee is established.
+The later exact `6f91a3f` Linux and native Apple Silicon/Intel CI also passed all
+four full PTYs per platform. These earlier results predate the new 0.2.0
+distribution gates; [current three-platform CI and artifact verification](builds.md#current-020-three-platform-ci-evidence)
+now cover packaging/provenance and isolated real-Herdr installation.
+The checkout prepares macOS 15.0+ on both architectures, with explicit
+`MACOSX_DEPLOYMENT_TARGET=15.0`; 0.2.0 is not released and published 0.1.0 remains
+Linux-only. This approved deployment minimum is not an exact OS-version test matrix.
+Automated installation/distribution is not waived: the new CI gate runs all four
+full fake-host PTYs against the real-Herdr-installed binary, without a server or
+popup. See [its verified scope and limits](installation.md#automated-release-installation-gate).
+Actual Rosetta execution and general macOS compatibility remain unproven.

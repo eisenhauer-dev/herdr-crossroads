@@ -30,6 +30,7 @@ jobs:
         shell: bash
     env:
       RUSTUP_TOOLCHAIN: "1.99.0"
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
       EXPECTED_MACHINE: ${{ matrix.machine }}
       EXPECTED_HOST: ${{ matrix.host }}
     steps:
@@ -58,6 +59,16 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Run Cargo tests
         run: cargo test --locked
+      - name: Check buffered PTY reader regressions
+        run: python3 -B -m unittest discover -s tests -p test_pty_readers.py
+      - name: Check release and installation helpers
+        run: |
+          python3 tests/test_version.py
+          python3 tests/test_build_macos.py
+          python3 tests/test_build_provenance.py
+          python3 tests/test_install_binary.py
+          python3 tests/test_setup_keybind.py
+          python3 tests/test_release_install_helpers.py
       - name: Build native release binary
         run: cargo build --release --locked
       - name: Run full release PTY latency gate
@@ -72,3 +83,42 @@ jobs:
       - name: Run full release PTY hints gate
         timeout-minutes: 5
         run: python3 -u tests/pty_hints.py target/release/herdr-crossroads
+      - name: Build, test, and package native macOS binary
+        id: package
+        run: |
+          version=$(python3 scripts/check-version.py)
+          sh scripts/build-macos.sh
+          printf 'artifact=herdr-crossroads-%s-%s\n' "$version" "$EXPECTED_HOST" >> "$GITHUB_OUTPUT"
+      - name: Prepare pinned Herdr for isolated installation
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import platform
+          import runpy
+          assets = {
+              "arm64": ("aarch64", "fb77c2232a05a8035421382c894392f4174e4e38a18e48af3dd0290157c3a7e2"),
+              "x86_64": ("x86_64", "5fb0a908ec7f6745e3e245738b06bfad56c46391c391ab3c0955fbead01f1369"),
+          }
+          architecture, expected = assets[platform.machine()]
+          download = runpy.run_path("scripts/install-binary.py")["download"]
+          data = download(f"https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-macos-{architecture}", 64 * 1024 * 1024)
+          assert hashlib.sha256(data).hexdigest() == expected, "Herdr 0.9.5 checksum mismatch"
+          path = pathlib.Path("target/herdr-acceptance")
+          with path.open("xb") as output:
+              output.write(data)
+          path.chmod(0o755)
+          PY
+      - name: Install and test packaged binary through real Herdr
+        run: python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"
+      - name: Upload tested macOS package and evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: |
+            target/builds/${{ steps.package.outputs.artifact }}.tar.gz
+            target/builds/${{ steps.package.outputs.artifact }}.tar.gz.sha256
+            target/builds/${{ steps.package.outputs.artifact }}.provenance.json
+            target/builds/${{ steps.package.outputs.artifact }}.link.map
+          if-no-files-found: error
+          retention-days: 7

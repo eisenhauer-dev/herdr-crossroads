@@ -6,15 +6,182 @@ import socket
 import struct
 import subprocess
 import sys
+import termios
 import tempfile
 import threading
-import time
 import tty
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import pty_keymaps
+import pty_render
+
+
+class TerminalRestorationDiagnosticsTests(unittest.TestCase):
+    def test_equal_attributes_are_checked_once_without_reading_output(self):
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        saved = termios.tcgetattr(slave)
+        with patch.object(pty_render.termios, "tcgetattr", return_value=saved) as attributes, \
+             patch.object(pty_render.select, "select") as ready:
+            pty_render.assert_terminal_restored(master, slave, saved, saved, b"q", "cursor")
+        attributes.assert_called_once_with(slave)
+        ready.assert_not_called()
+
+    def test_every_attribute_mismatch_retains_exact_equality_and_diagnostics(self):
+        saved = [1, 2, 3, 4, 9600, 9600, [b"\x03", b"\x1c"]]
+        active = [0, 0, 3, 0, 9600, 9600, [b"\x00", b"\x00"]]
+        for index, name in enumerate(("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")):
+            for ending in (b"", OSError(errno.EIO, "PTY closed")):
+                with self.subTest(attribute=name, ending=ending):
+                    actual = saved.copy()
+                    actual[index] = [b"\x04", b"\x1c"] if name == "cc" else actual[index] ^ 1
+                    with patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
+                         patch.object(pty_render.select, "select", return_value=([123], [], [])) as ready, \
+                         patch.object(pty_render.os, "read", side_effect=[b"stty: restore error\r\n", ending]), \
+                         self.assertRaises(AssertionError) as failure:
+                        pty_render.assert_terminal_restored(123, 456, saved, active, b"\x1b", "notice\x1b[?25h")
+                    attributes.assert_called_once_with(456)
+                    self.assertTrue(all(call.args[-1] == 0 for call in ready.call_args_list))
+                    message = str(failure.exception)
+                    for expected in ("key=b'\\x1b'", f"'{name}':", f"saved={saved!r}",
+                                     f"active={active!r}", f"actual={actual!r}", "platform=", "python=",
+                                     "notice\\x1b[?25h", "stty: restore error\\r\\n"):
+                        self.assertIn(expected, message)
+
+
+class SearchCursorFrameTests(unittest.TestCase):
+    @staticmethod
+    def draw(width, mode, text, cursor_x):
+        row = "  Search: " + text
+        row += " " * (width - 2 - len(mode) - sum(2 if c == "界" else 1 for c in row)) + mode
+        return f"\x1b[H\x1b[J{row}\x1b[1;{cursor_x + 1}H\x1b[?25h".encode()
+
+    def run_cases(self, delivery, times_out=False, pending=b"", parsing_cost=False):
+        now = 0.0
+        emissions = []
+        popups = []
+        test = self
+        screen = pty_render.screen
+
+        def parse(raw, *args, **kwargs):
+            nonlocal now
+            if parsing_cost:
+                # Charge per repaint interpreted, not per host CPU speed.
+                now += 0.001 * raw.count("\x1b[H\x1b[J")
+            return screen(raw, *args, **kwargs)
+
+        class Popup:
+            def __init__(self, binary, directory, width, height):
+                self.master, self.width, self.height = 123, width, height
+                self.output = pty_keymaps.DrawReader(self.master)
+                self.mode = "Search"
+                popups.append(self)
+
+            def send(self, data):
+                if data == b"?":
+                    self.mode = "Help"
+
+            def finish(self, key):
+                test.assertFalse(emissions, "final query draw was not consumed")
+                test.assertEqual(bytes(self.output.pending), pending if self.width == 142 and self.mode == "Search" and self.query == "x" * 200 else b"")
+
+            def abort(self):
+                pass
+
+        def write(fd, data):
+            popup = popups[-1]
+            query = "" if data == b"\x7f" else data.decode()
+            popup.query = query
+            budget = popup.width - 4 - len(popup.mode) - 1
+            if len(query) < 10:
+                text, x = query, 10 + len(query)
+            elif query.startswith("界"):
+                count = (budget - 10) // 2
+                text, x = "界" * count + "…", 11 + 2 * count
+            else:
+                text, x = "x" * (budget - 10) + "…", budget + 1
+            final = self.draw(popup.width, popup.mode, text, x)
+            if popup.width == 142 and popup.mode == "Search" and query == "x" * 200:
+                intermediate = self.draw(142, "Search", "x" * 104, 114)
+                emissions.extend(delivery(now, intermediate, final))
+            else:
+                emissions.append((now, final))
+            return len(data)
+
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, 3)
+            self.assertNotIn(timeout, (0.01, 0.05), "query synchronization must not wait for an output gap")
+            if emissions and emissions[0][0] <= now + timeout:
+                now = max(now, emissions[0][0])
+                return readers, [], []
+            now += timeout
+            return [], [], []
+
+        def read(fd, size):
+            at, payload = emissions.pop(0)
+            self.assertLessEqual(at, now)
+            self.assertLessEqual(len(payload), size)
+            return payload
+
+        with patch.object(pty_keymaps, "Popup", Popup), \
+             patch.object(pty_render, "screen", side_effect=parse), \
+             patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_render.select, "select", side_effect=ready), \
+             patch.object(pty_render.os, "read", side_effect=read), \
+             patch.object(pty_render.os, "write", side_effect=write):
+            if times_out:
+                with self.assertRaisesRegex(AssertionError, "bytearray"):
+                    pty_render.search_cursor_cases("unused")
+                self.assertEqual(now, 3.0, "intermediate draws extended the original deadline")
+            else:
+                pty_render.search_cursor_cases("unused")
+
+    def test_intermediate_complete_query_draw_is_not_final(self):
+        for delivery in (
+            lambda now, intermediate, final: [(now, intermediate), (now + 0.1, final)],
+            lambda now, intermediate, final: [(now, intermediate + final[:-1]), (now + 0.1, final[-1:])],
+        ):
+            with self.subTest(delivery=delivery):
+                self.run_cases(delivery)
+
+    def test_correct_cursor_with_wrong_query_is_not_final(self):
+        self.run_cases(lambda now, intermediate, final: [
+            (now, final.replace(b"xxxxx", b"yyyyy", 1)), (now + 0.1, final),
+        ])
+
+    def test_matching_query_requires_complete_cursor_marker(self):
+        self.run_cases(lambda now, intermediate, final: [(now, final[:-1])], times_out=True)
+
+    def test_wrong_query_or_cursor_cannot_satisfy_final_state(self):
+        for invalid in (
+            lambda final: final.replace(b"xxxxx", b"yyyyy", 1),
+            lambda final: final.replace(b"\x1b[1;133H", b"\x1b[1;132H"),
+        ):
+            with self.subTest(invalid=invalid):
+                self.run_cases(lambda now, intermediate, final: [(now, invalid(final))], times_out=True)
+
+    def test_matching_frame_retains_read_ahead(self):
+        tail = b"next draw\x1b[?25l"
+        self.run_cases(lambda now, intermediate, final: [(now, intermediate + final + tail)], pending=tail)
+
+    def test_final_query_must_arrive_within_original_deadline(self):
+        self.run_cases(lambda now, intermediate, final: [(now, intermediate), (now + 2.99, final)])
+        for final_at in (3.01, 3.1):
+            with self.subTest(final_at=final_at):
+                self.run_cases(lambda now, intermediate, final: [
+                    (now, intermediate), (now + 1, intermediate), (now + 2, intermediate),
+                    (now + final_at, final),
+                ], times_out=True)
+
+    def test_intermediate_repaints_are_not_replayed_quadratically(self):
+        self.run_cases(lambda now, intermediate, final: [
+            (now, intermediate * 100), (now + 2.5, final),
+        ], parsing_cost=True)
 
 
 class ReaderEofTests(unittest.TestCase):
@@ -87,50 +254,57 @@ class EscapeObservationTests(unittest.TestCase):
             cursor = b"\x1b[1;16H\x1b[?25h" if searching else b"\x1b[?25l"
         return (f"\x1b[H\x1b[J{header}\x1b[2;1H  > codex\x1b[15;1H{footer}".encode() + cursor)
 
-    def observe(self, emissions, real_pty=False, help_search=False):
-        if real_pty:
-            reader, writer = pty.openpty()
-            tty.setraw(writer)
-            self.addCleanup(os.close, reader)
-            self.addCleanup(os.close, writer)
-        else:
-            pair = socket.socketpair()
-            for endpoint in pair:
-                self.addCleanup(endpoint.close)
-            reader, writer = (endpoint.fileno() for endpoint in pair)
-        start = time.monotonic()
-        stop = threading.Event()
-        errors = []
+    def observe(self, emissions, help_search=False):
+        # Emission times are receive times, independent of host/thread scheduling.
+        received = iter((at, payload) for at, payload in emissions if payload)
+        pending = next(received, None)
+        now = 0.0
 
-        def emit():
-            try:
-                # The repaint represents output queued before Esc, delivered late.
-                self.assertEqual(os.read(writer, 1), b"\x1b")
-                for at, payload in emissions:
-                    if stop.wait(max(0, start + at - time.monotonic())):
-                        return
-                    os.write(writer, payload)
-            except BaseException as error:
-                errors.append(error)
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            if pending is not None and pending[0] <= now + timeout:
+                now = max(now, pending[0])
+                return readers, [], []
+            now += timeout
+            return [], [], []
 
-        worker = threading.Thread(target=emit)
-        worker.start()
-        try:
-            os.write(reader, b"\x1b")
-            lines, _ = pty_keymaps.screen(self.frame(help_search=help_search).decode(), 80, 15)
-            return pty_keymaps.read_search_escape(pty_keymaps.DrawReader(reader), start, "codex", lines)
-        finally:
-            stop.set()
-            worker.join(timeout=1)
-            self.assertFalse(worker.is_alive())
-            if errors:
-                raise errors[0]
+        def read(fd, size):
+            nonlocal pending
+            self.assertIsNotNone(pending, "read without a scheduled emission")
+            at, payload = pending
+            self.assertLessEqual(at, now)
+            pending = (at, payload[size:]) if len(payload) > size else next(received, None)
+            return payload[:size]
+
+        lines, _ = pty_keymaps.screen(self.frame(help_search=help_search).decode(), 80, 15)
+        with patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_keymaps.select, "select", side_effect=ready), \
+             patch.object(pty_keymaps.os, "read", side_effect=read):
+            return pty_keymaps.read_search_escape(pty_keymaps.DrawReader(123), 0.0, "codex", lines)
 
     def test_delayed_search_repaint_is_not_escape_resolution(self):
+        raw = self.observe([(0.025, self.frame()), (0.105, self.frame(False))])
+        self.assertEqual(raw, self.frame(False).decode())
+
+    def test_complete_draws_remain_separate_on_real_socket_and_pty(self):
         for real_pty in (False, True):
             with self.subTest(real_pty=real_pty):
-                raw = self.observe([(0.025, self.frame()), (0.105, self.frame(False))], real_pty)
-                self.assertEqual(raw, self.frame(False).decode())
+                if real_pty:
+                    reader, writer = pty.openpty()
+                    tty.setraw(writer)
+                    self.addCleanup(os.close, reader)
+                    self.addCleanup(os.close, writer)
+                else:
+                    pair = socket.socketpair()
+                    for endpoint in pair:
+                        self.addCleanup(endpoint.close)
+                    reader, writer = (endpoint.fileno() for endpoint in pair)
+                os.write(reader, b"\x1b")
+                self.assertEqual(os.read(writer, 1), b"\x1b")
+                os.write(writer, self.frame() + self.frame(False))
+                output = pty_keymaps.DrawReader(reader)
+                self.assertEqual(pty_keymaps.read_frame(output, expected=lambda raw: True), self.frame().decode())
+                self.assertEqual(pty_keymaps.read_frame(output, expected=lambda raw: True), self.frame(False).decode())
 
     def test_early_select_is_rejected_even_after_search_repaint(self):
         for emissions in (
@@ -143,6 +317,31 @@ class EscapeObservationTests(unittest.TestCase):
             with self.subTest(emissions=emissions), self.assertRaisesRegex(AssertionError, reason):
                 self.observe(emissions)
 
+    def test_fixture_overhead_cannot_make_early_output_timely(self):
+        for delayed in ("thread", "screen"):
+            with self.subTest(delayed=delayed):
+                now = 0.0
+                start_thread = threading.Thread.start
+                screen = pty_keymaps.screen
+
+                def start(worker):
+                    nonlocal now
+                    if delayed == "thread":
+                        now = 0.105
+                    return start_thread(worker)
+
+                def prepare(*args, **kwargs):
+                    nonlocal now
+                    if delayed == "screen":
+                        now = 0.105
+                    return screen(*args, **kwargs)
+
+                with patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+                     patch.object(threading.Thread, "start", start), \
+                     patch.object(pty_keymaps, "screen", side_effect=prepare), \
+                     self.assertRaisesRegex(AssertionError, "Esc resolved before its deadline"):
+                    self.observe([(0.025, self.frame(False))])
+
     def test_fragmented_search_and_cursor_marker_cross_guard_boundary(self):
         search = self.frame()
         raw = self.observe([(0.025, search[:-1]), (0.08, search[-1:]), (0.105, self.frame(False))])
@@ -153,20 +352,9 @@ class EscapeObservationTests(unittest.TestCase):
             with self.subTest(help_search=help_search, search_repaint=bool(repaint)):
                 navigation = self.frame(False, help_search=help_search)
                 emissions = [(0.01, repaint), (0.025, navigation[:-1]), (0.105, navigation[-1:])]
-                received = iter((at, bytes([byte])) for at, payload in emissions for byte in payload)
-                now = 0.0
-
-                def read(fd, size):
-                    nonlocal now
-                    now, byte = next(received)
-                    return byte
-
-                lines, _ = pty_keymaps.screen(self.frame(help_search=help_search).decode(), 80, 15)
-                with patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
-                     patch.object(pty_keymaps.select, "select", return_value=([123], [], [])), \
-                     patch.object(pty_keymaps.os, "read", side_effect=read), \
-                     self.assertRaisesRegex(AssertionError, "Esc resolved before its deadline"):
-                    pty_keymaps.read_search_escape(pty_keymaps.DrawReader(123), 0.0, "codex", lines)
+                received = [(at, bytes([byte])) for at, payload in emissions for byte in payload]
+                with self.assertRaisesRegex(AssertionError, "Esc resolved before its deadline"):
+                    self.observe(received, help_search=help_search)
 
     def test_fast_send_waits_for_matching_complete_selection_without_quiet_gap(self):
         reader, writer = socket.socketpair()
@@ -216,8 +404,9 @@ class EscapeObservationTests(unittest.TestCase):
         self.addCleanup(writer.close)
         output = pty_keymaps.DrawReader(reader.fileno())
         writer.sendall(self.frame() + self.frame(False))
-        start = time.monotonic()
-        pty_keymaps.read_frame(output, expected=lambda raw: True)
+        start = 0.0
+        with patch.object(pty_keymaps.time, "monotonic", return_value=start):
+            pty_keymaps.read_frame(output, expected=lambda raw: True)
         lines, _ = pty_keymaps.screen(self.frame().decode(), 80, 15)
         # Processing a previous draw cannot make read-ahead navigation look timely.
         with patch.object(pty_keymaps.time, "monotonic", return_value=start + 0.105), \
@@ -225,35 +414,27 @@ class EscapeObservationTests(unittest.TestCase):
             pty_keymaps.read_search_escape(output, start, "codex", lines)
 
     def test_complete_sequence_delayed_by_timeout_is_not_observed_as_immediate(self):
-        reader, writer = socket.socketpair()
-        self.addCleanup(reader.close)
-        self.addCleanup(writer.close)
         popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
-        popup.master, popup.width, popup.height = reader.fileno(), 80, 15
+        popup.master, popup.width, popup.height = 123, 80, 15
         popup.output = pty_keymaps.DrawReader(popup.master)
         final = self.frame(False)
-        errors = []
+        now = 0.0
 
-        def emit():
-            try:
-                self.assertEqual(writer.recv(4), b"\x1b\x1b[A")
-                time.sleep(0.100)
-                writer.sendall(final)
-            except BaseException as error:
-                errors.append(error)
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            self.assertGreaterEqual(timeout, 0.100)
+            now += 0.100
+            return readers, [], []
 
-        worker = threading.Thread(target=emit)
-        worker.start()
-        try:
-            start = time.monotonic()
+        with patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_keymaps.select, "select", side_effect=ready), \
+             patch.object(pty_keymaps.os, "read", return_value=final), \
+             patch.object(pty_keymaps.os, "write", return_value=4) as write:
+            start = pty_keymaps.time.monotonic()
             popup.send(b"\x1b\x1b[A", expected=lambda raw: raw == final.decode())
-            elapsed = time.monotonic() - start
-            self.assertGreaterEqual(elapsed, 0.095, "a real 100-ms wait must still fail the fast-input bound")
-        finally:
-            worker.join(timeout=3)
-            self.assertFalse(worker.is_alive())
-            if errors:
-                raise errors[0]
+            elapsed = pty_keymaps.time.monotonic() - start
+            self.assertGreaterEqual(elapsed, 0.095, "a 100-ms wait must still fail the fast-input bound")
+        write.assert_called_once_with(123, b"\x1b\x1b[A")
 
     def test_coalesced_search_and_select_are_checked_separately(self):
         raw = self.observe([(0.105, self.frame() + self.frame(False))])
@@ -290,6 +471,14 @@ class EscapeObservationTests(unittest.TestCase):
         ):
             with self.subTest(emissions=emissions), self.assertRaises(AssertionError):
                 self.observe(emissions)
+
+    def test_transition_timing_boundaries_are_not_relaxed(self):
+        for at in (0.09, 0.219):
+            with self.subTest(at=at):
+                self.assertEqual(self.observe([(at, self.frame(False))]), self.frame(False).decode())
+        for at in (0.075, 0.089, 0.22):
+            with self.subTest(at=at), self.assertRaisesRegex(AssertionError, "Esc transition timing"):
+                self.observe([(at, self.frame(False))])
 
 
 class PopupLifecycleTests(unittest.TestCase):
