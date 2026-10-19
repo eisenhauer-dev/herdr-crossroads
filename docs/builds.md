@@ -11,6 +11,186 @@ The current version is `0.1.0`, the first regular Linux release, published as
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 
+## Build and verify locally
+
+Run from a trusted checkout on native Linux x86_64. Have Rust/Cargo, a system
+GCC/linker and Debian/Ubuntu `dpkg-query`, the already-installed
+`x86_64-unknown-linux-gnu` Rust target, Python 3.11+,
+`stty`, a POSIX shell, GNU tar, and `sha256sum` available. The PTYs require an
+existing owned writable `/tmp/opencode` directory; they use fake Herdr executables
+and sockets, not a live Herdr session.
+
+From the repository root:
+
+```sh
+python3 scripts/check-version.py
+python3 tests/test_version.py
+python3 tests/test_build_linux.py
+python3 tests/test_build_provenance.py
+sh scripts/build-linux.sh
+```
+
+For a network-free build with already-cached locked dependencies, use
+`CARGO_NET_OFFLINE=true sh scripts/build-linux.sh`. The helper does not install
+tooling or Rust targets. Formatting, Clippy, Cargo tests, and hook checks remain
+separate gates; this command does not replace them.
+
+Before building, the helper checks that `Cargo.toml`, the `herdr-crossroads`
+package entry in `Cargo.lock`, and `herdr-plugin.toml` agree on a canonical stable
+`X.Y.Z` version. Missing, malformed, mismatched, or unsafe version data stops before
+Cargo or the PTYs; prerelease and build-metadata suffixes are not supported.
+It also checks the checked-in notice inventory's manifest/lock fingerprint and
+exact `rustc --version`, then requires an exact match to one of the two reviewed
+system profiles under `LICENSES/`: local glibc 2.43 or actual Ubuntu 24.04 CI.
+Resolved GCC candidate paths, object hashes, binary/source package versions and
+full installed copyright/common-license bytes must match. Both profiles and their
+matching source-header evidence must be present and internally hash-consistent;
+the canonical notice's system section must reproduce exactly from those records.
+Dependency, feature, toolchain, or builder changes require notice
+review and regeneration; changing only the project's version does not. Missing
+license files or stale inventory stop before Cargo and remove current-version
+artifact outputs. See [notice maintenance and final link-map verification](releases.md#license-inventory-and-verification).
+
+The helper rejects other native operating systems/architectures, fixes Cargo's
+output directory to this checkout's `target/`, and builds with
+`cargo rustc --release --locked --bin herdr-crossroads --target x86_64-unknown-linux-gnu`
+with binary-only linker map/trace/version arguments and `--print link-args`. It removes the
+previous artifact files for the agreed version and target binary before building, then runs
+`pty_latency.py`, `pty_render.py`, `pty_keymaps.py`, and `pty_hints.py` in that
+order against exactly `target/x86_64-unknown-linux-gnu/release/herdr-crossroads`.
+The complete keymap gate is used, never `--input-protocol`.
+
+Only after all four full PTYs pass does it package the archive. A successful
+invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
+
+```text
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
+```
+
+These names use the current regular-release version `0.1.0`, not a fixed literal in the
+helper. Other versions' outputs are left untouched and never selected as this
+invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
+metadata into caller-selected files.
+
+The tar contains exactly four regular files: `herdr-crossroads` (with its executable
+mode preserved), `herdr-crossroads.sha256` (the binary's SHA256), `LICENSE`
+(the project's full MIT terms), and `THIRD-PARTY-NOTICES.md` (full dependency
+license/attribution texts, Rust standard-library notices, and installed system
+startup/runtime copyright/full-license records and exact glibc startup linking
+exception headers). Keep the notices
+with redistributed binaries. Archive ownership is normalized
+to numeric root, rather than recording the builder's username. The adjacent file
+checksums the tar. Checksum entries contain filenames, not checkout paths.
+Checksums detect corruption, not authenticity or publisher identity.
+
+This describes new local/CI builds, not a replacement of the published `v0.1.0`
+assets, which still contain `THIRD-PARTY-NOTICES.html`. The version remains
+`0.1.0`; identical artifact filenames do not imply identical archive bytes.
+Do not publish or replace assets without separate approval. The current installer
+supports that exact historical HTML through the
+[pinned compatibility contract](installation.md#validation-and-failure-behavior).
+
+Build, PTY, and packaging failures return nonzero and remove the current-version archive,
+archive checksum, JSON/map evidence and temporary packaging files; handled INT/TERM
+interruptions do likewise. A failed invocation never advertises success or reuses an old binary
+as its new build. Do not run concurrent helper/Cargo builds in the same checkout:
+the binary and packaging paths are shared. Forced termination or host loss cannot
+run shell cleanup; always require a successful fresh invocation, not merely the
+presence of a file, as build evidence.
+Version-check failures occur before output paths are selected and leave existing
+files untouched; those files are not evidence of a successful invocation.
+
+### Builder/link evidence, not distribution approval
+
+`scripts/build-provenance.py` performs the one final Cargo link used by the helper.
+It first runs target/release-scoped `cargo clean --package herdr-crossroads`,
+leaving third-party dependency caches intact. Otherwise Cargo can replay cached
+link diagnostics without recreating a removed map; a fresh final link is required.
+It requests a GNU/lld map with `-Wl,-Map=...`, file trace with `-Wl,--trace`, and
+linker version with `-Wl,-v`. The JSON binds the exact executable SHA256 to the
+normalized map SHA256 and retains the build argv, selected build environment,
+Rust/Cargo/GCC versions, and raw link output/diagnostics (including rustc's printed
+link command). It records paths, resolved paths, hashes and available installed
+binary/source package versions for recognized whole-line absolute file traces
+and a conservative set of GCC-resolved startup/nonshared/runtime candidates.
+Unavailable temporary objects and unowned files are explicit; no hashes or package
+versions are inferred. Trace inputs are files opened by the linker, not proof of
+incorporated code; GCC defaults may differ from the actual driver's flags.
+Manually reconcile the raw map and command with these records. There is no
+universal map parser or automatic attribution verdict.
+
+Automatic trace indexing accepts unquoted absolute paths without whitespace before
+an optional archive-member suffix. Verbose linker commands and ambiguous paths
+containing whitespace are not automatic file records. Normalized raw link
+output/diagnostics and the map remain available for manual reconciliation.
+Only a missing input (`FileNotFoundError`) is marked unavailable; nonregular inputs
+and other stat/read errors fail collection. Symlinks to regular files retain both
+the original and resolved paths. Private prefixes are normalized in failure
+diagnostics too.
+
+Repository, Cargo, Rustup and home prefixes are replaced with neutral placeholders
+in both sidecars; system paths such as `/usr/...` remain intact. Map hashes cover
+these normalized bytes. Sidecars are outside the strict four-member tar, not
+installer inputs. A missing/empty map or collection error blocks packaging; failed
+gates remove current-version sidecars alongside the archive/checksum. Do not reuse
+historical evidence for a new binary or builder.
+
+The canonical notices conservatively include both reviewed builders in stable
+order, not just the current host. The Ubuntu profile was reconciled against exact
+official package payloads matching the actual PR run's candidate hashes; it is not
+a relabeled local inventory. [Source/package provenance and limits](releases.md#ubuntu-2404-system-profile)
+include the exact patched glibc headers. The mandatory pre-build system check has
+passed locally and in the [fresh Ubuntu CI run](#current-001-public-pipeline-evidence).
+Neither a profile match nor collection proves linked contributions or distribution
+readiness: retain the manual matching raw-map/ELF release gate.
+
+On 2026-10-16 the offline local dual-profile build passed the mandatory notice gate,
+a fresh final link, all four full PTYs and packaging. Separate archive checking
+confirmed four regular members, preserved executable mode, both checksums, exact
+canonical notice bytes, binary/map hash binding and normalized private prefixes.
+The binary remained byte-identical to the earlier local executable. Both isolated
+real-Herdr 0.9.5 harnesses subsequently passed against this repackaged asset; see
+[dual-profile native acceptance](installation.md#dual-profile-local-acceptance).
+The later [0.0.1 CI run](#current-001-public-pipeline-evidence) passed the new notice gate.
+
+Local collector verification on 2026-10-15 used the offline helper invocation
+above: a fresh link, all four full PTYs, packaging, binary/map SHA256 binding,
+four-member archive, notice byte identity, and private-prefix removal passed.
+Its actual startup-object records identify local glibc `2.43-2ubuntu2.4`;
+this is not evidence of the Ubuntu 24.04 runner's glibc version.
+
+Verify the archive from the repository root:
+
+```sh
+(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+```
+
+After extracting the tar into a separate empty directory, run
+`sha256sum -c herdr-crossroads.sha256` there. Neither packaging nor extraction
+installs the plugin. The manifest launches
+`./target/release/herdr-crossroads` from the linked checkout; the explicit-target
+binary is not automatically placed at that path by the build helper. The separate
+[binary installer](installation.md) validates the tar and atomically installs
+that binary at the manifest path without Rust/Cargo. An explicit trusted local
+asset directory selects offline installation; otherwise it uses the prepared
+version-pinned GitHub Release route. The regular `0.1.0` release and both test
+prereleases are published; their separately scoped
+[public installation evidence](installation.md#regular-010-public-installation)
+does not establish universal runtime compatibility.
+The [source build-then-link route](../README.md#installation)
+also remains available. The public source is
+`eisenhauer-dev/herdr-crossroads`; public repository access was verified on
+2026-10-15. The published 0.0.1 and 0.0.2 prereleases have separate reviewed assets.
+
+## Historical build and pipeline evidence
+
+The dated records below retain their original artifact-specific scope and
+headings. Use [Build and verify locally](#build-and-verify-locally) for the current
+prerequisites and commands, not these historical receipts.
+
 ## Regular 0.1.0 public pipeline evidence
 
 - [Run 38903556630](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38903556630),
@@ -209,180 +389,6 @@ passed on 2026-10-16. All four public asset downloads matched the approved hashe
 also passed. The later [two-version cycle](installation.md#public-installupdatereturn-cycle)
 also passed. The single-version local receipt is
 `target/public-cycle/0.0.1-verification.json`.
-
-## Build and verify locally
-
-Run from a trusted checkout on native Linux x86_64. Have Rust/Cargo, a system
-GCC/linker and Debian/Ubuntu `dpkg-query`, the already-installed
-`x86_64-unknown-linux-gnu` Rust target, Python 3.11+,
-`stty`, a POSIX shell, GNU tar, and `sha256sum` available. The PTYs require an
-existing owned writable `/tmp/opencode` directory; they use fake Herdr executables
-and sockets, not a live Herdr session.
-
-From the repository root:
-
-```sh
-python3 scripts/check-version.py
-python3 tests/test_version.py
-python3 tests/test_build_linux.py
-python3 tests/test_build_provenance.py
-sh scripts/build-linux.sh
-```
-
-For a network-free build with already-cached locked dependencies, use
-`CARGO_NET_OFFLINE=true sh scripts/build-linux.sh`. The helper does not install
-tooling or Rust targets. Formatting, Clippy, Cargo tests, and hook checks remain
-separate gates; this command does not replace them.
-
-Before building, the helper checks that `Cargo.toml`, the `herdr-crossroads`
-package entry in `Cargo.lock`, and `herdr-plugin.toml` agree on a canonical stable
-`X.Y.Z` version. Missing, malformed, mismatched, or unsafe version data stops before
-Cargo or the PTYs; prerelease and build-metadata suffixes are not supported.
-It also checks the checked-in notice inventory's manifest/lock fingerprint and
-exact `rustc --version`, then requires an exact match to one of the two reviewed
-system profiles under `LICENSES/`: local glibc 2.43 or actual Ubuntu 24.04 CI.
-Resolved GCC candidate paths, object hashes, binary/source package versions and
-full installed copyright/common-license bytes must match. Both profiles and their
-matching source-header evidence must be present and internally hash-consistent;
-the canonical notice's system section must reproduce exactly from those records.
-Dependency, feature, toolchain, or builder changes require notice
-review and regeneration; changing only the project's version does not. Missing
-license files or stale inventory stop before Cargo and remove current-version
-artifact outputs. See [notice maintenance and final link-map verification](releases.md#license-inventory-and-verification).
-
-The helper rejects other native operating systems/architectures, fixes Cargo's
-output directory to this checkout's `target/`, and builds with
-`cargo rustc --release --locked --bin herdr-crossroads --target x86_64-unknown-linux-gnu`
-with binary-only linker map/trace/version arguments and `--print link-args`. It removes the
-previous artifact files for the agreed version and target binary before building, then runs
-`pty_latency.py`, `pty_render.py`, `pty_keymaps.py`, and `pty_hints.py` in that
-order against exactly `target/x86_64-unknown-linux-gnu/release/herdr-crossroads`.
-The complete keymap gate is used, never `--input-protocol`.
-
-Only after all four full PTYs pass does it package the archive. A successful
-invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
-
-```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
-```
-
-These names use the current regular-release version `0.1.0`, not a fixed literal in the
-helper. Other versions' outputs are left untouched and never selected as this
-invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
-metadata into caller-selected files.
-
-The tar contains exactly four regular files: `herdr-crossroads` (with its executable
-mode preserved), `herdr-crossroads.sha256` (the binary's SHA256), `LICENSE`
-(the project's full MIT terms), and `THIRD-PARTY-NOTICES.md` (full dependency
-license/attribution texts, Rust standard-library notices, and installed system
-startup/runtime copyright/full-license records and exact glibc startup linking
-exception headers). Keep the notices
-with redistributed binaries. Archive ownership is normalized
-to numeric root, rather than recording the builder's username. The adjacent file
-checksums the tar. Checksum entries contain filenames, not checkout paths.
-Checksums detect corruption, not authenticity or publisher identity.
-
-This describes new local/CI builds, not a replacement of the published `v0.1.0`
-assets, which still contain `THIRD-PARTY-NOTICES.html`. The version remains
-`0.1.0`; identical artifact filenames do not imply identical archive bytes.
-Do not publish or replace assets without separate approval. The current installer
-supports that exact historical HTML through the
-[pinned compatibility contract](installation.md#validation-and-failure-behavior).
-
-Build, PTY, and packaging failures return nonzero and remove the current-version archive,
-archive checksum, JSON/map evidence and temporary packaging files; handled INT/TERM
-interruptions do likewise. A failed invocation never advertises success or reuses an old binary
-as its new build. Do not run concurrent helper/Cargo builds in the same checkout:
-the binary and packaging paths are shared. Forced termination or host loss cannot
-run shell cleanup; always require a successful fresh invocation, not merely the
-presence of a file, as build evidence.
-Version-check failures occur before output paths are selected and leave existing
-files untouched; those files are not evidence of a successful invocation.
-
-### Builder/link evidence, not distribution approval
-
-`scripts/build-provenance.py` performs the one final Cargo link used by the helper.
-It first runs target/release-scoped `cargo clean --package herdr-crossroads`,
-leaving third-party dependency caches intact. Otherwise Cargo can replay cached
-link diagnostics without recreating a removed map; a fresh final link is required.
-It requests a GNU/lld map with `-Wl,-Map=...`, file trace with `-Wl,--trace`, and
-linker version with `-Wl,-v`. The JSON binds the exact executable SHA256 to the
-normalized map SHA256 and retains the build argv, selected build environment,
-Rust/Cargo/GCC versions, and raw link output/diagnostics (including rustc's printed
-link command). It records paths, resolved paths, hashes and available installed
-binary/source package versions for recognized whole-line absolute file traces
-and a conservative set of GCC-resolved startup/nonshared/runtime candidates.
-Unavailable temporary objects and unowned files are explicit; no hashes or package
-versions are inferred. Trace inputs are files opened by the linker, not proof of
-incorporated code; GCC defaults may differ from the actual driver's flags.
-Manually reconcile the raw map and command with these records. There is no
-universal map parser or automatic attribution verdict.
-
-Automatic trace indexing accepts unquoted absolute paths without whitespace before
-an optional archive-member suffix. Verbose linker commands and ambiguous paths
-containing whitespace are not automatic file records. Normalized raw link
-output/diagnostics and the map remain available for manual reconciliation.
-Only a missing input (`FileNotFoundError`) is marked unavailable; nonregular inputs
-and other stat/read errors fail collection. Symlinks to regular files retain both
-the original and resolved paths. Private prefixes are normalized in failure
-diagnostics too.
-
-Repository, Cargo, Rustup and home prefixes are replaced with neutral placeholders
-in both sidecars; system paths such as `/usr/...` remain intact. Map hashes cover
-these normalized bytes. Sidecars are outside the strict four-member tar, not
-installer inputs. A missing/empty map or collection error blocks packaging; failed
-gates remove current-version sidecars alongside the archive/checksum. Do not reuse
-historical evidence for a new binary or builder.
-
-The canonical notices conservatively include both reviewed builders in stable
-order, not just the current host. The Ubuntu profile was reconciled against exact
-official package payloads matching the actual PR run's candidate hashes; it is not
-a relabeled local inventory. [Source/package provenance and limits](releases.md#ubuntu-2404-system-profile)
-include the exact patched glibc headers. The mandatory pre-build system check has
-passed locally and in the [fresh Ubuntu CI run](#current-001-public-pipeline-evidence).
-Neither a profile match nor collection proves linked contributions or distribution
-readiness: retain the manual matching raw-map/ELF release gate.
-
-On 2026-10-16 the offline local dual-profile build passed the mandatory notice gate,
-a fresh final link, all four full PTYs and packaging. Separate archive checking
-confirmed four regular members, preserved executable mode, both checksums, exact
-canonical notice bytes, binary/map hash binding and normalized private prefixes.
-The binary remained byte-identical to the earlier local executable. Both isolated
-real-Herdr 0.9.5 harnesses subsequently passed against this repackaged asset; see
-[dual-profile native acceptance](installation.md#dual-profile-local-acceptance).
-The later [0.0.1 CI run](#current-001-public-pipeline-evidence) passed the new notice gate.
-
-Local collector verification on 2026-10-15 used the offline helper invocation
-above: a fresh link, all four full PTYs, packaging, binary/map SHA256 binding,
-four-member archive, notice byte identity, and private-prefix removal passed.
-Its actual startup-object records identify local glibc `2.43-2ubuntu2.4`;
-this is not evidence of the Ubuntu 24.04 runner's glibc version.
-
-Verify the archive from the repository root:
-
-```sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-```
-
-After extracting the tar into a separate empty directory, run
-`sha256sum -c herdr-crossroads.sha256` there. Neither packaging nor extraction
-installs the plugin. The manifest launches
-`./target/release/herdr-crossroads` from the linked checkout; the explicit-target
-binary is not automatically placed at that path by the build helper. The separate
-[binary installer](installation.md) validates the tar and atomically installs
-that binary at the manifest path without Rust/Cargo. An explicit trusted local
-asset directory selects offline installation; otherwise it uses the prepared
-version-pinned GitHub Release route. The regular `0.1.0` release and both test
-prereleases are published; their separately scoped
-[public installation evidence](installation.md#regular-010-public-installation)
-does not establish universal runtime compatibility.
-The [source build-then-link route](../README.md#installation)
-also remains available. The public source is
-`eisenhauer-dev/herdr-crossroads`; public repository access was verified on
-2026-10-15. The published 0.0.1 and 0.0.2 prereleases have separate reviewed assets.
 
 ## Runtime and verification limits
 

@@ -4,7 +4,12 @@ Crossroads is a Rust terminal-popup process, not an embedded Herdr extension.
 Herdr launches the manifest's `crossroads` pane entrypoint with the plugin root
 as working directory and supplies runtime environment context. The manifest
 declares Linux, minimum Herdr 0.9.1, popup placement, and a release-binary path;
-it has no build hooks, actions, startup hooks, or event hooks.
+it declares a Python binary-installer build hook and the global `setup-keybind`
+action. Managed installation invokes the build hook; linking a source checkout
+does not. Only explicit invocation of `setup-keybind` may append the agreed host
+launch binding. Opening or searching the popup invokes neither path and does not
+install/update binaries or change host configuration. There are no startup or
+event hooks. See [installation and setup safeguards](installation.md).
 
 ## Module responsibilities
 

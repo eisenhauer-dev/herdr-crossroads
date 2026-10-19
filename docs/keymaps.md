@@ -391,6 +391,13 @@ the matching complete frame without the output-gap reader's extra 10-ms quiet
 wait. Alt input must preserve the search screen; the arrow must reach Select with
 the expected selected pane, not merely an intermediate navigation frame. Failures
 report the measured elapsed time; native scheduling can still exceed this bound.
+The popup's draw reader batches ready bytes instead of issuing a readiness check
+and read for every byte. It retains read-ahead per popup, splits at complete cursor
+markers, and preserves receive timestamps for buffered draws. This avoids charging
+thousands of reader system calls to a complete sequence's latency without losing
+later frames. Reader regressions check batching and retained frames, reject buffered
+early navigation even after delayed processing, and confirm that an actual 100-ms
+response delay still exceeds the unchanged 95-ms fast-input bound.
 All standalone search Esc timing checks, including Help search, observe complete
 frames rather than treating any readable bytes as resolved input. A delayed
 search repaint must retain its entire screen, query and editing cursor; navigation
@@ -414,9 +421,8 @@ slave close discarding unread output: Darwin's
 calls [`ttyclose()`](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty.c#L376-L465),
 which flushes the input and output queues. Output is collected during the bounded
 exit wait and then by the post-exit readiness drain, not EOF, while the parent
-slave remains open. These regressions run on Linux too, but native macOS runs are
-still needed to confirm
-the reported exit-output loss is resolved on both architectures.
+slave remains open. These regressions run on Linux too; the native macOS
+verification below passed on both architectures, including the exit-output checks.
 
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks
@@ -424,7 +430,9 @@ stable default/custom footers, grouping, and sanitized notices separately. For
 theme-table preview it sends and awaits theme opening and Space separately,
 asserting list and table content before checking footer stability.
 
-### macOS local test preparation (unverified)
+<a id="macos-local-test-preparation-unverified"></a>
+
+### macOS local verification
 
 For preparation on both Apple Silicon and Intel Macs, use a native Rust/Cargo
 toolchain with a system linker, Python 3.11+, a POSIX shell, and `stty` on `PATH`.
@@ -444,8 +452,18 @@ The three Cargo PTY wrappers remain Linux-only, so `cargo test` on macOS does
 `--input-protocol`. The full-listen-queue reconnect test is Linux x86_64-only;
 these commands do not provide equivalent coverage on macOS.
 
-This is preparation, not a macOS build or live Herdr verification. Native
-`stty` size/raw-state/restoration behavior, PTY reads and closure, socket paths,
-and timing assertions still need actual runs on both architectures. Record the
-OS, architecture, Rust/Python versions and failures before proposing platform
-fixes. No minimum macOS version or macOS support claim is established here.
+At `fa535ba414067bae6df59d6e4394d94149ee0f4b`,
+[macOS run 39223794908](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794908)
+passed native Apple Silicon and Intel checks: formatting, Clippy, Cargo tests,
+release build, and all four full PTY harnesses on each architecture. This includes
+the harness assertions for `stty` size/raw-state/restoration, PTY reads and closure,
+socket paths, and timing. The matching
+[Linux run 39223794899](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794899)
+also passed. The workflow selects `macos-15`/`macos-15-intel` and Rust 1.99.0;
+these labels are not exact runner OS-build evidence, and exact OS builds and
+Python versions are not recorded here. Record those details for future failures.
+
+The user waived actual Mac Herdr live acceptance on 2026-10-19: **waived, not
+passed**. Fake-host PTYs do not verify live popup, navigation, or focus behavior.
+The manifest, managed installer, and published binaries remain Linux-only.
+No minimum macOS version or general macOS support guarantee is established.
