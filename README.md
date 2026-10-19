@@ -46,14 +46,25 @@ Historical native previews (not current release verification):
 
 ## Requirements and compatibility
 
+### Runtime
+
 - **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
-- Managed installation and opt-in keybinding setup: Git and **Python 3.11+**
-  (standard library only); no Rust/Cargo.
-  Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
+
+### Managed installation
+
+- Managed installation and opt-in keybinding setup require Git and **Python 3.11+**
+  (standard library only); no Rust/Cargo required.
+- Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
   is absent, never after a curl failure. See [download safeguards](docs/installation.md#validation-and-failure-behavior).
-  Source builds: Git, Rust/Cargo, and a system linker.
+
+### Source builds
+
+- Git, Rust/Cargo, and a system linker, in addition to the runtime requirements.
+
+### Compatibility status
+
 - No macOS, Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
@@ -98,7 +109,8 @@ herdr server reload-config
 ```
 
 Press `Ctrl+b`, then `f` (or your configured prefix). The action refuses conflicts
-without overwriting bindings and preserves existing config bytes/comments. See
+without overwriting bindings and preserves existing config bytes/comments. Symlinked
+configs are supported: links stay intact and setup edits the reported resolved target. See
 [path precedence and safeguards](docs/installation.md#keyboard-launch-setup).
 It requires the updated plugin checkout/manifest, not a new runtime binary release.
 

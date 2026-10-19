@@ -18,10 +18,15 @@ def frame(master, marker):
     while marker not in data:
         ready, _, _ = select.select([master], [], [], 3)
         assert ready, f"no frame ending in {marker!r}: {data[-100:]!r}"
-        data.extend(os.read(master, 65536))
+        chunk = os.read(master, 65536)
+        assert chunk, f"EOF before frame ending in {marker!r}: {data[-100:]!r}"
+        data.extend(chunk)
     while select.select([master], [], [], 0.05)[0]:
         try:
-            data.extend(os.read(master, 65536))
+            chunk = os.read(master, 65536)
+            if not chunk:
+                break
+            data.extend(chunk)
         except OSError as error:
             if error.errno != errno.EIO:
                 raise
@@ -253,16 +258,16 @@ def main(binary):
         fake.write_text(f"#!/bin/sh\ncat '{fixture}'\n")
         fake.chmod(0o700)
         master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
         env = dict(os.environ, HERDR_BIN_PATH=str(fake), HERDR_PANE_ID="p-self")
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)
         env.pop("HERDR_SOCKET_PATH", None)
         env["HERDR_CONFIG_PATH"] = str(directory / "missing-herdr-config.toml")
         env["XDG_CONFIG_HOME"] = str(directory)
         env["HOME"] = str(directory)
-        child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
-        os.close(slave)
+        child = None
         try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
+            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             raw = frame(master, b"  Search: ")
             assert "\x1b[?25l" in raw and "\x1b[?25h" not in raw, raw[-100:]
             _, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
@@ -428,21 +433,22 @@ def main(binary):
             assert raw.endswith("\x1b[?25h"), raw[-100:]
             assert child.wait(timeout=3) == 0
         finally:
-            if child.poll() is None:
+            if child is not None and child.poll() is None:
                 child.kill()
                 child.wait()
             os.close(master)
+            os.close(slave)
 
         config = directory / "plugin"
         config.mkdir()
         (config / "theme.json").write_text('{"theme":"unknown"}')
         for width in (80, 120):
             master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
             notice_env = dict(env, HERDR_PLUGIN_CONFIG_DIR=str(config))
-            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=notice_env)
-            os.close(slave)
+            child = None
             try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
+                child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=notice_env)
                 raw = frame(master, b"\x1b[?25l")
                 lines, wraps = screen(raw, width, 15)
                 notice_row = 15 - len(default_footer_lines(width)) - 1
@@ -461,17 +467,19 @@ def main(binary):
                 frame(master, b"\x1b[?25h")
                 assert child.wait(timeout=3) == 0
             finally:
-                if child.poll() is None:
+                if child is not None and child.poll() is None:
                     child.kill()
                     child.wait()
                 os.close(master)
+                os.close(slave)
 
         for key in (b"\r", b"\x1b", b"q"):
             master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
-            saved = termios.tcgetattr(slave)
-            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
+            child = None
             try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
+                saved = termios.tcgetattr(slave)
+                child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
                 initial = frame(master, NOTICE_END)
                 assert "\x1b[?25l" in initial, initial[-100:]
                 assert [line for line in screen(initial, 79, 15)[0] if line] == notice_lines(79, 15)
@@ -481,7 +489,7 @@ def main(binary):
                 assert child.wait(timeout=3) == 0, key
                 assert termios.tcgetattr(slave) == saved, key
             finally:
-                if child.poll() is None:
+                if child is not None and child.poll() is None:
                     child.kill()
                     child.wait()
                 os.close(master)

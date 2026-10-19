@@ -230,28 +230,145 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(self.config.read_bytes(), data)
                 self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
 
-    def test_symlink_nonregular_target_and_symlink_parent_are_refused(self):
-        other = self.root / "other"
-        other.write_bytes(b"# untouched")
-        self.config.symlink_to(other)
-        self.invoke(success=False)
-        self.assertTrue(self.config.is_symlink())
-        self.assertEqual(other.read_bytes(), b"# untouched")
-        self.config.unlink()
-        self.config.symlink_to(self.root / "missing")
-        self.invoke(success=False)
-        self.assertFalse((self.root / "missing").exists())
-        self.config.unlink()
-        self.config.mkdir()
-        self.invoke(success=False)
-        self.config.rmdir()
-        os.mkfifo(self.config)
-        self.invoke(success=False)
-        self.config.unlink()
+    def test_relative_absolute_and_chained_symlinks_preserve_links_and_target_bytes(self):
+        helper = runpy.run_path(str(SCRIPT))
+        original = b'# dotfiles\r\n[keys]\r\ngoto = "prefix+g" # keep'
+        target = self.root / "dotfiles/config.toml"
+        target.parent.mkdir()
+        intermediate = self.root / "dotfiles/next.toml"
+        intermediate.symlink_to("../dotfiles/config.toml")
+        for destination in ["dotfiles/config.toml", target, "dotfiles/next.toml"]:
+            with self.subTest(destination=destination):
+                if self.config.is_symlink():
+                    self.config.unlink()
+                target.write_bytes(original)
+                target.chmod(0o640)
+                self.config.symlink_to(destination)
+                links = {link: (link.readlink(), link.lstat().st_ino)
+                         for link in [self.config, intermediate]}
+                result = self.invoke()
+                self.assertIn(str(self.config), result.stdout)
+                self.assertIn(str(target), result.stdout)
+                self.assertEqual(target.read_bytes(), original + helper["BINDING"])
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+                before = self.config.stat()
+                result = self.invoke()
+                self.assertIn("Already configured", result.stdout)
+                self.assertIn(str(self.config), result.stdout)
+                self.assertIn(str(target), result.stdout)
+                self.assert_not_rewritten(before)
+                self.assertEqual(target.read_bytes(), original + helper["BINDING"])
+                for link, identity in links.items():
+                    self.assertEqual((link.readlink(), link.lstat().st_ino), identity)
+                self.assertEqual(list(target.parent.glob(".crossroads-keybind-*")), [])
+                self.config.unlink()
+
+    def test_symlinked_parent_supports_existing_and_new_config(self):
+        target = self.root / "dotfiles"
+        target.mkdir()
         link = self.root / "link"
-        link.symlink_to(self.root, target_is_directory=True)
-        self.invoke({**self.env, "HERDR_CONFIG_PATH": str(link / "config.toml")}, success=False)
-        self.assertFalse(self.config.exists())
+        link.symlink_to("dotfiles", target_is_directory=True)
+        identity = (link.readlink(), link.lstat().st_ino)
+        for suffix in ["config.toml", "new/herdr/config.toml"]:
+            with self.subTest(suffix=suffix):
+                path = target / suffix
+                if suffix == "config.toml":
+                    path.write_bytes(b"# keep\n")
+                self.invoke({**self.env, "HERDR_CONFIG_PATH": str(link / suffix)})
+                self.assertTrue(path.is_file())
+                self.assertEqual((link.readlink(), link.lstat().st_ino), identity)
+
+    def test_dangling_loop_and_nonregular_targets_are_refused_without_artifacts(self):
+        missing = self.root / "missing/target.toml"
+        directory = self.root / "directory"
+        directory.mkdir()
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo)
+        loop = self.root / "loop"
+        loop.symlink_to("config.toml")
+        for destination in [missing, "loop", "config.toml", directory, fifo]:
+            with self.subTest(destination=destination):
+                self.config.symlink_to(destination)
+                identity = (self.config.readlink(), self.config.lstat().st_ino)
+                result = self.invoke(success=False)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual((self.config.readlink(), self.config.lstat().st_ino), identity)
+                self.assertFalse(missing.parent.exists())
+                self.assertEqual(list(self.root.rglob(".crossroads-keybind-*")), [])
+                self.config.unlink()
+        for kind in ["directory", "fifo"]:
+            with self.subTest(direct=kind):
+                if kind == "directory":
+                    self.config.mkdir()
+                else:
+                    os.mkfifo(self.config)
+                self.invoke(success=False)
+                if kind == "directory":
+                    self.config.rmdir()
+                else:
+                    self.config.unlink()
+        broken_parent = self.root / "broken"
+        broken_parent.symlink_to("missing")
+        self.invoke({**self.env, "HERDR_CONFIG_PATH": str(broken_parent / "config.toml")},
+                    success=False)
+        self.assertFalse(missing.parent.exists())
+
+    def test_symlink_chain_retargeted_during_staging_is_not_written(self):
+        helper = runpy.run_path(str(SCRIPT))
+        original = self.root / "original.toml"
+        other = self.root / "other.toml"
+        intermediate = self.root / "next.toml"
+        original.write_bytes(b"# original\n")
+        other.write_bytes(b"# other\n")
+        self.config.symlink_to("next.toml")
+        real_fsync = os.fsync
+
+        def redirect_during_staging(descriptor):
+            intermediate.unlink()
+            intermediate.symlink_to(destination)
+            real_fsync(descriptor)
+
+        for destination in ["other.toml", "missing/target.toml"]:
+            with self.subTest(destination=destination):
+                if intermediate.is_symlink():
+                    intermediate.unlink()
+                intermediate.symlink_to("original.toml")
+                with mock.patch.dict(os.environ, self.env, clear=True), \
+                        mock.patch.object(os, "fsync", side_effect=redirect_during_staging):
+                    with self.assertRaisesRegex(ValueError, "config changed before write"):
+                        helper["setup"]()
+                self.assertEqual(original.read_bytes(), b"# original\n")
+                self.assertEqual(other.read_bytes(), b"# other\n")
+                self.assertEqual(self.config.readlink(), Path("next.toml"))
+                self.assertEqual(intermediate.readlink(), Path(destination))
+                self.assertFalse((self.root / "missing").exists())
+                self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
+                intermediate.unlink()
+
+    def test_resolved_parent_replaced_during_staging_is_not_written(self):
+        helper = runpy.run_path(str(SCRIPT))
+        parent = self.root / "dotfiles"
+        parent.mkdir()
+        target = parent / "config.toml"
+        target.write_bytes(b"# original\n")
+        self.config.symlink_to("dotfiles/config.toml")
+        moved = self.root / "moved"
+        real_fsync = os.fsync
+
+        def replace_parent_during_staging(descriptor):
+            parent.rename(moved)
+            parent.mkdir()
+            target.write_bytes(b"# replacement\n")
+            real_fsync(descriptor)
+
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(os, "fsync", side_effect=replace_parent_during_staging):
+            with self.assertRaisesRegex(ValueError, "config changed before write"):
+                helper["setup"]()
+        self.assertEqual((moved / "config.toml").read_bytes(), b"# original\n")
+        self.assertEqual(target.read_bytes(), b"# replacement\n")
+        self.assertEqual(self.config.readlink(), Path("dotfiles/config.toml"))
+        self.assertEqual(list(self.root.rglob(".crossroads-keybind-*")), [])
 
     def test_atomic_staging_and_replace_failures_preserve_previous_file(self):
         helper = runpy.run_path(str(SCRIPT))

@@ -84,6 +84,22 @@ the checkout. See [README installation](README.md#installation) for optional
 manual build-then-link testing; those Herdr examples were not executed during
 documentation verification.
 
+### Experimental macOS checks
+
+The separate `.github/workflows/macos.yml` prepares native checks for Apple
+Silicon (`macos-15`) and Intel (`macos-15-intel`). These are versioned standard
+[GitHub-hosted runners](https://docs.github.com/actions/reference/runners/github-hosted-runners),
+free for public repositories (documentation checked 2026-10-16), not larger paid
+runners. The existing required `Linux gates` check remains unchanged; preparing
+this workflow does not configure additional required checks or start a CI run.
+
+The macOS workflow runs formatting, Clippy, Cargo tests, a release build, and all
+four complete PTY harnesses. See [macOS local test preparation](docs/keymaps.md#macos-local-test-preparation-unverified)
+for prerequisites and coverage gaps. Neither architecture has been executed
+as part of this preparation. Passing automated checks would not establish a
+minimum macOS version or replace real Herdr popup, navigation, and focus testing.
+The manifest, managed installer, and published binaries remain Linux-only.
+
 ## Optional local pre-commit and pre-push checks
 
 The repository-owned `.githooks/pre-commit` runs `cargo fmt --check`, then

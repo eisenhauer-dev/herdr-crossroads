@@ -367,6 +367,7 @@ Run all four complete PTY harnesses against a freshly built release binary:
 ```sh
 cargo fmt --check
 cargo test
+python3 -B -m unittest discover -s tests -p test_pty_readers.py
 cargo build --release
 python3 tests/pty_latency.py target/release/herdr-crossroads
 python3 tests/pty_render.py target/release/herdr-crossroads
@@ -374,8 +375,77 @@ python3 tests/pty_keymaps.py target/release/herdr-crossroads
 python3 tests/pty_hints.py target/release/herdr-crossroads
 ```
 
+The Python reader regressions use closed pipes to check immediate EOF failure
+before a required marker and termination of frame/tail drains after EOF. Real
+PTY children also check post-exit cursor/Kitty restore output, parent slave
+ownership through the final drain, and descriptor cleanup on normal exit,
+abort, timeout, assertion, and setup failures (including repeated cleanup after
+descriptor reuse). Popup exit waits also read pending output, so an intermediate
+repaint larger than the PTY queue cannot block the child before exit; a synthetic
+child exercises this backpressure in both classic and Kitty modes.
+Timing cases send and await complete frames for ordinary context/search preparation
+actions separately and assert the final context and query before checking ignored
+input or Esc timing. Escape/protocol sequences remain single writes. Complete
+Alt-letter and double-Esc arrow checks retain the 95-ms bound, measured through
+the matching complete frame without the output-gap reader's extra 10-ms quiet
+wait. Alt input must preserve the search screen; the arrow must reach Select with
+the expected selected pane, not merely an intermediate navigation frame. Failures
+report the measured elapsed time; native scheduling can still exceed this bound.
+All standalone search Esc timing checks, including Help search, observe complete
+frames rather than treating any readable bytes as resolved input. A delayed
+search repaint must retain its entire screen, query and editing cursor; navigation
+must retain the query and selection with the cursor hidden. Help must also retain
+its contents and return to its keys-navigation footer. The check rejects a
+navigation frame whose first byte is received within the original 75-ms guard,
+even if its cursor marker arrives later,
+and requires a complete transition at 90–220 ms from the Esc write, without
+resetting the deadline for intervening frames. Reader regressions inject delayed
+Search output over sockets and real PTYs, including fragmented ANSI and coalesced
+frames, and reject early Select/Help navigation (including a 25-ms body with a
+105-ms final marker byte) and invalid or missing transitions. The late Kitty reply
+check still requires 150 ms without output: no repaint is expected there.
+These are receive-time observations,
+not internal-state timing or proof of the cause of any particular native macOS failure.
+
+The popup helper and standalone render cases retain the parent's slave descriptor
+until final output has been read, then close both descriptors. This avoids a last
+slave close discarding unread output: Darwin's
+[`ptsclose()`](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty_dev.c#L325-L375)
+calls [`ttyclose()`](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty.c#L376-L465),
+which flushes the input and output queues. Output is collected during the bounded
+exit wait and then by the post-exit readiness drain, not EOF, while the parent
+slave remains open. These regressions run on Linux too, but native macOS runs are
+still needed to confirm
+the reported exit-output loss is resolved on both architectures.
+
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks
 stable default/custom footers, grouping, and sanitized notices separately. For
 theme-table preview it sends and awaits theme opening and Space separately,
 asserting list and table content before checking footer stability.
+
+### macOS local test preparation (unverified)
+
+For preparation on both Apple Silicon and Intel Macs, use a native Rust/Cargo
+toolchain with a system linker, Python 3.11+, a POSIX shell, and `stty` on `PATH`.
+Run the command block above from the repository root on each architecture;
+cross-compiling alone does not exercise native PTYs or sockets. Cargo may fetch
+dependencies on a fresh machine; add `--locked --offline` to the Cargo test and
+build commands for a network-free run with the locked dependencies already cached.
+
+The harnesses require an existing, owned, writable `/tmp/opencode` directory.
+Have the local operator provision it if absent; do not reuse another user's
+directory. Keep this literal short path: tests also assert its spelling in
+diagnostics. Do not replace it with a resolved alias or a longer system temporary
+directory without checking both diagnostic assertions and Unix socket path limits.
+
+The three Cargo PTY wrappers remain Linux-only, so `cargo test` on macOS does
+**not** run them. Invoke all four Python commands explicitly, without
+`--input-protocol`. The full-listen-queue reconnect test is Linux x86_64-only;
+these commands do not provide equivalent coverage on macOS.
+
+This is preparation, not a macOS build or live Herdr verification. Native
+`stty` size/raw-state/restoration behavior, PTY reads and closure, socket paths,
+and timing assertions still need actual runs on both architectures. Record the
+OS, architecture, Rust/Python versions and failures before proposing platform
+fixes. No minimum macOS version or macOS support claim is established here.
