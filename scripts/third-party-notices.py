@@ -173,7 +173,7 @@ def installed_system():
                         for path in sorted(notices | licenses)]
 
 
-def system_notices():
+def system_notices(validate_installed=True):
     output = ["<h1>System startup and runtime provenance</h1>",
               "<p>Conservative inventory of two reviewed builders, in stable order. "
               "Only one profile must match the current builder's installed candidates "
@@ -186,7 +186,7 @@ def system_notices():
               "GCC Runtime Library Exception 3.1, for eligible compilation processes. "
               "The glibc exceptions cover only the eight named sources at each exact "
               "source version, not other glibc sources or arbitrary GPL code.</p>"]
-    installed = installed_system()
+    installed = installed_system() if validate_installed else None
     matched = False
     for name, source in [("local-glibc-2.43", "2.43-2ubuntu2.4"),
                          ("ubuntu-24.04", "2.39-0ubuntu8.9")]:
@@ -217,7 +217,7 @@ def system_notices():
             output += [f"<h3>{html.escape(notice['path'])}</h3>",
                        f"<p>Notice/license file SHA256: {notice['sha256']}</p>",
                        "<pre>" + html.escape(notice["text"]) + "</pre>"]
-    if not matched:
+    if validate_installed and not matched:
         raise ValueError("installed inputs do not match either reviewed system builder; review required")
     return output
 
@@ -292,6 +292,47 @@ def generate():
         "Texts below are reproduced without modification in verbatim fenced blocks.")
 
 
+def check_darwin(target):
+    """Darwin's graph is a subset; verify attribution, never invoke gcc/dpkg there.
+
+    Native system static inputs are separately rejected using the actual Apple
+    link map in build-provenance.py. Only OS-provided dylibs may remain external.
+    """
+    if target not in {"aarch64-apple-darwin", "x86_64-apple-darwin"}:
+        raise ValueError("unsupported Darwin notice target")
+    text = NOTICE.read_bytes().decode()
+    if f"<!-- inputs-sha256: {fingerprint()} -->" not in text:
+        raise ValueError("stale third-party notices: review and regenerate")
+    version = command("rustc", "--version")
+    if not version.startswith("rustc 1.99.0 ") or f"<!-- rustc: {html.escape(version)} -->" not in text:
+        raise ValueError("Rust toolchain changed: review and regenerate notices")
+    tree = command("cargo", "tree", "--offline", "--locked", "--target", target,
+                   "-e", "normal,build", "--prefix", "none")
+    active = set(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
+    metadata = json.loads(command("cargo", "metadata", "--offline", "--locked",
+                                  "--format-version", "1", "--filter-platform", target))
+    packages = [p for p in metadata["packages"] if p["source"] and (p["name"], p["version"]) in active]
+    if len(packages) != len(active) - 1:
+        raise ValueError("active Darwin package inventory does not match metadata")
+    for package in packages:
+        heading = markdown(f"<h2>{html.escape(package['name'])} {package['version']}</h2>").strip()
+        if "\n" + heading + "\n" not in text:
+            raise ValueError("Darwin dependency missing from reviewed notices")
+        files = sorted(p for p in Path(package["manifest_path"]).parent.rglob("*") if p.is_file() and
+                       re.search(r"licen[cs]e|notice|copyright|copying|attribution", p.name, re.I))
+        if not files or any("\n" + p.read_bytes().decode() + "\n" not in text for p in files):
+            raise ValueError("Darwin dependency attribution missing or changed")
+    sysroot = Path(command("rustc", "--print", "sysroot"))
+    standard = (sysroot / "share/doc/rust/COPYRIGHT-library.html").read_bytes()
+    if f"Upstream COPYRIGHT-library.html SHA256: {hashlib.sha256(standard).hexdigest()}." not in text:
+        raise ValueError("Rust standard library notice changed: review required")
+    body = standard.decode().split("<body>", 1)[1].rsplit("</body>", 1)[0]
+    if markdown(body).strip() not in text:
+        raise ValueError("Rust standard library attribution missing")
+    if not text.endswith(markdown("\n".join(system_notices(validate_installed=False)))):
+        raise ValueError("reviewed Linux system attribution missing or changed")
+
+
 def main():
     if NOTICE.is_symlink():
         raise ValueError("notice output must not be a symlink")
@@ -307,6 +348,10 @@ def main():
             raise ValueError("Rust toolchain changed: review and regenerate notices")
         if not text.endswith(markdown("\n".join(system_notices()))):
             raise ValueError("stale system notices: review and regenerate")
+    elif len(sys.argv) == 4 and sys.argv[1:3] == ["--check", "--target"]:
+        if not (ROOT / "LICENSE").is_file() or (ROOT / "LICENSE").is_symlink():
+            raise ValueError("release licenses must be regular non-symlink files")
+        check_darwin(sys.argv[3])
     else:
         raise ValueError("usage: third-party-notices.py --check | --write")
 

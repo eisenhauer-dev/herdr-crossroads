@@ -46,63 +46,99 @@ Historical native previews (not current release verification):
 
 ## Requirements and compatibility
 
+[![Published: 0.1.0](https://img.shields.io/badge/published-0.1.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
+[![Preparing: 0.2.0](https://img.shields.io/badge/preparing-0.2.0-orange?style=flat)](docs/releases.md)
+[![Herdr: ≥ 0.9.1](https://img.shields.io/badge/Herdr-%E2%89%A5%200.9.1-5865a3?style=flat)](https://herdr.dev)
+[![Managed installation: Python ≥ 3.11](https://img.shields.io/badge/managed_install-Python_%E2%89%A5_3.11-3776ab?style=flat&logo=python&logoColor=white)](docs/installation.md)
+[![Supported: Linux x86_64 glibc](https://img.shields.io/badge/Linux-x86__64_glibc-2ea44f?style=flat&logo=linux&logoColor=white)](docs/builds.md#runtime-and-verification-limits)
+
+### Runtime
+
 - **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
+- Upcoming **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
+  `MACOSX_DEPLOYMENT_TARGET=15.0`. Native packaging/installation CI passed on all
+  three targets; **0.2.0 is not released**. Published 0.1.0 remains Linux-only.
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
-- Managed installation and opt-in keybinding setup: Git and **Python 3.11+**
-  (standard library only); no Rust/Cargo.
-  Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
+
+### Managed installation
+
+- Managed installation and opt-in keybinding setup require Git and **Python 3.11+**
+  (standard library only); no Rust/Cargo required.
+- Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
   is absent, never after a curl failure. See [download safeguards](docs/installation.md#validation-and-failure-behavior).
-  Source builds: Git, Rust/Cargo, and a system linker.
-- No macOS, Windows, other-architecture, or SSH support is claimed; no minimum glibc
+
+### Source builds
+
+- Git, Rust/Cargo, and a system linker, in addition to the runtime requirements.
+
+### Compatibility status
+
+- No Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
 - **[0.1.0](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
   is the first regular Linux release**, published as Latest with reviewed clean CI assets.
   [Public installation evidence](docs/installation.md#regular-010-public-installation)
   distinguishes pinned native navigation from unpinned CLI installation; no `0.1.0` upgrade cycle is claimed.
+- Current Linux/Apple Silicon/Intel CI passed packaging, provenance and isolated
+  real-Herdr installation with four full PTYs against each installed binary.
+  Actual macOS Herdr live-popup acceptance was **waived, not performed**; automated
+  evidence is not live-popup acceptance or release approval. See [verified build evidence and limits](docs/builds.md#current-020-three-platform-ci-evidence).
 
 ## Installation
 
-Install [Herdr](https://herdr.dev) first. The primary Crossroads installation command is:
+### Quickstart
+
+Install [Herdr](https://herdr.dev) first and check the
+[requirements](#requirements-and-compatibility) (published 0.1.0: Linux only).
+**Review the source, manifest, and assets before approving installation: it executes
+code and registers a plugin globally for your user, not in a sandbox.**
+
+#### 1. Install
 
 ```sh
 herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
-- This follows the public default branch; the checkout's version-pinned hook downloads
-  its matching Linux archive/checksum. The unpinned command passed isolated CLI
-  installation on Herdr 0.9.5; native navigation was tested separately with a pinned release.
-- Review the source, manifest, and assets before approving hook execution:
-  installation executes code and registers a plugin globally for your user, not in a sandbox.
-- See [binary installation](docs/installation.md) for trusted local assets, pinned test
-  prereleases, validation, and version-specific Herdr behavior. There is no short-name registry.
+This follows the public default branch and downloads the checkout's matching
+version and platform binary. Until 0.2.0 assets are approved and available, use
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0` for the
+published Linux version if the default branch has moved ahead. See [installation options and safeguards](docs/installation.md) and
+[public installation evidence](docs/installation.md#regular-010-public-installation).
 
-### Add the launch binding, reload, and open
+<a id="add-the-launch-binding-reload-and-open"></a>
 
-Installation alone does not write a host binding. After reviewing the plugin,
-explicitly opt in to adding `prefix+f` in Herdr's Linux user config:
+#### 2. Set up the keybinding and check success
+
+Installation alone does not write a host binding. Explicitly opt in to adding
+`prefix+f` to Herdr's user config:
 
 ```sh
 herdr plugin action invoke herdr-crossroads.setup-keybind
 herdr plugin log list --plugin herdr-crossroads
 ```
 
-Invocation starts asynchronously: repeat the log command until the matching
+Setup is asynchronous: repeat the log command until the invocation's matching
 `log_id` has `status = "succeeded"`, `exit_code = 0`, and output confirming the
-config path was added or already configured. Do not reload on `running` or `failed`;
-read the error first. Then reload explicitly:
+binding was added or already configured at the expected config path.
+**Do not reload on `running` or `failed`; resolve any error first.**
+See [config paths, conflict handling, and safeguards](docs/installation.md#keyboard-launch-setup).
+
+#### 3. Reload and open
+
+Only after setup succeeds:
 
 ```sh
 herdr server reload-config
 ```
 
-Press `Ctrl+b`, then `f` (or your configured prefix). The action refuses conflicts
-without overwriting bindings and preserves existing config bytes/comments. See
-[path precedence and safeguards](docs/installation.md#keyboard-launch-setup).
-It requires the updated plugin checkout/manifest, not a new runtime binary release.
+Press `Ctrl+b`, then `f` (or your configured prefix).
 
-**Manual fallback:** edit `~/.config/herdr/config.toml` (default path;
+<details>
+<summary>Manual keybinding setup</summary>
+
+Edit `~/.config/herdr/config.toml` (default path;
 `herdr --help` shows the resolved path), following
 [Herdr's versioned configuration guide][herdr-config].
 
@@ -126,7 +162,40 @@ This host launch binding is separate from `keymaps.jsonc`, which changes only
 controls inside Crossroads. Personal-host configuration and key launch remain
 unexecuted; see [installation evidence and source contracts](docs/installation.md#keyboard-launch-setup).
 
-### Optional: build from source
+</details>
+
+<a id="optional-customize-the-popup-size"></a>
+
+<details>
+<summary>Optional: customize the popup size</summary>
+
+Open Crossroads at 75% of the terminal area's width and height:
+
+```sh
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 75% --height 75%
+```
+
+For a customized manual launch binding, replace only the `command` value in the
+example above, then reload as described above:
+
+```toml
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 75% --height 75%"
+```
+
+Setup writes the default command without size flags. Herdr
+[v0.9.4][herdr-size-cli-094] / [v0.9.5][herdr-size-cli-095] source supports these flags,
+[`1%`–`100%`][herdr-size-parser-094] ([v0.9.5 parser][herdr-size-parser-095]), and
+per-dimension overrides of manifest defaults
+([v0.9.4][herdr-size-precedence-094], [v0.9.5][herdr-size-precedence-095]).
+These examples are source-verified only, not executed. Percentages include host
+borders and do not guarantee the required **80×15 popup content cells**.
+
+</details>
+
+<a id="optional-build-from-source"></a>
+
+<details>
+<summary>Optional: build from source</summary>
 
 This is an alternative to managed installation, not a prerequisite. Explicitly
 clone, build, and link a trusted source checkout:
@@ -147,11 +216,14 @@ herdr plugin link "$PWD"
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
 
-- The default popup is half-size. For a trusted local checkout, `width = "90%"` and
-  `height = "90%"` belong in the manifest's `[[panes]]` table before registration,
-  not CLI flags; neither size guarantees 80×15 content cells.
+- Without manifest dimensions or CLI overrides, the popup defaults to half-size.
+  For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's
+  `[[panes]]` table set defaults; use the per-invocation CLI overrides above instead
+  when you do not want to change the manifest. Neither size guarantees 80×15 content cells.
 - These source clone/build/link examples remain unexecuted;
   isolated installation evidence is recorded in the [installation guide](docs/installation.md).
+
+</details>
 
 ## Controls
 
@@ -212,10 +284,16 @@ Crossroads after editing.
 
 - [Troubleshooting by symptom](docs/troubleshooting.md)
 - [Architecture](docs/architecture.md), [contributing and testing](CONTRIBUTING.md)
-- [Linux artifacts and verification limits](docs/builds.md), [release preparation](docs/releases.md)
+- [Build artifacts and verification limits](docs/builds.md), [release preparation](docs/releases.md)
 - Software: [MIT](LICENSE), copyright 2026 SimonEisenhauer. Binary distributions
   retain `LICENSE` and [third-party notices](THIRD-PARTY-NOTICES.md); the existing
   `v0.1.0` release contains the equivalent HTML notices. Demo narration has
   [separate provider restrictions](docs/media/README.md#narration-use-and-attribution).
 
 [herdr-config]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx
+[herdr-size-cli-094]: https://github.com/herdrdev/herdr/blob/v0.9.4/src/cli/plugin.rs#L725-L741
+[herdr-size-cli-095]: https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs#L725-L741
+[herdr-size-parser-094]: https://github.com/herdrdev/herdr/blob/v0.9.4/src/popup_size.rs#L20-L34
+[herdr-size-parser-095]: https://github.com/herdrdev/herdr/blob/v0.9.5/src/popup_size.rs#L20-L34
+[herdr-size-precedence-094]: https://github.com/herdrdev/herdr/blob/v0.9.4/src/app/api/plugins/panes.rs#L25-L31
+[herdr-size-precedence-095]: https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/panes.rs#L25-L31

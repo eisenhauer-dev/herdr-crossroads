@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import pty
+import re
 import select
 import socket
 import struct
@@ -25,29 +26,60 @@ def read_until(fd, marker, timeout=3):
     while marker not in data:
         remaining = deadline - time.monotonic()
         assert remaining > 0 and select.select([fd], [], [], remaining)[0], (marker, data[-300:])
-        data.extend(os.read(fd, 65536))
+        chunk = os.read(fd, 65536)
+        assert chunk, ("EOF before marker", marker, data[-300:])
+        data.extend(chunk)
     return bytes(data)
 
 
-def read_frame(fd, expected=None):
+class DrawReader:
+    def __init__(self, fd):
+        self.fd = fd
+        self.pending = bytearray()
+        self.received = 0.0
+
+    def draw(self, deadline):
+        # Keep read-ahead with this popup, never with a reusable descriptor number.
+        data = self.pending
+        begin = self.received if data else None
+        while True:
+            marker = re.search(rb"\x1b\[\?25[hl]", data)
+            if marker:
+                end = marker.end()
+                raw = bytes(data[:end]).decode("utf-8", "replace")
+                self.pending = data[end:]
+                return raw, begin, self.received
+            remaining = deadline - time.monotonic()
+            assert remaining > 0 and select.select([self.fd], [], [], remaining)[0], data[-300:]
+            chunk = os.read(self.fd, 65536)
+            assert chunk, ("EOF before complete draw", data[-300:])
+            self.received = time.monotonic()
+            if begin is None:
+                begin = self.received
+            data.extend(chunk)
+
+
+def read_frame(reader, expected=None):
     if expected is not None:
         # Replay draws once per key. Wait for the requested state, not an output
-        # gap, and leave subsequent frames (notably timed Esc) in the PTY.
-        data = bytearray()
+        # gap, retaining subsequent frames (notably timed Esc) in the reader.
+        data = ""
         deadline = time.monotonic() + 3
         while True:
-            remaining = deadline - time.monotonic()
-            assert remaining > 0 and select.select([fd], [], [], remaining)[0], data[-300:]
-            byte = os.read(fd, 1)
-            assert byte, ("EOF before expected frame", data[-300:])
-            data.extend(byte)
-            if data.endswith((b"\x1b[?25h", b"\x1b[?25l")):
-                raw = data.decode("utf-8", "replace")
-                if expected(raw):
-                    return raw
-    data = bytearray(read_until(fd, b"\x1b[?25"))
+            raw, _, _ = reader.draw(deadline)
+            data += raw
+            if expected(data):
+                return data
+    fd = reader.fd
+    data = reader.pending
+    reader.pending = bytearray()
+    if b"\x1b[?25" not in data:
+        data.extend(read_until(fd, b"\x1b[?25"))
     while select.select([fd], [], [], 0.01)[0]:
-        data.extend(os.read(fd, 65536))
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        data.extend(chunk)
     return data.decode("utf-8", "replace")
 
 
@@ -55,12 +87,39 @@ def drain(fd):
     data = bytearray()
     while select.select([fd], [], [], 0.2)[0]:
         try:
-            data.extend(os.read(fd, 65536))
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data.extend(chunk)
         except OSError as error:
             if error.errno != errno.EIO:
                 raise
             break
     return bytes(data)
+
+
+def read_search_escape(reader, start, query, search_lines):
+    # Read complete draws, not output gaps: a pre-Esc Search repaint can arrive
+    # late. Read-ahead retains subsequent frames and their receive timestamps.
+    while True:
+        raw, begin, end = reader.draw(start + 0.22)
+        frame_begin, elapsed = begin - start, end - start
+        assert raw.startswith("\x1b[H\x1b[J"), ("incomplete frame start", raw)
+        lines, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
+        assert wraps == 0, lines
+        help_search = search_lines[0] == expected_search_row(80, query, "Help")
+        if lines[0] == expected_search_row(80, query, "Help" if help_search else "Search") and "Backspace: erase" in lines[-1]:
+            assert lines == search_lines, (search_lines, lines)
+            assert "Backspace: erase" in lines[-1] and cursor == (True, 10 + len(query), 0), (lines, cursor)
+            continue
+        assert frame_begin >= 0.075, ("Esc resolved before its deadline", frame_begin, raw)
+        assert 0.09 <= elapsed < 0.22, ("Esc transition timing", elapsed, raw)
+        assert lines[0] == expected_search_row(80, query or "/ to search", "Help" if help_search else "Select"), lines
+        assert "Backspace: erase" not in lines[-1] and cursor[0] is False, (lines, cursor)
+        if help_search:
+            assert lines[1:-1] == search_lines[1:-1] and "close keys" in lines[-1], (search_lines, lines)
+        assert [line for line in lines if line.startswith("  >")] == [line for line in search_lines if line.startswith("  >")], (search_lines, lines)
+        return raw
 
 
 def expected_source_row(directory, filename, width):
@@ -87,58 +146,82 @@ def assert_source_rows(lines, directory, width, height):
 
 
 class Popup:
-    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None):
+    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None, launch_context=None):
         self.width, self.height = width, height
         keymap = directory / "keymaps.jsonc"
         if config is not None:
             keymap.write_text(config if isinstance(config, str) else json.dumps(config))
         elif keymap.exists():
             keymap.unlink()
-        self.master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+        self.master, self.slave = pty.openpty()
+        self.output = DrawReader(self.master)
+        self.child = None
         env = dict(os.environ, HERDR_BIN_PATH=str(directory / "herdr"), HERDR_PLUGIN_CONFIG_DIR=str(directory), HERDR_CONFIG_PATH=str(directory / "missing"), HERDR_PANE_ID="p-self")
         env.pop("HERDR_SOCKET_PATH", None)
+        env.pop("HERDR_PLUGIN_CONTEXT_JSON", None)
+        if launch_context is not None:
+            env["HERDR_PLUGIN_CONTEXT_JSON"] = launch_context
         if focus_socket:
             env["HERDR_SOCKET_PATH"] = str(focus_socket)
-        self.child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
-        os.close(slave)
         try:
+            fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+            self.child = subprocess.Popen([binary], stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
             query = read_until(self.master, b"\x1b[?u")
             assert b"\x1b[>1u" not in query
             if probe_input:
                 os.write(self.master, probe_input)
             if kitty:
                 os.write(self.master, b"\x1b[?0u")
-            self.initial = read_frame(self.master, expected=initial_frame)
+            self.initial = read_frame(self.output, expected=initial_frame)
             assert ("\x1b[>1u" in self.initial) == kitty, self.initial
             self.kitty = kitty
         except BaseException:
             self.abort()
             raise
 
-    def send(self, data):
+    def send(self, data, expected=None):
         os.write(self.master, data)
-        raw = read_frame(self.master)
+        raw = read_frame(self.output, expected=expected)
         lines, wraps = screen(raw, self.width, self.height)
         assert wraps == 0, lines
         return lines
 
     def finish(self, key, success=True):
-        os.write(self.master, key)
-        assert (self.child.wait(timeout=3) == 0) == success
-        tail = drain(self.master)
-        assert tail.count(b"\x1b[<u") == int(self.kitty), tail
-        assert b"\x1b[?25h" in tail, tail
-        os.close(self.master)
+        try:
+            os.write(self.master, key)
+            # A return-to-navigation repaint can fill the PTY queue before exit.
+            # Read while waiting so the child can reach its restore and exit.
+            tail = self.output.pending
+            self.output.pending = bytearray()
+            deadline = time.monotonic() + 3
+            while self.child.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failure = subprocess.TimeoutExpired(self.child.args, 3, output=bytes(tail))
+                    failure.add_note(f"kitty={self.kitty} key={key!r} received={len(tail)} tail={tail[-300:]!r} termios={termios.tcgetattr(self.slave)!r}")
+                    raise failure
+                if select.select([self.master], [], [], min(remaining, 0.01))[0]:
+                    tail.extend(os.read(self.master, 65536))
+            assert (self.child.returncode == 0) == success
+            # Keep the parent slave open until buffered exit output is consumed:
+            # Darwin's last slave close flushes the terminal output queue.
+            tail.extend(drain(self.master))
+            assert tail.count(b"\x1b[<u") == int(self.kitty), tail
+            assert b"\x1b[?25h" in tail, tail
+        finally:
+            self.abort()
 
     def abort(self):
-        if self.child.poll() is None:
-            self.child.kill()
-            self.child.wait()
         try:
-            os.close(self.master)
-        except OSError:
-            pass
+            if self.child is not None and self.child.poll() is None:
+                self.child.kill()
+                self.child.wait()
+        finally:
+            for name in ("master", "slave"):
+                fd = getattr(self, name)
+                if fd != -1:
+                    setattr(self, name, -1)
+                    os.close(fd)
 
 
 def frame_reader_cases():
@@ -147,6 +230,7 @@ def frame_reader_cases():
     escaped = b"\x1b[H\x1b[J  Search: codex\r\nNavigation\x1b[?25l"
     for coalesced in [False, True]:
         reader, writer = socket.socketpair()
+        output = DrawReader(reader.fileno())
         replay = threading.Event()
         def emit():
             if coalesced:
@@ -162,9 +246,9 @@ def frame_reader_cases():
                 if raw.endswith(navigation.decode()):
                     replay.set()
                 return raw.endswith(search.decode())
-            raw = read_frame(reader.fileno(), expected=searching)
+            raw = read_frame(output, expected=searching)
             assert raw == (navigation + search).decode(), raw
-            raw = read_frame(reader.fileno(), expected=lambda raw: raw.endswith(escaped.decode()))
+            raw = read_frame(output, expected=lambda raw: raw.endswith(escaped.decode()))
             assert raw == escaped.decode(), raw
         finally:
             replay.set()
@@ -196,25 +280,27 @@ def main(binary):
                 popup = Popup(binary, directory, kitty=kitty)
                 for help_search in [False, True]:
                     if help_search:
-                        popup.send(b"?")
-                    popup.send(b"/x")
+                        popup.send(b"?", expected=lambda raw: True)
+                    for action in (b"/", b"x"):
+                        lines = popup.send(action, expected=lambda raw: True)
+                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
+                    searching = lines
                     start = time.monotonic()
-                    lines = popup.send(b"\x1bx")
-                    assert time.monotonic() - start < 0.095, "complete Alt input must not wait for Esc timeout"
+                    lines = popup.send(b"\x1bx", expected=lambda raw: screen(raw, 80, 15)[0] == searching)
+                    elapsed = time.monotonic() - start
+                    assert elapsed < 0.095, ("complete Alt input must not wait for Esc timeout", elapsed)
                     assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
                     keys = b"\n\x08\t" if not kitty else b"\x1b[106;5u\x1b[104;5u\x1b[105;5u\x1b[109;5u"
                     os.write(popup.master, keys)
-                    raw = read_frame(popup.master) + drain(popup.master).decode("utf-8", "replace")
+                    raw = read_frame(popup.output) + drain(popup.master).decode("utf-8", "replace")
                     lines, wraps = screen(raw, 80, 15)
                     assert wraps == 0 and lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
-                    lines = popup.send(b"\x7f")
-                    assert lines[0] == expected_search_row(80, "", "Help" if help_search else "Search"), lines
+                    lines = popup.send(b"\x7f", expected=lambda raw: True)
+                    assert lines[0] == expected_search_row(80, "", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
                     # Raw Esc has a fixed 100ms ambiguity deadline in either mode.
                     start = time.monotonic()
                     os.write(popup.master, b"\x1b")
-                    assert not select.select([popup.master], [], [], 0.075)[0], "Esc resolved early"
-                    read_frame(popup.master)
-                    assert 0.09 <= time.monotonic() - start < 0.22
+                    read_search_escape(popup.output, start, "", lines)
                     if help_search:
                         popup.send(b"q")
                 popup.finish(b"q")
@@ -492,17 +578,17 @@ def error_block_cases(binary, directory):
         for width, height in ((67, 12), (79, 15), (80, 14), (80, 15), (40, 3), (40, 2), (40, 1), (162, 36), (80, 15)):
             fcntl.ioctl(popup.master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
             popup.width, popup.height = width, height
-            check(read_frame(popup.master), width, height)
+            check(read_frame(popup.output), width, height)
             for _ in range(100):
                 os.write(popup.master, b"k")
-                first = check(read_frame(popup.master), width, height)
+                first = check(read_frame(popup.output), width, height)
             small = width < 80 or height < 15
             if height > 2:
                 assert first[0].startswith("ERROR: Popup too small") == small, (width, height, first)
             collected = "".join(first[:-2] if height >= 3 else first)
             for _ in range(50):
                 os.write(popup.master, b"j")
-                lines = check(read_frame(popup.master), width, height)
+                lines = check(read_frame(popup.output), width, height)
                 collected += "".join(lines[:-2] if height >= 3 else lines)
             assert "unknownthemebogus" in collected.replace(" ", ""), (width, height, collected)
             normalized = collected.replace(" ", "").replace("ERROR:", "")
@@ -604,22 +690,40 @@ def input_protocol_cases(binary, directory):
                 # or leak their bytes into Select/Help search or theme controls.
                 modified = (b"\n", b"\x08", b"\x1bf", b"\x1b[105;5u", b"\x1b[109;5u", b"\x1b[106;3u", b"\x1b[1;5A", b"\x1b[1;3B", b"\x1b[57351;5u")
                 for open_key, close_key in ((None, None), (b"?", b"q"), (b"t", b"\x1b[27u"), (b"/x", b"\r"), (b"?/x", b"\rq")):
-                    lines = popup.send(open_key) if open_key else initial
+                    # Await each ordinary action's repaint before testing input.
+                    lines = initial
+                    for at in range(len(open_key or b"")):
+                        lines = popup.send(open_key[at:at + 1], expected=lambda raw: True)
+                    if open_key == b"t":
+                        assert lines[0].startswith("  Themes · selected:"), lines
+                    else:
+                        mode = {None: "Select", b"?": "Help", b"/x": "Search", b"?/x": "Help"}[open_key]
+                        query = "x" if open_key in (b"/x", b"?/x") else "/ to search"
+                        assert lines[0] == expected_search_row(80, query, mode), lines
+                        assert ("Backspace: erase" in lines[-1]) == (query == "x"), lines
                     for sequence in modified:
-                        assert popup.send(sequence) == lines, (sequence, lines)
+                        actual = popup.send(sequence)
+                        assert actual == lines, ("kitty", kitty, "open_key", open_key, "sequence", sequence, "expected", lines, "actual", actual, "termios", termios.tcgetattr(popup.slave))
                         assert popup.child.poll() is None
                     if close_key:
-                        popup.send(close_key)
+                        for action in ((b"\r", b"q") if close_key == b"\rq" else (close_key,)):
+                            popup.send(action)
                     if open_key in (b"/x", b"?/x"):
                         popup.send(b"r")
                 popup.finish(b"q")
 
                 # The first Esc returns from search; the second starts the arrow.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
-                popup.send(b"j/Same")
+                for action in (b"j", b"/", b"S", b"a", b"m", b"e"):
+                    lines = popup.send(action, expected=lambda raw: True)
+                assert lines[0] == expected_search_row(80, "Same", "Search") and "Backspace: erase" in lines[-1], lines
+                def arrow_complete(raw):
+                    lines, _ = screen(raw, 80, 15)
+                    return lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" not in lines[-1] and any(line.startswith("  >") and "Claude" in line for line in lines)
                 start = time.monotonic()
-                lines = popup.send(b"\x1b\x1b[A")
-                assert time.monotonic() - start < 0.095, "a complete double-Esc arrow must not wait for timeout"
+                lines = popup.send(b"\x1b\x1b[A", expected=arrow_complete)
+                elapsed = time.monotonic() - start
+                assert elapsed < 0.095, ("a complete double-Esc arrow must not wait for timeout", elapsed)
                 assert lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" not in lines[-1], lines
                 assert any(line.startswith("  >") and "Claude" in line for line in lines), lines
                 assert popup.child.poll() is None
@@ -629,19 +733,21 @@ def input_protocol_cases(binary, directory):
 
                 # Rapid Esc+q is Alt+q, not return/close; q cannot become search text.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
-                popup.send(b"/codex")
-                lines = popup.send(b"\x1bq")
+                for action in (b"/", b"c", b"o", b"d", b"e", b"x"):
+                    lines = popup.send(action, expected=lambda raw: True)
+                assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
+                os.write(popup.master, b"\x1bq")
+                # Stop at a full frame boundary; do not consume a partial later
+                # repaint into the output-gap reader before measuring Esc.
+                raw = read_frame(popup.output, expected=lambda raw: True)
+                lines, wraps = screen(raw, 80, 15)
+                assert wraps == 0, lines
                 assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
                 assert popup.child.poll() is None, "Alt+q must not close search"
                 # Now exercise actual standalone Esc, then q, with stdin still open.
                 start = time.monotonic()
                 os.write(popup.master, b"\x1b")
-                assert not select.select([popup.master], [], [], 0.075)[0], "Esc resolved before its deadline"
-                raw = read_frame(popup.master)
-                lines, wraps = screen(raw, 80, 15)
-                assert wraps == 0 and lines[0] == expected_search_row(80, "codex", "Select"), lines
-                assert "Backspace: erase" not in lines[-1], lines
-                assert 0.09 <= time.monotonic() - start < 0.22
+                read_search_escape(popup.output, start, "codex", lines)
                 assert popup.child.poll() is None, "Esc must return to navigation, not close"
                 popup.finish(b"q")
 
@@ -651,7 +757,7 @@ def input_protocol_cases(binary, directory):
             os.write(popup.master, b"\x1b[?1u")
             assert not select.select([popup.master], [], [], 0.15)[0], "late Kitty response must be consumed without output or push"
             os.write(popup.master, b"\x1b[B")
-            raw = read_frame(popup.master)
+            raw = read_frame(popup.output)
             assert "\x1b[>1u" not in raw and "\x1b[<u" not in raw, "late reply must not acquire protocol ownership"
             lines, wraps = screen(raw, 80, 15)
             assert wraps == 0 and any("Unsupported keymap keys - select mode" in line for line in lines) and any("Ctrl+i" in line for line in lines), lines
@@ -677,7 +783,7 @@ def input_protocol_cases(binary, directory):
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[B/codex\x1b", initial_frame=searching_codex)
                 initial, wraps = screen(popup.initial, 80, 15)
                 assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in initial[-1], initial
-                raw = read_frame(popup.master, expected=navigation_codex)
+                raw = read_frame(popup.output, expected=navigation_codex)
                 lines, wraps = screen(raw, 80, 15)
                 assert wraps == 0 and lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" not in lines[-1], lines
                 assert popup.child.poll() is None

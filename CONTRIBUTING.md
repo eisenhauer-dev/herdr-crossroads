@@ -8,17 +8,19 @@ contributors work in forks and open pull requests targeting `develop`, not `main
 Anyone may clone the public repository. The contribution flow is:
 
 - Fork or internal branch → `develop`: contributions are integrated and tested here.
-- Internal branch → `main`: only branches from `eisenhauer-dev/herdr-crossroads`
-  are accepted. This is not restricted to the branch named `develop`.
+- Internal `develop` → `main`: only the exact `develop` branch from
+  `eisenhauer-dev/herdr-crossroads` is accepted; all other internal branches are denied.
 - Fork → `main`: not accepted; target `develop` instead. Fork pull requests to
-  `develop` remain welcome.
+  `develop` remain welcome from any head branch, including `develop`, `feature/*`, or `main`.
 
 The owner controls which changes and commits move from development into a
 release, and when. This routing policy does not automatically merge, close, tag,
 or release anything. The source-repository check in
 `.github/workflows/pr-source-policy.yml` is active and required on `main`.
-It rejects fork-to-`main` metadata without closing the PR or preventing its opening;
-fork-to-`develop` contributions remain allowed.
+The local workflow additionally requires the exact internal `develop` head for
+`main`; this tighter rule is not remotely active until the trusted base workflow
+is updated. The required check blocks merging, not PR creation, and never closes
+a PR. Fork-to-`develop` contributions remain allowed.
 
 CI runs for pull requests targeting both `develop` and `main`, including fork
 pull requests; the `pull_request` trigger has no target-branch filter. Push-triggered
@@ -52,7 +54,7 @@ and [protected branches](https://docs.github.com/en/repositories/configuring-bra
 
 ## Developer setup
 
-Use Linux with Rust/Cargo, a system linker, `stty`, a POSIX shell, and Python
+Use Linux or native macOS with Rust/Cargo, a system linker, `stty`, a POSIX shell, and Python
 3.11+ for the standard-library-only PTY harnesses. The tests require an existing,
 writable `/tmp/opencode` directory for isolated temporary files and Unix sockets;
 create it only if you own it and have permission. No real Herdr process, plugin
@@ -83,6 +85,35 @@ dependencies are already cached and you need a network-free check. Do not use
 the checkout. See [README installation](README.md#installation) for optional
 manual build-then-link testing; those Herdr examples were not executed during
 documentation verification.
+
+### macOS release preparation
+
+The separate `.github/workflows/macos.yml` runs native checks for Apple
+Silicon (`macos-15`) and Intel (`macos-15-intel`). These are versioned standard
+[GitHub-hosted runners](https://docs.github.com/actions/reference/runners/github-hosted-runners),
+free for public repositories (documentation checked 2026-10-16), not larger paid
+runners. The existing required `Linux gates` check remains unchanged; this
+workflow does not configure additional required checks.
+
+The macOS workflow runs formatting, Clippy, Cargo tests, a release build, and all
+four complete PTY harnesses. At `fa535ba414067bae6df59d6e4394d94149ee0f4b`,
+[macOS run 39223794908](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794908)
+passed on native Apple Silicon and Intel, including all four full PTYs on each;
+the matching [Linux run 39223794899](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39223794899)
+also passed. See [macOS local verification](docs/keymaps.md#macos-local-verification)
+for prerequisites and coverage gaps. The user waived actual Mac Herdr live
+acceptance on 2026-10-19; that gate is **waived, not passed**. Automated evidence
+does not establish a minimum macOS version or real Herdr popup, navigation, and
+focus behavior. Exact runner OS builds and Python versions are not recorded here.
+The later exact `6f91a3f` Linux and native macOS CI also passed four full PTYs
+per platform. These historical results predate the new 0.2.0 distribution gates.
+The checkout now prepares macOS **15.0+** ARM64/Intel with explicit deployment
+target 15.0; **0.2.0 is not released**, and published 0.1.0 stays Linux-only.
+Current native three-platform packaging, provenance/notices and isolated real-Herdr
+installation CI passed, including all four installed-binary PTYs on each target.
+See [candidate identity, artifact verification and limits](docs/builds.md#current-020-three-platform-ci-evidence).
+Independent review and final acceptance remain pending; automated installation
+does not replace the waived live-popup gate or authorize publication.
 
 ## Optional local pre-commit and pre-push checks
 
@@ -184,12 +215,16 @@ live installation, host popup routing, SSH, every keyboard protocol, or cross-OS
 compatibility. Any manual host test should state the Herdr version, terminal,
 platform, setup changes, results, and cleanup performed.
 
-For the single supported native build-artifact target, use
+For the retained Linux native build-artifact target, use
 `sh scripts/build-linux.sh`. It performs the locked explicit-target release build,
 runs all four full PTYs against that exact binary, and packages a tar plus SHA256
-checksums only after success. See [tested Linux build artifacts](docs/builds.md)
+checksums only after success. For native Apple Silicon/Intel, use
+`sh scripts/build-macos.sh`; it requires macOS 15.0+, native Rust 1.99.0 and Apple
+command-line tools/SDK, verifies notices and final-link evidence, and packages
+only after all four full PTYs pass. Signing is link-time ad-hoc, not Developer ID
+or notarization; do not mutate the tested binary afterward. See [build artifacts](docs/builds.md)
 for prerequisites, versioned output paths, failure cleanup, and compatibility limits.
-Packaging additionally requires one of the two exact reviewed system builders
+Linux packaging additionally requires one of the two exact reviewed system builders
 under `LICENSES/` (local glibc 2.43 or actual Ubuntu 24.04 CI): object hashes,
 package/source versions and installed notice/license bytes are mandatory build
 inputs. Canonical notices conservatively include both profiles. Unknown or changed
@@ -198,7 +233,7 @@ builders fail rather than generating host-specific distribution notices; see
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts; publication remains a separately authorized action.
-The current version `0.1.0` is the first regular Linux release for
+The checkout prepares unreleased `0.2.0` for three targets. Published `0.1.0` is the first regular Linux release for
 `x86_64-unknown-linux-gnu` only, published as Latest on 2026-10-16 with four
 [reviewed clean CI assets](docs/builds.md#regular-010-public-pipeline-evidence),
 not the local personal-path-bearing binary or reused historical assets.
@@ -222,9 +257,23 @@ approval requirements and execution status in the installation guide.
 and managed lifecycle; it passed on Herdr 0.9.3 on 2026-10-14, including replacement
 and version return with a test-only fixture, not a newly released runtime.
 See [native evidence and limits](docs/installation.md#native-distribution-acceptance).
-Only `python3 tests/test_distribution_helpers.py` is a routine/CI gate: its
-helper tests do not launch Herdr or any subprocess. Both real-Herdr harnesses
+`python3 tests/test_distribution_helpers.py` is a routine/CI gate: its
+helper tests do not launch Herdr or any subprocess. Both historical real-Herdr harnesses
 remain explicit opt-in, outside discovery and CI.
+
+The separate new `tests/test_release_install.py` **is** configured in Linux and
+both native macOS CI jobs before artifact upload. It takes explicit Herdr 0.9.5
+and archive paths, isolates HOME/XDG/config, pins a local Git fixture by commit,
+uses trusted local assets, denies Rust/Cargo, and checks real managed install/
+reinstall, config/notices, negative rejection and all four full PTYs against the
+installed binary. It starts no server/popup and is not a public-download gate.
+Native execution passed on all three targets in the
+[current candidate CI](docs/builds.md#current-020-three-platform-ci-evidence). Its fixture-helper checks are
+`python3 tests/test_release_install_helpers.py`; see [scope and limitations](docs/installation.md#automated-release-installation-gate).
+The recorded CI does not substitute for independent combined review approval,
+which remains pending regardless of the Mac live-popup waiver. Primary acceptance and
+push/merge/tag/manual publication each remain separate decisions; see
+[manual release gates and default-branch ordering](docs/releases.md#020-manual-release-gates).
 
 Coverage has no numeric minimum initially. Record the baseline, explain decreases
 in review, and meaningfully test relevant changed paths and error paths rather
@@ -232,156 +281,6 @@ than chasing a percentage. See [coverage](docs/coverage.md) for the source-only
 baseline and reproducible native LLVM measurement. Coverage supplements, never
 replaces, the hard formatting, Clippy, Cargo-test, and complete optimized-release
 PTY gates above.
-
-## Automated checks
-
-`.github/workflows/ci.yml` defines one stable **Linux gates** job for pushes to
-`main`, `pull_request` events, and manual `workflow_dispatch` on an existing ref,
-on the standard Ubuntu 24.04 x86_64 runner. Pull requests from both owner branches
-and forks are checked, including new commits, with no PR target-branch filter.
-Pushes to `develop` or feature branches and tag pushes do not trigger CI, avoiding
-duplicate push and PR runs for development branches. A push to `main` after merging
-still runs the checks. Every runner job is guarded by
-`github.event.repository.private == false`: private-repository
-events skip the job without executing runner steps. When the repository is public
-and Actions is enabled, these events automatically run formatting, Clippy with
-warnings denied, locked Cargo tests, isolated Git-hook tests, version-checker,
-build-helper, installer and keybinding-setup unit tests, and pure distribution
-helper tests,
-and the explicit `x86_64-unknown-linux-gnu` locked release build with all four
-complete PTY harnesses through `scripts/build-linux.sh`.
-
-The job uses rustup already on the runner to select Rust 1.99.0 with rustfmt and
-Clippy, verifies Python 3.11+, and creates/checks an owned writable `/tmp/opencode`
-directory. It has a 30-minute timeout, read-only contents permission, and a
-commit-pinned checkout with credential persistence disabled; no cache or Rust
-setup action is used. After successful gates, commit-pinned `actions/upload-artifact`
-v7.0.2 uploads only the successful current-run version-named tar, archive
-checksum, provenance JSON and link map from `target/builds/`, with seven-day
-retention and an error if files are missing. The tar preserves the
-binary's executable mode. A successful packaging step supplies the exact asset
-name via `GITHUB_OUTPUT`; no wildcard selects previous versions. These are CI
-build artifacts, not published release assets. Manual dispatch reuses the same
-gates; no tag trigger, publication job, or write permission is configured.
-
-Run the standard-library workflow and provenance regression checks locally with:
-
-```sh
-python3 tests/test_ci_workflow.py
-python3 tests/test_build_provenance.py
-```
-
-These checks protect the main-only push and unfiltered PR/manual trigger contract,
-job guard, checkout settings, gate ordering,
-helper invocation, and exact versioned artifact upload; they are not a full YAML
-parser or GitHub Actions schema validator. `python3 tests/test_build_linux.py` separately
-checks full PTY ordering, exact binary selection, checksums/mode, and failure
-cleanup with fake tools and real tar/SHA256 in isolated temporary directories. It
-also executes the workflow's packaging step in isolation to check that exact-name
-metadata is emitted only after success.
-`python3 tests/test_version.py` checks agreement, malformed/missing data, and safe
-stable version names using isolated manifests and Python 3.11+ `tomllib`.
-`python3 tests/test_build_provenance.py` is a required local/CI helper-test gate;
-it checks binary/map binding, package/source records, path normalization and
-collection failures using fake subprocess results. Evidence limits and the
-separate notice-review requirement are documented in [builds](docs/builds.md#builderlink-evidence-not-distribution-approval).
-`python3 tests/test_install_binary.py` is also a required helper-test gate locally
-and in CI; it uses synthetic assets without invoking Herdr or installing into the
-live checkout. `python3 tests/test_setup_keybind.py` is a required local/CI gate
-for opt-in host-binding setup: isolated HOME/XDG/config paths under `/tmp/opencode`,
-no real Herdr or personal configuration. `python3 tests/test_distribution_helpers.py` is also required
-locally and in CI; it checks fixture assets/versions and current-cell parsing
-without invoking Herdr. Both real-Herdr sandbox harnesses remain opt-in and outside CI.
-Static checks and successful local gate runs are not proof of a CI execution.
-On 2026-10-15, the public [push run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38764985641)
-and [pull-request run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38765043636)
-passed their Linux gates, including binary packaging and artifact upload.
-The later [pipeline download verification](docs/builds.md#downloaded-public-pipeline-verification)
-checks that historical main artifact separately. Branch protection now requires
-**Linux gates** and **PR source policy** from GitHub Actions (app ID `15368`)
-and an up-to-date branch before merging into `main`, including for administrators;
-see the [contribution workflow](#public-contribution-workflow) for the accepted
-check-conclusion limits. Local hooks alone cannot enforce this protection.
-No private-repository Actions execution is claimed or required.
-
-### Active PR source merge gate
-
-The separate **PR source policy** job uses `pull_request_target` for `opened`,
-`synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
-Unlike the ordinary CI workflow, GitHub takes this workflow from the base
-repository's **default branch**, not from the PR's merge commit. The reviewed
-workflow reached `main` through [PR #7](https://github.com/eisenhauer-dev/herdr-crossroads/pull/7),
-merged at `24e60502de675ca1d6d501ae1cc03421276a03c4` on 2026-10-16.
-It leaves `Linux gates` unchanged.
-
-The public-only job uses the standard Ubuntu 24.04 runner, a five-minute timeout,
-and `permissions: {}`. It runs only inline Python standard-library code against
-`GITHUB_EVENT_PATH`: no checkout, PR code, actions, dependencies, downloads,
-caches, secrets, or API access. For `main`, the event repository, PR base repository,
-and PR head repository must all have matching positive integer repository IDs.
-Missing, null, malformed or mismatched identities fail closed. Branch names and
-owner names do not establish repository identity: any internal source branch is
-allowed, while a fork branch named `develop` is not. For `develop`, internal and
-fork sources are allowed. The check never closes a PR.
-
-On 2026-10-16, `main` protection was configured and read back with strict required
-**PR source policy** and **Linux gates** checks, both bound to GitHub Actions app
-ID `15368`, with administrator enforcement and existing protections preserved.
-The user explicitly waived a real fork-negative test: local event fixtures prove
-metadata rejection, but no live fork-PR rejection is claimed. The app binding
-is not a claim of absolute spoof resistance: other Actions workflows share the
-same app, and administrators retain power to change workflows and protection.
-Review workflow changes and keep check names unique.
-
-The actual internal-source positive case also passed on 2026-10-16:
-[PR #8](https://github.com/eisenhauer-dev/herdr-crossroads/pull/8) had both required
-checks green, including [PR source policy run 38877336973](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336973)
-and [Linux gates run 38877336960, attempt 2](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336960/attempts/2).
-It merged as `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`; the merged tree matched
-reviewed source `c24df0876dae2a219bb833695829f7dc99433ae2` exactly. Strict checks
-and administrator enforcement were preserved. This does not replace the expressly
-waived live fork-negative test. Attempt 1 failed in an unchanged transport fixture
-with `ExecutableFileBusy` rather than expected `Other`; the unchanged rerun passed,
-without assertion or gate changes. Its root cause remains uncertain. The historical
-source-policy behavior-RED timing gap remains a limitation, not retroactive TDD proof.
-[Post-merge main CI run 38878662737](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38878662737)
-passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`,
-including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
-all four full PTYs, packaging and upload.
-
-GitHub's documentation checked on 2026-10-16 says the default public-repository
-`pull_request_target` event policy is currently in evaluate mode and will be
-enforced for affected repositories on **2026-11-02**. An applicable event policy
-explicitly allowing this trusted workflow's event may therefore also require
-separate remote approval/configuration. Missing or blocked runs must not be
-mistaken for passing enforcement. GitHub may also suppress this event for certain
-SHA-like source branch names; such branches are not excluded by the local policy,
-but a missing required check can still block merging.
-See [securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
-and [event behavior and branch filters](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
-These local checks do not themselves verify remote settings or event delivery;
-the active configuration above was verified separately by the operator.
-
-Run `python3 tests/test_pr_source_policy.py` locally (also included in CI's helper
-checks). It executes the workflow's actual inline policy with isolated event
-fixtures under `/tmp/opencode`, covering internal branches, forks, same-name fork
-branches, malformed identities, and untrusted strings. Textual checks cover the
-event, runner, permissions, and no-checkout/no-secrets contract; these are not a
-full YAML/Actions validator or proof of remote execution or branch protection.
-
-Public negative verification on 2026-10-15 used temporary
-[PR #6](https://github.com/eisenhauer-dev/herdr-crossroads/pull/6), with `main`
-already included in the head branch and no merge conflicts. With `[skip ci]`,
-the head had no check runs and GitHub reported its merge state as `BLOCKED`.
-An intentional whitespace-only Rust formatting error then failed
-[Linux gates](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38777256419)
-at `Check formatting`; the merge state remained `BLOCKED`. The required check
-was bound to the GitHub Actions app and administrator enforcement remained on.
-These were read-only merge-state checks, not attempted merges. The temporary
-edits were fully reverted, restoring the file tree of the already-green
-[main run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190),
-and the PR was manually closed without merging. No protection rule was changed.
-This verification did not create a fork PR or test `skipped`/`neutral` conclusions.
 
 ## Making a change
 
@@ -440,3 +339,173 @@ exception headers and archive provenance are checked in under `LICENSES/` and
 embedded in the generated notices. Keep source versions matched, review the final
 binary/link map, and repack/reverify assets after notice changes; see the linked
 evidence above.
+
+## Automated checks
+
+`.github/workflows/ci.yml` defines one stable **Linux gates** job for pushes to
+`main`, `pull_request` events, and manual `workflow_dispatch` on an existing ref,
+on the standard Ubuntu 24.04 x86_64 runner. Pull requests from both owner branches
+and forks are checked, including new commits, with no PR target-branch filter.
+Pushes to `develop` or feature branches and tag pushes do not trigger CI, avoiding
+duplicate push and PR runs for development branches. A push to `main` after merging
+still runs the checks. Every runner job is guarded by
+`github.event.repository.private == false`: private-repository
+events skip the job without executing runner steps. When the repository is public
+and Actions is enabled, these events automatically run formatting, Clippy with
+warnings denied, locked Cargo tests, isolated Git-hook tests, version-checker,
+build-helper, installer and keybinding-setup unit tests, and pure distribution
+helper tests,
+and the explicit `x86_64-unknown-linux-gnu` locked release build with all four
+complete PTY harnesses through `scripts/build-linux.sh`.
+
+The new workflow also checks release-install helpers, obtains checksum-pinned
+Herdr 0.9.5 and runs the real managed local-fixture installation gate against the
+fresh package before uploading those exact assets. The macOS matrix performs the
+equivalent native packaging/install gates while preserving its four individual
+five-minute full-PTY steps. [Current three-platform CI evidence](docs/builds.md#current-020-three-platform-ci-evidence)
+confirms these gates passed; final acceptance remains separate. Historical runs
+below establish only their dated scope.
+
+The job uses rustup already on the runner to select Rust 1.99.0 with rustfmt and
+Clippy, verifies Python 3.11+, and creates/checks an owned writable `/tmp/opencode`
+directory. It has a 30-minute timeout, read-only contents permission, and a
+commit-pinned checkout with credential persistence disabled; no cache or Rust
+setup action is used. After successful gates, commit-pinned `actions/upload-artifact`
+v7.0.2 uploads only the successful current-run version-named tar, archive
+checksum, provenance JSON and link map from `target/builds/`, with seven-day
+retention and an error if files are missing. The tar preserves the
+binary's executable mode. A successful packaging step supplies the exact asset
+name via `GITHUB_OUTPUT`; no wildcard selects previous versions. These are CI
+build artifacts, not published release assets. Manual dispatch reuses the same
+gates; no tag trigger, publication job, or write permission is configured.
+
+Run the standard-library workflow and provenance regression checks locally with:
+
+```sh
+python3 tests/test_ci_workflow.py
+python3 tests/test_build_provenance.py
+```
+
+These checks protect the main-only push and unfiltered PR/manual trigger contract,
+job guard, checkout settings, gate ordering,
+helper invocation, and exact versioned artifact upload; they are not a full YAML
+parser or GitHub Actions schema validator. `python3 tests/test_build_linux.py` separately
+checks full PTY ordering, exact binary selection, checksums/mode, and failure
+cleanup with fake tools and real tar/SHA256 in isolated temporary directories. It
+also executes the workflow's packaging step in isolation to check that exact-name
+metadata is emitted only after success.
+`python3 tests/test_version.py` checks agreement, malformed/missing data, and safe
+stable version names using isolated manifests and Python 3.11+ `tomllib`.
+`python3 tests/test_build_provenance.py` is a required local/CI helper-test gate;
+it checks binary/map binding, package/source records, path normalization and
+collection failures using fake subprocess results. Evidence limits and the
+separate notice-review requirement are documented in [builds](docs/builds.md#builderlink-evidence-not-distribution-approval).
+`python3 tests/test_install_binary.py` is also a required helper-test gate locally
+and in CI; it uses synthetic assets without invoking Herdr or installing into the
+live checkout. `python3 tests/test_setup_keybind.py` is a required local/CI gate
+for opt-in host-binding setup: isolated HOME/XDG/config paths under `/tmp/opencode`,
+no real Herdr or personal configuration. `python3 tests/test_distribution_helpers.py` is also required
+locally and in CI; it checks fixture assets/versions and current-cell parsing
+without invoking Herdr. The historical `test_herdr_install.py` and
+`test_distribution.py` sandbox harnesses remain opt-in and outside CI; the new
+`test_release_install.py` gate is configured before upload as described above.
+Static checks and successful local gate runs are not proof of a CI execution.
+On 2026-10-15, the public [push run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38764985641)
+and [pull-request run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38765043636)
+passed their Linux gates, including binary packaging and artifact upload.
+The later [pipeline download verification](docs/builds.md#downloaded-public-pipeline-verification)
+checks that historical main artifact separately. Branch protection now requires
+**Linux gates** and **PR source policy** from GitHub Actions (app ID `15368`)
+and an up-to-date branch before merging into `main`, including for administrators;
+see the [contribution workflow](#public-contribution-workflow) for the accepted
+check-conclusion limits. Local hooks alone cannot enforce this protection.
+No private-repository Actions execution is claimed or required.
+
+## Policy implementation and verification record
+
+The following retains the dated policy evidence and implementation details;
+start with the [contribution workflow](#public-contribution-workflow) and
+[change procedure](#making-a-change) for current contributor guidance.
+
+### Active PR source merge gate
+
+The separate **PR source policy** job uses `pull_request_target` for `opened`,
+`synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
+Unlike the ordinary CI workflow, GitHub takes this workflow from the base
+repository's **default branch**, not from the PR's merge commit. The reviewed
+workflow reached `main` through [PR #7](https://github.com/eisenhauer-dev/herdr-crossroads/pull/7),
+merged at `24e60502de675ca1d6d501ae1cc03421276a03c4` on 2026-10-16.
+It leaves `Linux gates` unchanged.
+
+The public-only job uses the standard Ubuntu 24.04 runner, a five-minute timeout,
+and `permissions: {}`. It runs only inline Python standard-library code against
+`GITHUB_EVENT_PATH`: no checkout, PR code, actions, dependencies, downloads,
+caches, secrets, or API access. For `main`, the event repository, PR base repository,
+and PR head repository must all have matching positive integer repository IDs.
+Missing, null, malformed or mismatched identities fail closed. The local workflow
+also requires the head ref to be exactly `develop`; missing, null, malformed or
+other refs fail closed. Branch and owner names cannot substitute for repository
+identity: a fork branch named `develop` is denied. For `develop`, internal and
+fork sources from any head branch are allowed. The check never closes a PR.
+The historical remote evidence below predates the exact-head restriction; editing
+the local `develop` workflow alone does not activate it on `main`.
+
+On 2026-10-16, `main` protection was configured and read back with strict required
+**PR source policy** and **Linux gates** checks, both bound to GitHub Actions app
+ID `15368`, with administrator enforcement and existing protections preserved.
+The user explicitly waived a real fork-negative test: local event fixtures prove
+metadata rejection, but no live fork-PR rejection is claimed. The app binding
+is not a claim of absolute spoof resistance: other Actions workflows share the
+same app, and administrators retain power to change workflows and protection.
+Review workflow changes and keep check names unique.
+
+The actual internal-source positive case also passed on 2026-10-16:
+[PR #8](https://github.com/eisenhauer-dev/herdr-crossroads/pull/8) had both required
+checks green, including [PR source policy run 38877336973](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336973)
+and [Linux gates run 38877336960, attempt 2](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38877336960/attempts/2).
+It merged as `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`; the merged tree matched
+reviewed source `c24df0876dae2a219bb833695829f7dc99433ae2` exactly. Strict checks
+and administrator enforcement were preserved. This does not replace the expressly
+waived live fork-negative test. Attempt 1 failed in an unchanged transport fixture
+with `ExecutableFileBusy` rather than expected `Other`; the unchanged rerun passed,
+without assertion or gate changes. Its root cause remains uncertain. The historical
+source-policy behavior-RED timing gap remains a limitation, not retroactive TDD proof.
+[Post-merge main CI run 38878662737](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38878662737)
+passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d`,
+including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
+all four full PTYs, packaging and upload.
+
+GitHub's documentation checked on 2026-10-16 says the default public-repository
+`pull_request_target` event policy is currently in evaluate mode and will be
+enforced for affected repositories on **2026-11-02**. An applicable event policy
+explicitly allowing this trusted workflow's event may therefore also require
+separate remote approval/configuration. Missing or blocked runs must not be
+mistaken for passing enforcement. GitHub may also suppress this event for certain
+SHA-like source branch names; the local policy allows only the internal `develop`
+head for `main`, and a missing required check can still block merging.
+See [securely using pull_request_target](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target)
+and [event behavior and branch filters](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
+These local checks do not themselves verify remote settings or event delivery;
+the active configuration above was verified separately by the operator.
+
+Run `python3 tests/test_pr_source_policy.py` locally (also included in CI's helper
+checks). It executes the workflow's actual inline policy with isolated event
+fixtures under `/tmp/opencode`, covering exact internal `develop`, denied other
+internal branches, forks, same-name fork branches, malformed identities and head
+refs, any-head contributions to `develop`, and untrusted strings. Textual checks cover the
+event, runner, permissions, and no-checkout/no-secrets contract; these are not a
+full YAML/Actions validator or proof of remote execution or branch protection.
+
+Public negative verification on 2026-10-15 used temporary
+[PR #6](https://github.com/eisenhauer-dev/herdr-crossroads/pull/6), with `main`
+already included in the head branch and no merge conflicts. With `[skip ci]`,
+the head had no check runs and GitHub reported its merge state as `BLOCKED`.
+An intentional whitespace-only Rust formatting error then failed
+[Linux gates](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38777256419)
+at `Check formatting`; the merge state remained `BLOCKED`. The required check
+was bound to the GitHub Actions app and administrator enforcement remained on.
+These were read-only merge-state checks, not attempted merges. The temporary
+edits were fully reverted, restoring the file tree of the already-green
+[main run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190),
+and the PR was manually closed without merging. No protection rule was changed.
+This verification did not create a fork PR or test `skipped`/`neutral` conclusions.

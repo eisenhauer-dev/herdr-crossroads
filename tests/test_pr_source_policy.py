@@ -75,10 +75,21 @@ jobs:
         self.assertTrue(all(isinstance(node, ast.Import) for node in imports))
         self.assertEqual([alias.name for node in imports for alias in node.names], ["json", "os", "sys"])
 
-    def test_internal_branches_to_main_are_not_limited_to_develop(self):
-        for branch in ["develop", "feature/change", "main", "release/next"]:
+    def test_internal_develop_to_main_is_allowed(self):
+        self.check_policy(self.event(), True)
+
+    def test_other_internal_branches_to_main_are_denied(self):
+        for branch in ["feature/change", "main", "release/next", "Develop", "develop/next"]:
             with self.subTest(branch=branch):
-                self.check_policy(self.event(branch=branch), True)
+                self.check_policy(self.event(branch=branch), False)
+
+    def test_main_rejects_missing_null_and_malformed_head_ref(self):
+        for branch in [None, "", True, 123, [], {}, ["develop"], {"ref": "develop"}]:
+            with self.subTest(branch=branch):
+                self.check_policy(self.event(branch=branch), False)
+        event = self.event()
+        del event["pull_request"]["head"]["ref"]
+        self.check_policy(event, False)
 
     def test_fork_to_main_fails_even_with_same_branch_or_owner_name(self):
         for branch in ["develop", "main", "feature/change"]:
@@ -89,8 +100,9 @@ jobs:
 
     def test_develop_accepts_internal_and_fork_sources(self):
         for head_id in [123, 456, None]:
-            with self.subTest(head_id=head_id):
-                self.check_policy(self.event(base="develop", head_id=head_id), True)
+            for branch in ["develop", "feature/change", "main"]:
+                with self.subTest(head_id=head_id, branch=branch):
+                    self.check_policy(self.event(base="develop", head_id=head_id, branch=branch), True)
 
     def test_main_rejects_missing_null_and_malformed_repository_identities(self):
         for location in ["head", "base", "repository"]:
@@ -127,7 +139,11 @@ jobs:
     def test_untrusted_strings_remain_data_not_shell_or_python(self):
         event = self.event(branch="$(touch injected); ' PY\nraise SystemExit(0)")
         event["pull_request"]["title"] = "${{ secrets.TOKEN }}; touch injected"
+        self.check_policy(event, False)
+        event["pull_request"]["base"]["ref"] = "develop"
         self.check_policy(event, True)
+        event["pull_request"]["base"]["ref"] = "main"
+        event["pull_request"]["head"]["ref"] = "develop"
         event["pull_request"]["head"]["repo"]["id"] = "$(touch injected)"
         self.check_policy(event, False)
 

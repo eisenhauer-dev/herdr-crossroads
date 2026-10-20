@@ -179,13 +179,17 @@ fn explicit_save_keeps_legacy_and_auto_removes_both_without_start_migration() {
     assert!(!dir.join("theme.jsonc").exists() && !dir.join("theme.json").exists());
     std::fs::write(dir.join("theme.jsonc"), "{\"theme\":\"dracula\"}").unwrap();
     std::fs::create_dir(dir.join("theme.json")).unwrap();
+    let expected_error = std::fs::remove_file(dir.join("theme.json"))
+        .unwrap_err()
+        .to_string();
     let error = save(Some(&dir), 0).unwrap_err().to_string();
-    assert!(error.contains("directory"), "{error}");
+    assert_eq!(error, expected_error);
     assert!(
         !error.contains("theme.json") && !error.contains(&dir.display().to_string()),
         "{error}"
     );
     assert!(!dir.join("theme.jsonc").exists());
+    assert!(dir.join("theme.json").is_dir());
     let mut state = crate::test_support::ui();
     state.config_dir = Some(dir.clone());
     state.theme_index = 6;
@@ -195,6 +199,7 @@ fn explicit_save_keeps_legacy_and_auto_removes_both_without_start_migration() {
     assert_eq!(state.theme_index, 6);
     assert_eq!(state.mode, crate::selection::Mode::Themes);
     assert!(state.theme_error.as_ref().unwrap().contains("not saved"));
+    assert!(dir.join("theme.json").is_dir());
     std::fs::remove_dir_all(dir).unwrap();
 }
 

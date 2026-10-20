@@ -12,6 +12,7 @@ import runpy
 import secrets
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -101,10 +102,62 @@ def destination_directory(root):
         raise
 
 
+def host_target():
+    system, machine = platform.system(), platform.machine()
+    if system == "Linux" and machine == "x86_64" and platform.libc_ver()[0] == "glibc":
+        return "x86_64-unknown-linux-gnu"
+    if system == "Darwin" and machine in ("arm64", "aarch64", "x86_64"):
+        version = platform.mac_ver()[0]
+        if not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[0-9]+)?", version) or int(version.split(".")[0]) < 15:
+            raise ValueError("macOS 15.0 or newer is required; cannot use an older or unknown OS version")
+        # uname describes the running process under Rosetta: never probe hardware.
+        architecture = "aarch64" if machine in ("arm64", "aarch64") else "x86_64"
+        return architecture + "-apple-darwin"
+    raise ValueError("only Linux x86_64 glibc and macOS arm64/x86_64 hosts are supported")
+
+
+def verify_binary(binary, target):
+    if target == "x86_64-unknown-linux-gnu":
+        if (len(binary) < 64 or binary[:7] != b"\x7fELF\x02\x01\x01"
+                or binary[16:18] not in [b"\x02\x00", b"\x03\x00"]
+                or binary[18:24] != b"\x3e\x00\x01\x00\x00\x00"):
+            raise ValueError("binary must have a little-endian ELF64 x86-64 executable header")
+        return
+    cpu = 0x0100000c if target == "aarch64-apple-darwin" else 0x01000007
+    if (len(binary) < 32 or binary[:4] != b"\xcf\xfa\xed\xfe"
+            or int.from_bytes(binary[4:8], "little") != cpu
+            or int.from_bytes(binary[12:16], "little") != 2):
+        raise ValueError("binary must be a thin little-endian Mach-O64 executable for " + target)
+    count, size = struct.unpack_from("<2I", binary, 16)
+    offset, end = 32, 32 + size
+    macos = False
+    if end > len(binary) or count > size // 8:
+        raise ValueError("invalid Mach-O load command bounds")
+    for _ in range(count):
+        if offset + 8 > end:
+            raise ValueError("truncated Mach-O load command")
+        command, length = struct.unpack_from("<2I", binary, offset)
+        if length < 8 or length % 8 or offset + length > end:
+            raise ValueError("invalid Mach-O load command size")
+        if command == 0x32:  # LC_BUILD_VERSION: require macOS, never iOS/simulator/Catalyst.
+            if length < 24 or macos:
+                raise ValueError("invalid Mach-O build version")
+            product, minimum, _, tools = struct.unpack_from("<4I", binary, offset + 8)
+            host = tuple(int(part) for part in platform.mac_ver()[0].split("."))
+            host = host + (0,) * (3 - len(host))
+            required = (minimum >> 16, (minimum >> 8) & 255, minimum & 255)
+            if product != 1 or required > host or length != 24 + tools * 8:
+                raise ValueError("Mach-O must target macOS at a supported OS version")
+            macos = True
+        elif command in (0x24, 0x25, 0x2f, 0x30):
+            raise ValueError("Mach-O release requires an unambiguous macOS build version")
+        offset += length
+    if offset != end or not macos:
+        raise ValueError("Mach-O release must contain a macOS build version")
+
+
 def install():
-    if (platform.system() != "Linux" or platform.machine() != "x86_64"
-            or platform.libc_ver()[0] != "glibc"):
-        raise ValueError("only Linux x86_64 glibc hosts are supported")
+    target = host_target()
     root = Path(__file__).absolute().parents[1]
     if Path(__file__).is_symlink():
         raise ValueError("installer must not be a symlink")
@@ -112,7 +165,7 @@ def install():
     asset_dir = os.environ.get("CROSSROADS_ASSET_DIR")
     if asset_dir is not None and (not asset_dir or not Path(asset_dir).is_absolute()):
         raise ValueError("CROSSROADS_ASSET_DIR must name an absolute trusted local asset directory")
-    archive_name = f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz"
+    archive_name = f"herdr-crossroads-{version}-{target}.tar.gz"
     if asset_dir is None:
         source = f"https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v{version}/"
         archive = download(source + archive_name, 64 * 1024 * 1024)
@@ -155,10 +208,7 @@ def install():
                 raise ValueError(f"release notice does not match trusted checkout: {name}")
             notices[destination] = trusted
     verify_checksum(binary, checksum, "herdr-crossroads")
-    if (len(binary) < 64 or binary[:7] != b"\x7fELF\x02\x01\x01"
-            or binary[16:18] not in [b"\x02\x00", b"\x03\x00"]
-            or binary[18:24] != b"\x3e\x00\x01\x00\x00\x00"):
-        raise ValueError("binary must have a little-endian ELF64 x86-64 executable header")
+    verify_binary(binary, target)
 
     directory = destination_directory(root)
     staged = []

@@ -7,6 +7,65 @@ use ratatui::buffer::CellWidth;
 use serde_json::Value;
 
 #[test]
+fn header_rule_is_solid_full_width_in_compact_wide_search_and_theme_preview() {
+    for width in [80, 109, 110, 150] {
+        for mode in [Mode::Select, Mode::Search, Mode::Themes] {
+            let mut state = ui();
+            state.popup_size = Some((80, 15));
+            state.mode = mode;
+            state.theme_table_preview = state.mode == Mode::Themes;
+            let header_at = 2 + usize::from(state.mode == Mode::Themes);
+            for query in ["", "codex", "no matching pane"] {
+                state.query = query.into();
+                let frame = state.terminal_frame(width, 15);
+                let lines: Vec<_> = frame.split("\r\n").collect();
+                assert_eq!(lines.len(), 15, "{frame}");
+                assert!(lines[header_at].contains("Agent/Pane Name"), "{frame}");
+                assert_eq!(
+                    lines[header_at + 1],
+                    format!("  \x1b[2m{}\x1b[22m", "─".repeat(width - 4)),
+                    "width={width}, mode={:?}: {frame}",
+                    state.mode
+                );
+                assert!(!lines[header_at + 1].contains("\x1b[48;5;236m"));
+                if query.is_empty() {
+                    assert!(selected_prefix(lines[header_at + 2]), "{frame}");
+                    assert_eq!(
+                        lines.iter().filter(|line| line.contains('┄')).count(),
+                        1,
+                        "{frame}"
+                    );
+                    assert!(
+                        lines
+                            .iter()
+                            .any(|line| *line
+                                == format!("  \x1b[2m{}\x1b[22m", "┄".repeat(width - 4))),
+                        "{frame}"
+                    );
+                } else {
+                    assert!(!frame.contains('┄'), "{frame}");
+                    assert!(
+                        lines[header_at + 2].contains(if query == "codex" {
+                            "idle"
+                        } else {
+                            "No matching panes"
+                        }),
+                        "{frame}"
+                    );
+                    assert_eq!(selected_prefix(lines[header_at + 2]), query == "codex");
+                }
+            }
+            let plain = state.frame_width(width);
+            assert_eq!(
+                plain.lines().nth(header_at + 1).unwrap(),
+                format!("  {}", "─".repeat(width - 4))
+            );
+            assert!(!plain.contains('\x1b'));
+        }
+    }
+}
+
+#[test]
 fn inline_status_does_not_mark_generated_ellipsis_but_marks_real_ellipsis() {
     let mut state = ui();
     state.rows.truncate(1);
@@ -315,7 +374,7 @@ fn compact_popup_columns_grow_stepwise_without_losing_selection_or_status() {
 }
 
 #[test]
-fn popup_switches_all_roomy_chrome_at_110_columns() {
+fn popup_switches_roomy_columns_at_110_without_changing_header_rule() {
     let mut state = ui();
     state.popup_size = Some((80, 15));
     for width in [109, 110, 111] {
@@ -325,8 +384,8 @@ fn popup_switches_all_roomy_chrome_at_110_columns() {
         assert_eq!(lines.len(), 20, "{width}: {frame}");
         assert_eq!(lines[2].contains("Status"), roomy, "{width}: {frame}");
         assert_eq!(
-            lines[3].starts_with("  \x1b[2m\u{2504}"),
-            roomy,
+            lines[3],
+            format!("  \x1b[2m{}\x1b[22m", "─".repeat(width - 4)),
             "{width}: {frame}"
         );
         assert!(lines[2].contains("Agent/Pane Name"), "{width}: {frame}");
@@ -414,23 +473,32 @@ fn compact_sixty_column_budget_preserves_workspace_and_status() {
 }
 
 #[test]
-fn ninety_percent_wide_terminal_header_rule_is_present_only_when_roomy_and_tall() {
+fn header_rule_spans_table_width_and_is_omitted_at_short_heights() {
     let state = ui();
     let frame = state.terminal_frame(162, 36);
     let lines: Vec<_> = frame.split("\r\n").collect();
     assert!(lines[2].contains("Status"), "{frame}");
     assert_eq!(
         lines[3],
-        format!("  \x1b[2m{}\x1b[22m", "┄".repeat(158)),
+        format!("  \x1b[2m{}\x1b[22m", "─".repeat(158)),
         "{frame}"
     );
-    assert!(!state
-        .terminal_frame(109, 36)
-        .split("\r\n")
-        .nth(3)
-        .unwrap()
-        .contains('┄'));
-    assert!(!state.terminal_frame(162, 7).contains('┄'));
+    for width in [80, 109, 162] {
+        for height in [5, 6, 7, 8] {
+            let frame = state.terminal_frame(width, height);
+            assert_eq!(frame.split("\r\n").count(), height, "{frame}");
+            assert_eq!(frame.contains("Agent/Pane Name"), height > 6, "{frame}");
+            if height == 8 {
+                assert_eq!(
+                    frame.lines().nth(3).unwrap(),
+                    format!("  \x1b[2m{}\x1b[22m", "─".repeat(width - 4)),
+                    "{frame}"
+                );
+            } else {
+                assert!(!frame.contains("\x1b[2m─"), "{frame}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -442,7 +510,7 @@ fn roomy_header_rule_is_dim_unselectable_and_respects_viewport_and_filter() {
     assert!(lines[2].contains("Status"), "{frame}");
     assert_eq!(
         lines[3],
-        format!("  \x1b[2m{}\x1b[22m", "┄".repeat(146)),
+        format!("  \x1b[2m{}\x1b[22m", "─".repeat(146)),
         "{frame}"
     );
     assert!(
@@ -461,14 +529,15 @@ fn roomy_header_rule_is_dim_unselectable_and_respects_viewport_and_filter() {
     let filtered = state.terminal_frame(150, 12);
     let lines: Vec<_> = filtered.split("\r\n").collect();
     assert!(
-        lines[3].contains('┄') && lines[4].contains("codex"),
+        lines[3].contains('─') && lines[4].contains("codex"),
         "{filtered}"
     );
-    assert_eq!(filtered.matches('┄').count(), 146, "{filtered}");
+    assert_eq!(lines[3].matches('─').count(), 146, "{filtered}");
+    assert!(!filtered.contains('┄'), "{filtered}");
     state.query = "no matching pane".into();
     let empty = state.terminal_frame(150, 12);
     assert!(
-        empty.contains("No matching panes") && empty.contains('┄'),
+        empty.contains("No matching panes") && empty.contains("\x1b[2m─"),
         "{empty}"
     );
 
@@ -476,7 +545,7 @@ fn roomy_header_rule_is_dim_unselectable_and_respects_viewport_and_filter() {
     state.key(Key::Down);
     let one_pane = state.terminal_frame(150, 9);
     let lines: Vec<_> = one_pane.split("\r\n").collect();
-    assert!(lines[3].contains('┄'), "{one_pane}");
+    assert!(lines[3].contains('─'), "{one_pane}");
     assert!(
         selected_prefix(lines[5]) && lines[5].contains("Same"),
         "{one_pane}"
@@ -768,11 +837,7 @@ fn workspace_separators_are_single_dim_rows_only_between_visible_blocks() {
             .enumerate()
             .filter(|(_, line)| line.contains('┄'))
             .collect();
-        assert_eq!(
-            separators.len(),
-            if width == 150 { 2 } else { 1 },
-            "{frame}"
-        );
+        assert_eq!(separators.len(), 1, "{frame}");
         let (at, line) = separators[separators.len() - 1];
         assert!(
             line.starts_with("  \x1b[2m┄") && line.ends_with("\x1b[22m"),
@@ -795,7 +860,7 @@ fn workspace_separators_are_single_dim_rows_only_between_visible_blocks() {
         let only = state.terminal_frame(width, height);
         assert_eq!(
             only.lines().filter(|line| line.contains('┄')).count(),
-            usize::from(width == 150),
+            0,
             "{only}"
         );
         assert!(!only.contains('▏'), "{only}");
@@ -809,16 +874,16 @@ fn workspace_separators_are_single_dim_rows_only_between_visible_blocks() {
 
 #[test]
 fn workspace_separator_consumes_viewport_height_without_hiding_selection() {
-    for width in [60, 150] {
+    for (width, height, separators) in [(60, 10, 0), (60, 11, 1), (150, 10, 1)] {
         let mut state = ui();
-        state.terminal_frame(width, 10);
+        state.terminal_frame(width, height);
         for _ in 0..5 {
             state.key(Key::Down);
-            state.terminal_frame(width, 10);
+            state.terminal_frame(width, height);
         }
-        let frame = state.terminal_frame(width, 10);
+        let frame = state.terminal_frame(width, height);
         let lines: Vec<_> = frame.split("\r\n").collect();
-        assert_eq!(lines.len(), 10, "{frame}");
+        assert_eq!(lines.len(), height, "{frame}");
         assert!(
             lines.iter().any(|line| selected_prefix(line)
                 && line.contains(if width == 60 { "idle" } else { "codex" })),
@@ -826,7 +891,7 @@ fn workspace_separator_consumes_viewport_height_without_hiding_selection() {
         );
         assert_eq!(
             frame.lines().filter(|line| line.contains('┄')).count(),
-            if width == 150 { 2 } else { 1 },
+            separators,
             "{frame}"
         );
         assert_eq!(state.selected.as_deref(), Some("p-other"));
@@ -880,15 +945,7 @@ fn outer_border_is_horizontal_and_workspace_rows_have_no_margin_marker() {
             }
             assert!(!frame.contains('│') && !frame.contains('├'), "{frame}");
             assert!(
-                selected_prefix(
-                    lines[if height <= 6 {
-                        2
-                    } else if width == 150 {
-                        4
-                    } else {
-                        3
-                    }]
-                ),
+                selected_prefix(lines[if height <= 6 { 2 } else { 4 }]),
                 "{frame}"
             );
             if height > 6 {
@@ -900,7 +957,7 @@ fn outer_border_is_horizontal_and_workspace_rows_have_no_margin_marker() {
                 assert!(lines[codex].contains("Same"), "{frame}");
                 assert_eq!(
                     frame.lines().filter(|line| line.contains('┄')).count(),
-                    if width == 150 { 2 } else { 1 },
+                    1,
                     "{frame}"
                 );
             } else {
@@ -913,7 +970,7 @@ fn outer_border_is_horizontal_and_workspace_rows_have_no_margin_marker() {
         assert!(!only.contains('▏'), "{only}");
         assert_eq!(
             only.lines().filter(|line| line.contains('┄')).count(),
-            usize::from(width == 150),
+            0,
             "{only}"
         );
         assert!(
@@ -969,7 +1026,7 @@ fn compact_workspace_blocks_have_one_separator_and_preserve_navigation() {
     assert!(lines[first + 1].starts_with("  ┄"), "{frame}");
     assert_eq!(
         lines.len(),
-        12 + state
+        13 + state
             .hints(crate::keymap::Context::Select, 60, 2, false)
             .len(),
         "{frame}"
@@ -979,7 +1036,7 @@ fn compact_workspace_blocks_have_one_separator_and_preserve_navigation() {
         lines[first].starts_with("  ") && !lines[first].contains('┄'),
         "{frame}"
     );
-    assert!(lines[3].starts_with("  > "), "{frame}");
+    assert!(lines[4].starts_with("  > "), "{frame}");
 
     let compact = state.terminal_frame(60, 15);
     let lines: Vec<_> = compact.split("\r\n").collect();
@@ -1066,7 +1123,7 @@ fn roomy_workspace_separator_is_one_physical_row() {
     assert!(lines[first + 1].starts_with("  \x1b[2m┄"), "{frame}");
     assert_eq!(
         frame.lines().filter(|line| line.contains('┄')).count(),
-        2,
+        1,
         "{frame}"
     );
     assert!(!lines[first].contains('┄'), "{frame}");
@@ -1113,7 +1170,7 @@ fn roomy_workspace_separator_is_one_physical_row() {
     assert!(!only.contains('▏'), "{only}");
     assert_eq!(
         only.lines().filter(|line| line.contains('┄')).count(),
-        1,
+        0,
         "{only}"
     );
     assert!(
@@ -1184,18 +1241,16 @@ fn viewport_start_inside_workspace_repeats_context_without_selecting_it() {
         assert_eq!(lines.len(), height, "{frame}");
         assert_eq!(state.viewport_start.get(), 1, "{frame}");
         assert!(
-            lines[if width == 150 { 4 } else { 3 }].starts_with("    Same")
-                && lines[if width == 150 { 4 } else { 3 }].contains("Same"),
+            lines[4].starts_with("    Same") && lines[4].contains("Same"),
             "{frame}"
         );
         assert!(
-            selected_prefix(lines[if width == 150 { 5 } else { 4 }])
-                && lines[if width == 150 { 5 } else { 4 }].contains("pane 3"),
+            selected_prefix(lines[5]) && lines[5].contains("pane 3"),
             "{frame}"
         );
         assert_eq!(
             frame.lines().filter(|line| line.contains('┄')).count(),
-            if width == 150 { 2 } else { 1 },
+            1,
             "{frame}"
         );
         assert!(!frame.contains('▏'), "{frame}");
@@ -1273,7 +1328,7 @@ fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
                 ("", "")
             };
             let expected = format!("      {dim}{}{reset}", "┄".repeat(rule_width - 4));
-            // The roomy header rule is unchanged; only the rule before the linked row moves.
+            // The header stays full width; only the rule before the linked row is inset.
             let separators: Vec<_> = frame.lines().filter(|line| line.contains('┄')).collect();
             let linked_rule = separators.last().unwrap();
             let linked_row = frame.lines().find(|line| line.contains("↳ Same")).unwrap();
@@ -1297,14 +1352,12 @@ fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
             );
             assert!(!linked_rule.contains('↳'), "{frame}");
             assert_eq!(*linked_rule, expected, "{frame}");
-            if width == 150 {
-                assert_eq!(
-                    separators[0],
-                    format!("  {dim}{}{reset}", "┄".repeat(rule_width)),
-                    "{frame}"
-                );
-            }
-            assert_eq!(separators.len(), if width == 150 { 2 } else { 1 });
+            assert_eq!(
+                frame.lines().nth(3).unwrap(),
+                format!("  {dim}{}{reset}", "─".repeat(rule_width)),
+                "{frame}"
+            );
+            assert_eq!(separators.len(), 1);
             assert_eq!(frame.matches("↳ Same").count(), 1, "{frame}");
             assert!(
                 frame.lines().any(|line| line.contains("↳ Same")
@@ -1324,7 +1377,7 @@ fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
         let only = state.terminal_frame(width, 20);
         assert_eq!(
             only.lines().filter(|line| line.contains('┄')).count(),
-            usize::from(width == 150),
+            0,
             "{only}"
         );
         state.query.clear();
@@ -1332,7 +1385,7 @@ fn duplicate_linked_entries_mark_workspace_once_and_indent_its_separator() {
         state.selected = state.rows.first().map(|row| row.id.clone());
         state.key(Key::Tab);
         assert_eq!(state.selected.as_deref(), Some("p-other"));
-        let scrolled = state.terminal_frame(width, 10);
+        let scrolled = state.terminal_frame(width, if width == 60 { 11 } else { 10 });
         assert!(
             scrolled
                 .lines()
