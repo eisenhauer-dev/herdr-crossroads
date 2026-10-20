@@ -831,11 +831,7 @@ fn titleless_layout_preserves_selection_filters_and_short_viewport() {
                     "{frame}"
                 );
                 assert!(
-                    lines[if width == 150 { 4 } else { 3 }].contains(if width == 60 {
-                        "C \x1b[2m|"
-                    } else {
-                        "Claude"
-                    }),
+                    lines[4].contains(if width == 60 { "C \x1b[2m|" } else { "Claude" }),
                     "{frame}"
                 );
             }

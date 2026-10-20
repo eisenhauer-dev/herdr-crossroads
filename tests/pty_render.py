@@ -330,8 +330,9 @@ def main(binary):
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[15-len(default_footer_lines(80))-1].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
             assert sum("┄" in line for line in lines) == 1, lines
-            assert lines[8].startswith("  ┄") and "codex" in lines[9], lines
-            assert lines[3].startswith("  > ") and "Claude" in lines[3], lines
+            assert lines[3] == "  " + "─" * 76, lines
+            assert lines[9].startswith("  ┄") and "codex" in lines[10], lines
+            assert lines[4].startswith("  > ") and "Claude" in lines[4], lines
             assert any("Same" in line and "Claude" in line and "working" in line for line in lines), lines
             assert any("Same" in line and "Claude" not in line and "working" not in line for line in lines[3:8]), lines
             assert not any(pane_id in "\n".join(lines) for pane_id in ("p-b", "p-a", "p-other")), lines
@@ -402,7 +403,7 @@ def main(binary):
             assert any(line.startswith("  > ") and "codex" in line for line in lines), lines
             os.write(master, b"\x1b[Z")
             lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
-            for width, height, has_rule in ((162, 36, True), (109, 36, False), (110, 36, True), (162, 7, False)):
+            for width, height in ((162, 36), (109, 36), (110, 36), (162, 7)):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 if height < 15:
                     raw = frame(master, NOTICE_END)
@@ -411,7 +412,7 @@ def main(binary):
                 assert_selected_background(frame(master, b"  Search: "), width, height)
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, height)
-                assert (lines[3] == "  " + "┄" * (width - 4)) == has_rule, (width, height, lines[3])
+                assert lines[3] == "  " + "─" * (width - 4), (width, height, lines[3])
                 assert ("Status" in lines[2]) == (width >= 110), (width, height, lines[2])
             assert any(line.startswith("  > ") and "Claude" in line for line in lines), lines
             for width in (150, 139, 138, 121, 120, 111, 110):
@@ -419,7 +420,7 @@ def main(binary):
                 assert_selected_background(frame(master, b"  Search: "), width, 15)
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
-                assert "Status" in lines[2] and lines[3].startswith("  ┄") and "Claude" in lines[4], lines
+                assert "Status" in lines[2] and lines[3] == "  " + "─" * (width - 4) and "Claude" in lines[4], lines
                 assert_footer(lines, width)
             for width in (109, 110):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
@@ -440,7 +441,7 @@ def main(binary):
             assert screen(frame(master, b"  Search: codex"), 80, 15)[0] == before_help
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
             lines = assert_selected_background(frame(master, b"  Search: codex"), 110, 15)
-            assert "Status" in lines[2] and lines[3].startswith("  ┄"), lines
+            assert "Status" in lines[2] and lines[3] == "  " + "─" * 106, lines
             assert any(line.startswith("  > ") and "codex" in line and "idle" in line for line in lines), lines
             assert_footer(lines, 110)
             for width, height in ((79, 15), (80, 14), (78, 14), (67, 12)):

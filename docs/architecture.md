@@ -139,9 +139,13 @@ The presentation facade resets hint paging, then dispatches configuration errors
 before the popup-size guard, Help, the theme list, and finally the pane table
 (also used for theme table preview). Each view uses the existing `Ui` state;
 there is no separate renderer state machine. The table chooses compact or roomy
-columns, maintains its viewport and underlines matches; shared footer hints stay
-anchored by each view's layout. The main loop checks interactive size about every
-250 ms and pages oversized custom hints every two seconds when needed. Below
+columns, maintains its viewport and underlines matches. Both column layouts use
+a full-table-width solid `─` rule below the headers at heights of eight rows or
+more; the short ANSI layout omits headers and their rule. Workspace blocks retain
+dim dashed `┄` separators, inset before linked worktrees. The same rules apply in
+Search and theme table preview. Shared footer hints stay anchored by each view's
+layout. The main loop checks interactive size about every 250 ms and pages
+oversized custom hints every two seconds when needed. Below
 80×15 content cells, normal pane actions are blocked; resize can restore the UI.
 
 ### Focus and close
