@@ -1,9 +1,10 @@
 # Local versioned release preparation
 
-This process prepares reviewable versioned Linux assets locally and configures
+This process prepares reviewable versioned Linux/macOS assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The current version is `0.1.0`, the first regular Linux release, for
+The checkout prepares **0.2.0, not released**; no tag, merge, push or publication
+is approved by this preparation. The latest published version is `0.1.0`, the first regular Linux release, for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
 publication as the regular [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0),
@@ -82,28 +83,67 @@ the prepared route downloads the exact version from GitHub Releases. Publication
 of both test prereleases and execution of the full public cycle are recorded
 above; this verified test cycle is not regular-release approval.
 
-For `0.1.0`, the only supported target produces:
+For `0.2.0`, each of `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
+`x86_64-apple-darwin` produces four distinct assets. Linux example:
 
 ```text
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.link.map
 ```
 
 New builds' tar contains the exact tested executable, preserving its executable mode,
 `herdr-crossroads.sha256`, the project's `LICENSE`, and `THIRD-PARTY-NOTICES.md`.
 The installer requires all four files and retains both notices beside the binary.
 The already-published `v0.1.0` archive still contains `THIRD-PARTY-NOTICES.html`;
-it is not replaced or relabeled by this conversion. The version is unchanged,
-so new local archive bytes differ despite identical filenames. Current checkouts
-accept only the exact historical HTML paired with the pinned equivalent Markdown;
+it is not replaced or relabeled by this conversion. New 0.2.0 artifacts are
+separate; never replace v0.1.0 assets. When the checkout version is 0.1.0, the
+installer accepts only the exact historical HTML paired with the pinned equivalent Markdown;
 [installation](installation.md#validation-and-failure-behavior) specifies the hashes
 and unchanged negative checks. Old pinned checkouts continue installing HTML.
 Ownership is normalized to numeric root. Both
 checksum entries use portable filenames. SHA256 detects corruption, not asset
 authenticity or publisher identity. See [builds](builds.md) for prerequisites,
 failure/stale-output behavior, extraction checks, and installation limitations.
+
+## 0.2.0 manual release gates
+
+1. Freeze the reviewed candidate source/tree and record its full commit identity.
+   Run complete final Linux, native Apple Silicon and native Intel CI against that
+   candidate, including packaging/provenance/notices and the real-Herdr isolated
+   installation gate before upload. [Current candidate CI passed on all three
+   targets](builds.md#current-020-three-platform-ci-evidence), with tested synthetic
+   merge/tree identity recorded separately from the candidate head. Earlier green
+   `6f91a3f` runs alone do not prove these later changes.
+2. Independently inspect the exact uploaded archives, checksums, binary/map hash
+   bindings and source identities for all three targets. Review Linux ELF/system
+   provenance without dropping existing license evidence; review Darwin active
+   Cargo notices, actual map inputs, SDK/toolchain/load commands, external system
+   dylibs and ad-hoc signature evidence. Both Darwin assets must declare minimum
+   macOS **15.0**; no Developer ID/notarization is provided. Publish only the exact
+   tested binaries: never substitute a post-test signing/stripping build or stale
+   assets from another source/version/run. The current downloaded assets passed
+   [checksum/contract/hash and static Mach-O checks](builds.md#current-020-three-platform-ci-evidence); this is
+   self-check evidence, not independent review approval.
+3. Obtain independent combined Code/Tests/Docs review approval and final primary
+   acceptance. The true macOS Herdr live-popup gate was explicitly **waived, not
+   performed**; automated installation/distribution was **not waived**. Neither
+   Rosetta execution nor public 0.2.0 asset downloading has been proven.
+4. Separately approve each push, merge, tag and manual publication action. Record
+   the release candidate/tag source identity separately from merged main's actual
+   commit; a merge SHA may differ even when trees match. Require the final tested
+   tree/asset identities to match the approved release; reconcile and recheck any
+   substantive final source changes. No release automation or remote branch-rule
+   change is part of this preparation.
+5. Coordinate default-branch deployment with matching approved assets: the normal
+   `herdr plugin install eisenhauer-dev/herdr-crossroads` checks out default HEAD
+   and requests that checkout's version. Do **not** advance it to 0.2.0 with assets
+   missing unless a separately approved controlled publication window handles the
+   gap. Keep the pinned Linux fallback `--ref v0.1.0` explicit; there is no published
+   macOS fallback. After approved publication, separately verify all public asset
+   hashes and the public download/install route. Local-fixture CI cannot replace
+   that later gate. Keep v0.1.0 and its historical evidence immutable.
 
 ## Local preflight and review
 
@@ -120,14 +160,20 @@ python3 tests/test_git_hooks.py
 python3 tests/test_pr_source_policy.py
 python3 tests/test_version.py
 python3 tests/test_build_linux.py
+python3 tests/test_build_macos.py
 python3 tests/test_build_provenance.py
 python3 tests/test_install_binary.py
 python3 tests/test_distribution_helpers.py
+python3 tests/test_release_install_helpers.py
 python3 tests/test_notices.py
 sh scripts/build-linux.sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-tar -tvzf target/builds/herdr-crossroads-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+(cd target/builds && sha256sum -c herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+tar -tvzf target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz
 ```
+
+This block is the Linux preflight. On each native Mac use the corresponding
+[macOS helper/prerequisites](builds.md#macos-020-preparation) instead of the Linux
+build/archive commands; also check `tests/test_macos_workflow.py`.
 
 The helper builds the locked optimized explicit-target binary and runs all four
 full PTYs (latency, render, keymaps, hints) before packaging. Cargo tests' partial
@@ -418,7 +464,16 @@ also present in the local preflight list above. Full notice reproduction is an
 additional local-builder check, not an existing CI helper step. Installer unit tests use synthetic assets
 and isolated destinations, not a live installation or real Herdr integration.
 Distribution helper tests validate fixture preparation and current PTY cells
-without launching Herdr; the native opt-in harness remains outside CI.
+without launching Herdr; the historical live-server opt-in harness remains outside CI.
+The new `tests/test_release_install_helpers.py` checks isolated fixture helpers;
+CI additionally runs `tests/test_release_install.py` with pinned Herdr 0.9.5 and
+the exact packaged archive before upload. This actual managed install/reinstall,
+negative/config-retention and installed-binary four-PTY gate uses local Git/assets
+and no server/popup. Its native execution passed on all three targets in the
+[current candidate runs](builds.md#current-020-three-platform-ci-evidence), separately
+from the historical public runs below. The macOS workflow preserves its individual existing
+five-minute PTY steps and adds native packaging/real installation before exact-asset
+upload. Both workflows remain public-only/read-only with manual publication separate.
 
 The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
 passed the gates, explicit-target build, all four full isolated PTYs, packaging,

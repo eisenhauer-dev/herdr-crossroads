@@ -1,4 +1,4 @@
-"""Installer tests: synthetic ELF, mocked HTTP and fake curl; no network/Herdr/Rust.
+"""Installer tests: synthetic ELF/Mach-O, mocked HTTP and fake curl; no network/Herdr/Rust.
 
 The full historical notice fixture is exercised separately by test_notices.py
 on builders with the cached sources and Rust documentation installed.
@@ -9,9 +9,11 @@ import io
 import json
 import os
 from pathlib import Path
+import platform
 import runpy
 import shutil
 import ssl
+import struct
 import subprocess
 import sys
 import tarfile
@@ -26,13 +28,33 @@ ROOT = Path(__file__).resolve().parents[1]
 ARCHIVE = "herdr-crossroads-0.0.1-x86_64-unknown-linux-gnu.tar.gz"
 # Header-only fixture is intentionally not a runnable binary.
 ELF = b"\x7fELF\x02\x01\x01" + bytes(9) + b"\x03\x00\x3e\x00\x01\x00\x00\x00" + bytes(40)
+NATIVE_SYSTEM = platform.system()
+NATIVE_MACHINE = platform.machine()
+LINUX_HOST = ("platform.system=lambda: 'Linux'; platform.machine=lambda: 'x86_64'; "
+              "platform.libc_ver=lambda: ('glibc', '2.39'); ")
+
+
+def macho(cpu=0x0100000c, filetype=2, target_platform=1, minimum=0x000f0000):
+    # Thin little-endian Mach-O64 with one LC_BUILD_VERSION (macOS 15.0).
+    return (struct.pack("<8I", 0xfeedfacf, cpu, 0, filetype, 1, 24, 0, 0)
+            + struct.pack("<6I", 0x32, 24, target_platform, minimum, minimum, 0))
+
+
+def darwin_host(machine="arm64", version="15.0"):
+    return (f"platform.system=lambda: 'Darwin'; platform.machine=lambda: {machine!r}; "
+            f"platform.mac_ver=lambda: ({version!r}, ('', '', ''), {machine!r}); ")
 
 
 class InstallBinaryTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-install-")
         self.addCleanup(self.temporary.cleanup)
-        self.base = Path(self.temporary.name)
+        self.base = Path(self.temporary.name).resolve()
+        for name, value in [("system", "Linux"), ("machine", "x86_64"),
+                            ("libc_ver", ("glibc", "2.39"))]:
+            host = patch.object(platform, name, return_value=value)
+            host.start()
+            self.addCleanup(host.stop)
         self.repo = self.base / "repo"
         (self.repo / "scripts").mkdir(parents=True)
         for name in ["install-binary.py", "check-version.py"]:
@@ -87,7 +109,7 @@ class InstallBinaryTests(unittest.TestCase):
         helper = self.repo / "scripts/install-binary.py"
         # Before implementation, no installer means no domain effect. Assertions
         # below observe installation/rejection, not a missing-file setup failure.
-        code = ("import platform, runpy; " + patch +
+        code = ("import platform, runpy; " + LINUX_HOST + patch +
                 f"runpy.run_path({str(helper)!r}, run_name='__main__')") if helper.exists() else "pass"
         return subprocess.run([sys.executable, "-c", code], cwd=self.base,
                               env=self.env, text=True, capture_output=True)
@@ -110,6 +132,104 @@ class InstallBinaryTests(unittest.TestCase):
         for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
             self.assertEqual((self.binary.parent / name).read_bytes(), (self.repo / name).read_bytes())
             self.assertEqual((self.binary.parent / name).stat().st_mode & 0o777, 0o644)
+
+    def test_manifest_supports_linux_and_macos(self):
+        manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text())
+        self.assertEqual(manifest["platforms"], ["linux", "macos"])
+
+    def test_darwin_process_architecture_selects_thin_matching_asset(self):
+        for machine, target, cpu in [("arm64", "aarch64", 0x0100000c),
+                                     ("aarch64", "aarch64", 0x0100000c),
+                                     ("x86_64", "x86_64", 0x01000007)]:
+            with self.subTest(machine=machine), patch.dict(
+                    globals(), ARCHIVE=f"herdr-crossroads-0.0.1-{target}-apple-darwin.tar.gz"):
+                self.package(data=macho(cpu))
+                result = self.install(darwin_host(machine))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.binary.read_bytes(), macho(cpu))
+                self.assertIn(ARCHIVE, result.stdout)
+                self.assertEqual(self.binary.stat().st_mode & 0o777, 0o755)
+                for name in ["LICENSE", "THIRD-PARTY-NOTICES.md"]:
+                    self.assertEqual((self.binary.parent / name).stat().st_mode & 0o777, 0o644)
+
+    def test_darwin_old_unknown_and_unsupported_hosts_preserve_installation(self):
+        for machine in ["arm64", "x86_64"]:
+            for version in ["14.9.9", "10.15.7", "", "unknown", "15", "15.x", "15.0\n"]:
+                with self.subTest(machine=machine, version=version):
+                    self.assertIn("macOS 15.0", self.reject(darwin_host(machine, version)).stderr)
+        self.reject(darwin_host("i386"))
+
+    def test_darwin_wrong_binary_headers_and_platform_preserve_installation(self):
+        with patch.dict(globals(), ARCHIVE="herdr-crossroads-0.0.1-aarch64-apple-darwin.tar.gz"):
+            good = macho()
+            for data in [ELF, b"not Mach-O", good[:31], macho(0x01000007),
+                         macho(filetype=1), macho(filetype=6), macho(target_platform=2),
+                         macho(minimum=0x00100000), good[:32],
+                         b"\xca\xfe\xba\xbe" + good[4:],
+                         b"\xcf\xfa\xed\xfe"[::-1] + good[4:],
+                         good[:20] + struct.pack("<I", 1000) + good[24:],
+                         good[:36] + struct.pack("<I", 0) + good[40:]]:
+                with self.subTest(data=data):
+                    self.package(data=data)
+                    self.assertIn("Mach-O", self.reject(darwin_host()).stderr)
+
+    def test_darwin_intel_rejects_arm_and_all_universal_magic(self):
+        with patch.dict(globals(), ARCHIVE="herdr-crossroads-0.0.1-x86_64-apple-darwin.tar.gz"):
+            for data in [macho(), *(magic + macho(0x01000007)[4:] for magic in
+                                   [b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                                    b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"])]:
+                self.package(data=data)
+                self.assertIn("Mach-O", self.reject(darwin_host("x86_64")).stderr)
+
+    def test_darwin_public_downloads_process_target_and_old_os_never_downloads(self):
+        for machine, target, cpu in [("arm64", "aarch64", 0x0100000c),
+                                     ("x86_64", "x86_64", 0x01000007)]:
+            with self.subTest(machine=machine), patch.dict(
+                    globals(), ARCHIVE=f"herdr-crossroads-0.0.1-{target}-apple-darwin.tar.gz"):
+                self.package(data=macho(cpu))
+                with patch("platform.system", return_value="Darwin"), patch(
+                        "platform.machine", return_value=machine), patch(
+                        "platform.mac_ver", return_value=("15.0", (), machine)):
+                    requests = self.public_install()
+                    self.assertTrue(requests[0][0].endswith(ARCHIVE))
+                    self.assertTrue(requests[1][0].endswith(ARCHIVE + ".sha256"))
+                    self.assertEqual(self.binary.read_bytes(), macho(cpu))
+                    module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+                    with patch("platform.mac_ver", return_value=("14.9", (), machine)), patch(
+                            "subprocess.Popen") as curl, patch(
+                            "urllib.request.OpenerDirector.open") as network:
+                        with self.assertRaisesRegex(ValueError, "macOS 15.0"):
+                            module["install"]()
+                        curl.assert_not_called()
+                        network.assert_not_called()
+
+    def test_darwin_newer_os_accepts_compatible_deployment_version(self):
+        with patch.dict(globals(), ARCHIVE="herdr-crossroads-0.0.1-aarch64-apple-darwin.tar.gz"):
+            self.package(data=macho())
+            result = self.install(darwin_host(version="26.0.1"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_linux_rejects_macho_and_darwin_missing_asset_has_no_fallback(self):
+        self.package(data=macho())
+        self.reject()
+        self.package()
+        self.reject(darwin_host())
+
+    def test_native_host_installation_path(self):
+        # Exercise unmocked OS detection and native descriptor operations. The
+        # header-only payload is not an executable smoke test (distribution owns it).
+        if NATIVE_SYSTEM == "Darwin":
+            target = "aarch64" if NATIVE_MACHINE in ["arm64", "aarch64"] else "x86_64"
+            data = macho(0x0100000c if target == "aarch64" else 0x01000007)
+            name = f"herdr-crossroads-0.0.1-{target}-apple-darwin.tar.gz"
+        else:
+            data, name = ELF, ARCHIVE
+        with patch.dict(globals(), ARCHIVE=name):
+            self.package(data=data)
+            result = subprocess.run([sys.executable, str(self.repo / "scripts/install-binary.py")],
+                                    env=self.env, cwd=self.base, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.binary.read_bytes(), data)
 
     def check_published_html_requires_exact_version_and_equivalent_trusted_markdown(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))

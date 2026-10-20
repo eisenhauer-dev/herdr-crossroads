@@ -36,5 +36,7 @@ jobs:
               sys.exit("PR source policy: missing or invalid repository identity")
           if not ids[0] == ids[1] == ids[2]:
               sys.exit("PR source policy: main requires an internal source; target develop for fork contributions")
+          if pr["head"].get("ref") != "develop":
+              sys.exit("PR source policy: main requires the internal develop branch")
           print("PR source policy: allowed")
           PY

@@ -61,7 +61,7 @@ impl Ui {
             let roomy = inner >= 102;
             let table_margin = "  ";
             let short = ansi && height <= 6;
-            let header_rule = roomy && !short && height >= 8;
+            let header_rule = !short && height >= 8;
             let footer_rows = hint_rows + usize::from(self.theme_notice().is_some());
             let available = height.saturating_sub(
                 1 + usize::from(preview)
@@ -411,8 +411,9 @@ impl Ui {
                         .iter()
                         .find_map(|(at, inset)| (*at == y as usize).then_some(*inset));
                     let content = if let Some(inset) = inset {
+                        let glyph = if header_rule && y == 2 { "─" } else { "┄" };
                         let rule =
-                            "┄".repeat(table_limit.saturating_sub(if inset { 4 } else { 0 }));
+                            glyph.repeat(table_limit.saturating_sub(if inset { 4 } else { 0 }));
                         let margin = if inset { "      " } else { table_margin };
                         if ansi {
                             format!(

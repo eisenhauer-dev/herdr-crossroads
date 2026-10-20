@@ -1,6 +1,49 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+#[cfg(unix)]
+fn fixture_stream(stream: std::os::unix::net::UnixStream) -> std::os::unix::net::UnixStream {
+    use std::time::Duration;
+    // Accept polling must not leak into fixture I/O on platforms that inherit O_NONBLOCK.
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+}
+
+#[cfg(unix)]
+#[test]
+fn fixture_stream_waits_for_delayed_data_on_nonblocking_endpoint() {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+
+    let (mut client, server) = UnixStream::pair().unwrap();
+    server.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        (&server).read(&mut byte).unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    let mut server = fixture_stream(server);
+    assert_eq!(server.read_timeout().unwrap(), Some(Duration::from_secs(3)));
+    assert_eq!(
+        server.write_timeout().unwrap(),
+        Some(Duration::from_secs(5))
+    );
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        client.write_all(b"q").unwrap();
+    });
+    server.read_exact(&mut byte).unwrap();
+    assert_eq!(&byte, b"q");
+    writer.join().unwrap();
+}
+
 fn isolated_command(program: &str) -> Command {
     // This path is never populated: all theme resolution stays outside user config.
     let config = std::path::Path::new("/tmp/opencode")
@@ -8,6 +51,7 @@ fn isolated_command(program: &str) -> Command {
     let mut command = Command::new(program);
     command
         .env_remove("HERDR_PLUGIN_CONFIG_DIR")
+        .env_remove("HERDR_PLUGIN_CONTEXT_JSON")
         .env_remove("HERDR_SOCKET_PATH")
         .env(
             "HERDR_CONFIG_PATH",
@@ -19,6 +63,60 @@ fn isolated_command(program: &str) -> Command {
         .env_remove("SSH_CLIENT")
         .env_remove("SSH_TTY");
     command
+}
+
+#[cfg(unix)]
+#[test]
+fn launch_context_initializes_highlight_without_reordering_or_focus() {
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
+    for (context, expected, input) in [
+        (
+            Some(r#"{"focused_pane_id":"p-a"}"#),
+            "Same",
+            b"q".as_slice(),
+        ),
+        (Some(r#"{"focused_pane_id":"p-other"}"#), "codex", b"q"),
+        (Some(r#"{"focused_pane_id":"p-other"}"#), "pane 2", b"jq"),
+        (None, "Claude", b"q"),
+        (Some(""), "Claude", b"q"),
+        (Some("{"), "Claude", b"q"),
+        (Some("null"), "Claude", b"q"),
+        (Some("[]"), "Claude", b"q"),
+        (Some("{}"), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":null}"#), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":42}"#), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":"missing"}"#), "Claude", b"q"),
+    ] {
+        let mut command = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"));
+        command
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env_remove("HERDR_PANE_ID")
+            .env("COLUMNS", "150")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        if let Some(context) = context {
+            command.env("HERDR_PLUGIN_CONTEXT_JSON", context);
+        }
+        let mut child = command.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{context:?}");
+        let text = String::from_utf8_lossy(&output.stdout);
+        let selected = text.lines().rfind(|line| line.starts_with("  >")).unwrap();
+        assert!(selected.contains(expected), "{context:?}: {selected}");
+        if expected == "Same" {
+            assert!(selected.trim_end().ends_with("Same"), "{selected}");
+        }
+        assert!(text.find("Claude") < text.find("codex"), "{text}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api snapshot\n".repeat(12)
+    );
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
 }
 
 #[cfg(unix)]
@@ -100,7 +198,7 @@ fn live_status_burst_coalesces_frames_and_keeps_quit_responsive() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut stream = loop {
         match listener.accept() {
-            Ok((stream, _)) => break stream,
+            Ok((stream, _)) => break fixture_stream(stream),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
@@ -109,9 +207,6 @@ fn live_status_burst_coalesces_frames_and_keeps_quit_responsive() {
             Err(error) => panic!("subscription not opened: {error}"),
         }
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .unwrap();
     let mut request = String::new();
     BufReader::new(&stream).read_line(&mut request).unwrap();
     assert_eq!(
@@ -221,7 +316,7 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     let (mut stream, _) = loop {
         match listener.accept() {
-            Ok(pair) => break pair,
+            Ok((stream, address)) => break (fixture_stream(stream), address),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock
                     && std::time::Instant::now() < deadline =>
@@ -236,9 +331,6 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
             }
         }
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .unwrap();
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line).unwrap();
     let request: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -252,6 +344,30 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
         .unwrap()
         .iter()
         .any(|s| s == &serde_json::json!({"type":"pane.agent_status_changed","pane_id":"p-b"})));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut text = String::new();
+    let mut until_status = |status: &str| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while let Ok(Ok(line)) =
+            rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        {
+            let found = line.contains("Claude") && line.contains(status);
+            text.push_str(&line);
+            text.push('\n');
+            if found {
+                return true;
+            }
+        }
+        false
+    };
     stream
         .write_all(
             format!(
@@ -262,13 +378,37 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
         )
         .unwrap();
     stream.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"done\"}}\n").unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    stream.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-other\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"closed-id\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
-    std::thread::sleep(Duration::from_millis(150));
-    child.stdin.take().unwrap().write_all(b"q").unwrap();
+    let got_done = until_status("done");
+    let got_blocked = if got_done {
+        stream.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-other\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"closed-id\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
+        until_status("blocked")
+    } else {
+        false
+    };
+    if got_blocked {
+        child.stdin.take().unwrap().write_all(b"q").unwrap();
+    } else {
+        child.kill().unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let exited = child.try_wait().unwrap().is_some();
+    if !exited {
+        child.kill().unwrap();
+    }
     let output = child.wait_with_output().unwrap();
-    assert!(output.status.success());
-    let text = String::from_utf8_lossy(&output.stdout);
+    reader.join().unwrap();
+    for line in rx.try_iter() {
+        text.push_str(&line.unwrap());
+        text.push('\n');
+    }
+    let calls = std::fs::read_to_string(&log).unwrap();
+    std::fs::remove_dir_all(base).unwrap();
+    assert!(got_done, "done not rendered before deadline: {text}");
+    assert!(got_blocked, "blocked not rendered before deadline: {text}");
+    assert!(exited && output.status.success(), "{text}");
     assert!(
         text.lines()
             .any(|l| l.contains("Claude") && l.contains("done")),
@@ -286,14 +426,9 @@ fn status_subscription_bootstrap_event_and_later_update_use_exact_pane_id() {
         "{text}"
     );
     assert_eq!(
-        std::fs::read_to_string(&log)
-            .unwrap()
-            .lines()
-            .take(2)
-            .collect::<Vec<_>>(),
+        calls.lines().take(2).collect::<Vec<_>>(),
         ["pane list", "api snapshot"]
     );
-    std::fs::remove_dir_all(base).unwrap();
 }
 
 #[cfg(unix)]
@@ -324,6 +459,10 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             .env("HERDR_BIN_PATH", &fake)
             .env("CROSSROADS_TEST_LOG", &log)
             .env("CROSSROADS_BASE", &base)
+            .env(
+                "HERDR_PLUGIN_CONTEXT_JSON",
+                r#"{"focused_pane_id":"p-other"}"#,
+            )
             .env(
                 "CROSSROADS_RETRY",
                 if buffered_status == Some("retry") {
@@ -359,7 +498,7 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
                 let found = line.contains(needle);
                 output_lines.push(line);
                 if found {
-                    break;
+                    break output_lines.len();
                 }
             }
         };
@@ -367,7 +506,7 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             let deadline = std::time::Instant::now() + Duration::from_secs(3);
             loop {
                 match listener.accept() {
-                    Ok((stream, _)) => break stream,
+                    Ok((stream, _)) => break fixture_stream(stream),
                     Err(error)
                         if error.kind() == std::io::ErrorKind::WouldBlock
                             && std::time::Instant::now() < deadline =>
@@ -392,6 +531,13 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             .unwrap();
         first.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
         until_line("Claude | blocked");
+        until_line("codex | idle");
+        // Force another pre-navigation repaint, independent of bootstrap scheduling.
+        first.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
+        until_line("Claude | blocked");
+        let navigation_checkpoint = until_line("codex | idle");
+        child.stdin.as_mut().unwrap().write_all(b"j").unwrap();
+        until_line("  >");
         let deadline = Instant::now() + Duration::from_secs(3);
         while !base.join("first").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
@@ -437,7 +583,9 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
                 base.join("failed").exists(),
                 "first reconnect snapshot did not fail"
             );
-            second.shutdown(std::net::Shutdown::Both).unwrap();
+            if let Err(error) = second.shutdown(std::net::Shutdown::Both) {
+                assert_eq!(error.kind(), std::io::ErrorKind::NotConnected, "{error}");
+            }
             let mut third = accept(&listener);
             line.clear();
             BufReader::new(&third).read_line(&mut line).unwrap();
@@ -457,11 +605,31 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             until_line("Claude | done");
             expected = "done";
         }
+        until_line("  >");
         drop(retry_connection);
         child.stdin.take().unwrap().write_all(b"q").unwrap();
         let output = child.wait_with_output().unwrap();
         reader.join().unwrap();
         assert!(output.status.success());
+        output_lines.extend(lines_rx.try_iter());
+        let initial_selections: Vec<_> = output_lines[..navigation_checkpoint]
+            .iter()
+            .filter(|line| line.starts_with("  >"))
+            .collect();
+        assert!(
+            initial_selections.len() >= 2
+                && initial_selections.iter().all(|line| line.contains("codex")),
+            "{initial_selections:?}"
+        );
+        let selections: Vec<_> = output_lines[navigation_checkpoint..]
+            .iter()
+            .filter(|line| line.starts_with("  >"))
+            .collect();
+        assert!(selections.len() >= 2, "{output_lines:?}");
+        assert!(
+            selections.iter().all(|line| line.contains("pane 2")),
+            "{selections:?}"
+        );
         let last_agent = output_lines
             .iter()
             .rfind(|line| line.contains("Claude | "))
@@ -545,10 +713,8 @@ fn reconnect_installs_snapshot_while_status_sender_is_still_active() {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             match listener.accept() {
-                Ok((mut stream, _)) => {
-                    stream
-                        .set_read_timeout(Some(Duration::from_secs(2)))
-                        .unwrap();
+                Ok((stream, _)) => {
+                    let mut stream = fixture_stream(stream);
                     let mut request = String::new();
                     BufReader::new(&stream).read_line(&mut request).unwrap();
                     assert_eq!(
@@ -683,7 +849,7 @@ fn blocked_reconnect_snapshot_does_not_block_quit() {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             match listener.accept() {
-                Ok((stream, _)) => break stream,
+                Ok((stream, _)) => break fixture_stream(stream),
                 Err(error)
                     if error.kind() == std::io::ErrorKind::WouldBlock
                         && Instant::now() < deadline =>
@@ -778,7 +944,7 @@ fn full_reconnect_listen_queue_does_not_block_quit() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut first = loop {
         match listener.accept() {
-            Ok((stream, _)) => break stream,
+            Ok((stream, _)) => break fixture_stream(stream),
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
             {
@@ -791,9 +957,6 @@ fn full_reconnect_listen_queue_does_not_block_quit() {
             }
         }
     };
-    first
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
     let mut request = String::new();
     BufReader::new(&first).read_line(&mut request).unwrap();
     assert_eq!(
@@ -918,7 +1081,8 @@ fn no_focus_case(input: &[u8]) -> (std::process::Output, Option<serde_json::Valu
     child.stdin.take().unwrap().write_all(input).unwrap();
     let request = loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
+            Ok((stream, _)) => {
+                let mut stream = fixture_stream(stream);
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 stream
@@ -977,7 +1141,8 @@ fn focus_case(input: &[u8], reply: &str) -> (std::process::Output, serde_json::V
     listener.set_nonblocking(true).unwrap();
     let request = loop {
         match listener.accept() {
-            Ok((mut stream, _)) => {
+            Ok((stream, _)) => {
+                let mut stream = fixture_stream(stream);
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 stream.write_all(reply.as_bytes()).unwrap();
@@ -1018,19 +1183,21 @@ fn focus_case(input: &[u8], reply: &str) -> (std::process::Output, serde_json::V
 #[cfg(unix)]
 #[test]
 fn select_enter_focuses_visible_filtered_fallback_by_id() {
-    let (output, request) = focus_case(
-        b"/codex\r\r",
-        "{\"id\":\"crossroads-focus\",\"result\":{\"type\":\"pane_info\",\"pane\":{\"pane_id\":\"p-other\",\"focused\":true}}}\n",
-    );
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        request,
-        serde_json::json!({"id":"crossroads-focus","method":"pane.focus","params":{"pane_id":"p-other"}})
-    );
+    for ending in ["\n", ""] {
+        let reply = format!(
+            "{{\"id\":\"crossroads-focus\",\"result\":{{\"type\":\"pane_info\",\"pane\":{{\"pane_id\":\"p-other\",\"focused\":true}}}}}}{ending}"
+        );
+        let (output, request) = focus_case(b"/codex\r\r", &reply);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            request,
+            serde_json::json!({"id":"crossroads-focus","method":"pane.focus","params":{"pane_id":"p-other"}})
+        );
+    }
 }
 
 #[cfg(unix)]
@@ -1091,7 +1258,7 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
     let watchdog = Instant::now() + Duration::from_secs(3);
     let mut stream = loop {
         match listener.accept() {
-            Ok((stream, _)) => break stream,
+            Ok((stream, _)) => break fixture_stream(stream),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < watchdog => {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -1102,14 +1269,11 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
             }
         }
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line).unwrap();
     let request: serde_json::Value = serde_json::from_str(&line).unwrap();
     let started = Instant::now();
-    // Keep the socket active more often than its per-read timeout; never send a newline.
+    // Keep bytes arriving within the overall reply deadline; never send a newline.
     for _ in 0..9 {
         if child.try_wait().unwrap().is_some() {
             break;
@@ -1180,16 +1344,13 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
     let deadline = Instant::now() + Duration::from_secs(3);
     let stream = loop {
         match listener.accept() {
-            Ok((stream, _)) => break stream,
+            Ok((stream, _)) => break fixture_stream(stream),
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => panic!("no focus request before deadline: {e}"),
         }
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
     let mut line = String::new();
     BufReader::new(&stream).read_line(&mut line).unwrap();
     let request: serde_json::Value = serde_json::from_str(&line).unwrap();

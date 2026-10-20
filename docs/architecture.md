@@ -3,8 +3,24 @@
 Crossroads is a Rust terminal-popup process, not an embedded Herdr extension.
 Herdr launches the manifest's `crossroads` pane entrypoint with the plugin root
 as working directory and supplies runtime environment context. The manifest
-declares Linux, minimum Herdr 0.9.1, popup placement, and a release-binary path;
-it has no build hooks, actions, startup hooks, or event hooks.
+declares Linux/macOS, minimum Herdr 0.9.1, popup placement, and a release-binary path;
+it declares a Python binary-installer build hook and the global `setup-keybind`
+action. Managed installation invokes the build hook; linking a source checkout
+does not. Only explicit invocation of `setup-keybind` may append the agreed host
+launch binding. Opening or searching the popup invokes neither path and does not
+install/update binaries or change host configuration. There are no startup or
+event hooks. See [installation and setup safeguards](installation.md).
+
+The checkout prepares unreleased 0.2.0 for Linux x86_64 glibc and macOS 15.0+
+ARM64/Intel; published 0.1.0 stays Linux-only. Installation selects the running
+process architecture, validates ELF/Mach-O and archive/checksum/notice contracts,
+and places the payload at the same entrypoint path without Cargo. Native release
+helpers bind a fresh final link/map to the exact four-PTY-tested executable;
+Darwin ad-hoc signing is link-time only, with no Developer ID or notarization.
+CI's real-Herdr local-fixture install gate then tests that installed binary before
+artifact upload, without a server/popup. [Current three-platform distribution CI](builds.md#current-020-three-platform-ci-evidence)
+passed; independent review and final acceptance remain pending. The macOS live
+acceptance waiver is not an automated-installation waiver.
 
 ## Module responsibilities
 
@@ -123,9 +139,13 @@ The presentation facade resets hint paging, then dispatches configuration errors
 before the popup-size guard, Help, the theme list, and finally the pane table
 (also used for theme table preview). Each view uses the existing `Ui` state;
 there is no separate renderer state machine. The table chooses compact or roomy
-columns, maintains its viewport and underlines matches; shared footer hints stay
-anchored by each view's layout. The main loop checks interactive size about every
-250 ms and pages oversized custom hints every two seconds when needed. Below
+columns, maintains its viewport and underlines matches. Both column layouts use
+a full-table-width solid `─` rule below the headers at heights of eight rows or
+more; the short ANSI layout omits headers and their rule. Workspace blocks retain
+dim dashed `┄` separators, inset before linked worktrees. The same rules apply in
+Search and theme table preview. Shared footer hints stay anchored by each view's
+layout. The main loop checks interactive size about every 250 ms and pages
+oversized custom hints every two seconds when needed. Below
 80×15 content cells, normal pane actions are blocked; resize can restore the UI.
 
 ### Focus and close
@@ -133,8 +153,10 @@ anchored by each view's layout. The main loop checks interactive size about ever
 Only confirmation in Select with a visible candidate emits a pane ID. `actions`
 executes that result through `focus`, which
 sends `pane.focus` over `HERDR_SOCKET_PATH` and validates reply ID, result type,
-exact pane ID, and `focused: true`. Reply reading has a 500-ms overall deadline
-and a 16-KiB limit; this is not a general socket-connect/write timeout promise.
+exact pane ID, and `focused: true`. After the request and newline are written,
+nonblocking reply reading has a 500-ms overall deadline and a 16-KiB limit.
+When no bytes are ready, it sleeps for at most 1 ms before checking the deadline
+again; this is not a general socket-connect/write timeout promise.
 Stale/error replies fail without choosing another target. Help, search, themes,
 empty results, and error-page close do not focus panes. Terminal ownership restores
 the saved `stty` state, shows the cursor, and pops an owned Kitty mode on normal

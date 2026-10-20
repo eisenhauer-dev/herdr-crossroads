@@ -232,7 +232,7 @@ test "$1" != "tests/pty_${{FAIL_GATE:-none}}.py" || exit 23
 
     def test_workflow_step_outputs_exact_name_only_after_success(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-        step = workflow.split("        id: package\n        run: |\n", 1)[1].split("      - name: Upload", 1)[0]
+        step = workflow.split("        id: package\n        run: |\n", 1)[1].split("      - name:", 1)[0]
         script = "\n".join(line[10:] for line in step.splitlines())
         metadata = self.repo / "workflow-output"
         self.env["GITHUB_OUTPUT"] = str(metadata)

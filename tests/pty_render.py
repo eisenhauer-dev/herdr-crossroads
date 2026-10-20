@@ -1,6 +1,7 @@
 """Linux PTY screen regression for narrow raw-mode popup rendering."""
 import errno
 import fcntl
+import json
 import os
 import pty
 import select
@@ -18,10 +19,15 @@ def frame(master, marker):
     while marker not in data:
         ready, _, _ = select.select([master], [], [], 3)
         assert ready, f"no frame ending in {marker!r}: {data[-100:]!r}"
-        data.extend(os.read(master, 65536))
+        chunk = os.read(master, 65536)
+        assert chunk, f"EOF before frame ending in {marker!r}: {data[-100:]!r}"
+        data.extend(chunk)
     while select.select([master], [], [], 0.05)[0]:
         try:
-            data.extend(os.read(master, 65536))
+            chunk = os.read(master, 65536)
+            if not chunk:
+                break
+            data.extend(chunk)
         except OSError as error:
             if error.errno != errno.EIO:
                 raise
@@ -163,6 +169,31 @@ def assert_help_frame(raw, width=80, height=15, searching=False):
 NOTICE_END = b"  Press Enter/Esc/q to close."
 
 
+def assert_terminal_restored(master, slave, saved, active, key, output):
+    actual = termios.tcgetattr(slave)
+    if actual == saved:
+        return
+    # The cursor marker precedes stty restoration. Collect any later error output
+    # only after child.wait(), without waiting or retrying the attribute check.
+    tail = bytearray()
+    while select.select([master], [], [], 0)[0]:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            break
+        if not chunk:
+            break
+        tail.extend(chunk)
+    names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
+    changed = {name: (before, after) for name, before, after in zip(names, saved, actual) if before != after}
+    assert actual == saved, (f"terminal restoration failed: key={key!r} "
+                             f"platform={sys.platform}/{os.uname().machine} python={sys.version} "
+                             f"changed={changed!r} saved={saved!r} active={active!r} actual={actual!r} "
+                             f"output={output!r} post_exit_output={bytes(tail)!r}")
+
+
 def default_footer_lines(width, mode="select", table=False):
     # Independent expected effective default identities, all visible without paging.
     text = {
@@ -207,7 +238,7 @@ def assert_notice_style(raw):
 
 
 def search_cursor_cases(binary):
-    from pty_keymaps import Popup
+    from pty_keymaps import Popup, read_frame
 
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cursor-") as temporary:
         directory = Path(temporary)
@@ -218,20 +249,44 @@ def search_cursor_cases(binary):
         for width, height in ((80, 15), (142, 30)):
             for mode in ("Help", "Search"):
                 budget = width - 4 - len(mode) - 1
-                for query, expected_x in (("", 10), ("abc", 13), ("abc  ", 15),
-                                          ("x" * 200, 2 + budget - 1),
-                                          ("界" * 100, 2 + 8 + 2 * ((budget - 2 - 8) // 2) + 1)):
+                wide_count = (budget - 2 - 8) // 2
+                # screen() retains a blank continuation cell after wide glyphs.
+                for query, expected_x, visible_query in (
+                    ("", 10, ""), ("abc", 13, "abc"), ("abc  ", 15, "abc  "),
+                    ("x" * 200, 2 + budget - 1, "x" * (budget - 10) + "…"),
+                    ("界" * 100, 2 + 8 + 2 * wide_count + 1, "界 " * wide_count + "…"),
+                ):
                     popup = Popup(binary, directory, width=width, height=height)
                     try:
                         if mode == "Help":
                             popup.send(b"?")
                         popup.send(b"/")
+                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(mode)) + mode
+                        latest = None
+
+                        def final_query(raw):
+                            nonlocal latest
+                            # Every draw is a full repaint. Replaying the entire
+                            # typing history here is quadratic and can consume the
+                            # reader's deadline before the child finishes writing.
+                            raw = raw[raw.rfind("\x1b[H\x1b[J"):]
+                            lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                            latest = (lines[0], wraps, cursor)
+                            return wraps == 0 and lines[0] == expected_row and cursor == (True, expected_x, 0)
+
                         # Empty search also needs a complete fresh draw for cursor checks.
                         os.write(popup.master, query.encode() if query else b"\x7f")
-                        raw = frame(popup.master, b"\x1b[?25h")
+                        # Typing can produce many complete intermediate draws. Keep
+                        # the popup's frame boundaries and original bounded deadline.
+                        try:
+                            raw = read_frame(popup.output, expected=final_query)
+                        except AssertionError as error:
+                            error.add_note(f"width={width} mode={mode} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
+                            raise
                         lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
                         assert wraps == 0 and lines[0].endswith(mode), (lines, wraps)
                         assert cursor == (True, expected_x, 0), (width, mode, query, cursor, expected_x, lines[0])
+                        assert lines[0] == expected_row, lines
                         if len(query) < 10:
                             assert lines[0] == expected_search_row(width, query, mode), lines
                         else:
@@ -244,7 +299,54 @@ def search_cursor_cases(binary):
                         popup.abort()
 
 
+def launch_selection_cases(binary):
+    from pty_keymaps import Popup
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-launch-") as temporary:
+        directory = Path(temporary)
+        snapshot = json.loads((Path(__file__).parent / "fixtures/topology.json").read_text())
+        topology = snapshot["result"]["snapshot"]
+        topology["panes"] = [
+            {"pane_id": f"filler-{i}", "workspace_id": "w1", "tab_id": "t1", "label": f"Filler {i:02}"}
+            for i in range(30)
+        ] + [
+            {"pane_id": "caller", "workspace_id": "w2", "tab_id": "t2", "label": "Launch pane"},
+            {"pane_id": "next", "workspace_id": "w2", "tab_id": "t2", "label": "Next pane"},
+        ]
+        topology["agents"] = []
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{directory / 'calls'}'\nif [ \"$*\" = 'api snapshot' ]; then cat '{directory / 'snapshot.json'}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        for empty in (False, True):
+            if empty:
+                topology["panes"] = []
+            (directory / "snapshot.json").write_text(json.dumps(snapshot))
+            popup = Popup(binary, directory, launch_context=json.dumps({"focused_pane_id": "caller"}))
+            try:
+                lines, wraps = screen(popup.initial, 80, 15)
+                assert wraps == 0, lines
+                selected = [line for line in lines if line.startswith("  >")]
+                if empty:
+                    assert not selected, lines
+                else:
+                    assert len(selected) == 1 and "Launch pane" in selected[0], lines
+                    assert not any("Filler 00" in line for line in lines), lines
+                    shown = "\n".join(lines)
+                    assert shown.index("Filler 29") < shown.index("Launch pane"), lines
+                    lines = popup.send(b"j")
+                    assert any(line.startswith("  >") and "Next pane" in line for line in lines), lines
+                    shown = "\n".join(lines)
+                    assert shown.index("Launch pane") < shown.index("Next pane"), lines
+                popup.finish(b"q")
+            finally:
+                popup.abort()
+        assert (directory / "calls").read_text() == (
+            "api snapshot\nworktree list --workspace w1\nworktree list --workspace w2\napi snapshot\n"
+        )
+
+
 def main(binary):
+    launch_selection_cases(binary)
     search_cursor_cases(binary)
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)
@@ -253,16 +355,16 @@ def main(binary):
         fake.write_text(f"#!/bin/sh\ncat '{fixture}'\n")
         fake.chmod(0o700)
         master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
         env = dict(os.environ, HERDR_BIN_PATH=str(fake), HERDR_PANE_ID="p-self")
         env.pop("HERDR_PLUGIN_CONFIG_DIR", None)
         env.pop("HERDR_SOCKET_PATH", None)
         env["HERDR_CONFIG_PATH"] = str(directory / "missing-herdr-config.toml")
         env["XDG_CONFIG_HOME"] = str(directory)
         env["HOME"] = str(directory)
-        child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
-        os.close(slave)
+        child = None
         try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
+            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
             raw = frame(master, b"  Search: ")
             assert "\x1b[?25l" in raw and "\x1b[?25h" not in raw, raw[-100:]
             _, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
@@ -276,8 +378,9 @@ def main(binary):
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[15-len(default_footer_lines(80))-1].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
             assert sum("┄" in line for line in lines) == 1, lines
-            assert lines[8].startswith("  ┄") and "codex" in lines[9], lines
-            assert lines[3].startswith("  > ") and "Claude" in lines[3], lines
+            assert lines[3] == "  " + "─" * 76, lines
+            assert lines[9].startswith("  ┄") and "codex" in lines[10], lines
+            assert lines[4].startswith("  > ") and "Claude" in lines[4], lines
             assert any("Same" in line and "Claude" in line and "working" in line for line in lines), lines
             assert any("Same" in line and "Claude" not in line and "working" not in line for line in lines[3:8]), lines
             assert not any(pane_id in "\n".join(lines) for pane_id in ("p-b", "p-a", "p-other")), lines
@@ -348,7 +451,7 @@ def main(binary):
             assert any(line.startswith("  > ") and "codex" in line for line in lines), lines
             os.write(master, b"\x1b[Z")
             lines = assert_selected_background(frame(master, b"  Search: "), 80, 15)
-            for width, height, has_rule in ((162, 36, True), (109, 36, False), (110, 36, True), (162, 7, False)):
+            for width, height in ((162, 36), (109, 36), (110, 36), (162, 7)):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
                 if height < 15:
                     raw = frame(master, NOTICE_END)
@@ -357,7 +460,7 @@ def main(binary):
                 assert_selected_background(frame(master, b"  Search: "), width, height)
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, height)
-                assert (lines[3] == "  " + "┄" * (width - 4)) == has_rule, (width, height, lines[3])
+                assert lines[3] == "  " + "─" * (width - 4), (width, height, lines[3])
                 assert ("Status" in lines[2]) == (width >= 110), (width, height, lines[2])
             assert any(line.startswith("  > ") and "Claude" in line for line in lines), lines
             for width in (150, 139, 138, 121, 120, 111, 110):
@@ -365,7 +468,7 @@ def main(binary):
                 assert_selected_background(frame(master, b"  Search: "), width, 15)
                 os.write(master, b"r")
                 lines = assert_selected_background(frame(master, b"  Search: "), width, 15)
-                assert "Status" in lines[2] and lines[3].startswith("  ┄") and "Claude" in lines[4], lines
+                assert "Status" in lines[2] and lines[3] == "  " + "─" * (width - 4) and "Claude" in lines[4], lines
                 assert_footer(lines, width)
             for width in (109, 110):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
@@ -386,7 +489,7 @@ def main(binary):
             assert screen(frame(master, b"  Search: codex"), 80, 15)[0] == before_help
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
             lines = assert_selected_background(frame(master, b"  Search: codex"), 110, 15)
-            assert "Status" in lines[2] and lines[3].startswith("  ┄"), lines
+            assert "Status" in lines[2] and lines[3] == "  " + "─" * 106, lines
             assert any(line.startswith("  > ") and "codex" in line and "idle" in line for line in lines), lines
             assert_footer(lines, 110)
             for width, height in ((79, 15), (80, 14), (78, 14), (67, 12)):
@@ -428,21 +531,22 @@ def main(binary):
             assert raw.endswith("\x1b[?25h"), raw[-100:]
             assert child.wait(timeout=3) == 0
         finally:
-            if child.poll() is None:
+            if child is not None and child.poll() is None:
                 child.kill()
                 child.wait()
             os.close(master)
+            os.close(slave)
 
         config = directory / "plugin"
         config.mkdir()
         (config / "theme.json").write_text('{"theme":"unknown"}')
         for width in (80, 120):
             master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
             notice_env = dict(env, HERDR_PLUGIN_CONFIG_DIR=str(config))
-            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=notice_env)
-            os.close(slave)
+            child = None
             try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, width, 0, 0))
+                child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=notice_env)
                 raw = frame(master, b"\x1b[?25l")
                 lines, wraps = screen(raw, width, 15)
                 notice_row = 15 - len(default_footer_lines(width)) - 1
@@ -461,27 +565,30 @@ def main(binary):
                 frame(master, b"\x1b[?25h")
                 assert child.wait(timeout=3) == 0
             finally:
-                if child.poll() is None:
+                if child is not None and child.poll() is None:
                     child.kill()
                     child.wait()
                 os.close(master)
+                os.close(slave)
 
         for key in (b"\r", b"\x1b", b"q"):
             master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
-            saved = termios.tcgetattr(slave)
-            child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
+            child = None
             try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 79, 0, 0))
+                saved = termios.tcgetattr(slave)
+                child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
                 initial = frame(master, NOTICE_END)
                 assert "\x1b[?25l" in initial, initial[-100:]
                 assert [line for line in screen(initial, 79, 15)[0] if line] == notice_lines(79, 15)
+                active = termios.tcgetattr(slave)
                 os.write(master, key)
                 restored = frame(master, b"\x1b[?25h")
                 assert "\x1b[?25h" in restored, restored[-100:]
                 assert child.wait(timeout=3) == 0, key
-                assert termios.tcgetattr(slave) == saved, key
+                assert_terminal_restored(master, slave, saved, active, key, initial + restored)
             finally:
-                if child.poll() is None:
+                if child is not None and child.poll() is None:
                     child.kill()
                     child.wait()
                 os.close(master)
