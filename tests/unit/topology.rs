@@ -88,6 +88,7 @@ fn linked_workspace_follows_source_without_reordering_other_blocks_or_panes() {
 fn sorts_context_but_preserves_pane_order_without_visible_ids() {
     let output = render(SNAPSHOT, Some("p-self"), 100).unwrap();
     let lines: Vec<_> = output.lines().collect();
+    assert_eq!(lines[3], format!("  {}", "─".repeat(96)), "{output}");
     assert!(output.contains("Same") && output.contains("Second"));
     assert!(lines
         .iter()
@@ -105,7 +106,7 @@ fn sorts_context_but_preserves_pane_order_without_visible_ids() {
         .any(|line| line.contains("codex") && line.contains("idle")));
     assert_eq!(
         lines.len(),
-        12 + super::test_support::ui()
+        13 + super::test_support::ui()
             .hints(crate::keymap::Context::Select, 100, 2, false)
             .len()
     );
@@ -219,9 +220,13 @@ fn absent_own_pane_id_and_empty_topology() {
         empty_output.contains("No matching panes") && empty_output.contains("Agent/Pane"),
         "{empty_output}"
     );
+    let lines: Vec<_> = empty_output.lines().collect();
+    assert_eq!(lines[3], format!("  {}", "─".repeat(36)), "{empty_output}");
+    assert_eq!(lines[4], "  No matching panes", "{empty_output}");
+    assert_eq!(lines[5], lines[3], "{empty_output}");
     let footer = empty_output
         .lines()
-        .skip(5)
+        .skip(6)
         .collect::<Vec<_>>()
         .join(" ")
         .split_whitespace()
