@@ -1,6 +1,7 @@
 """Linux PTY screen regression for narrow raw-mode popup rendering."""
 import errno
 import fcntl
+import json
 import os
 import pty
 import select
@@ -298,7 +299,54 @@ def search_cursor_cases(binary):
                         popup.abort()
 
 
+def launch_selection_cases(binary):
+    from pty_keymaps import Popup
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-launch-") as temporary:
+        directory = Path(temporary)
+        snapshot = json.loads((Path(__file__).parent / "fixtures/topology.json").read_text())
+        topology = snapshot["result"]["snapshot"]
+        topology["panes"] = [
+            {"pane_id": f"filler-{i}", "workspace_id": "w1", "tab_id": "t1", "label": f"Filler {i:02}"}
+            for i in range(30)
+        ] + [
+            {"pane_id": "caller", "workspace_id": "w2", "tab_id": "t2", "label": "Launch pane"},
+            {"pane_id": "next", "workspace_id": "w2", "tab_id": "t2", "label": "Next pane"},
+        ]
+        topology["agents"] = []
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{directory / 'calls'}'\nif [ \"$*\" = 'api snapshot' ]; then cat '{directory / 'snapshot.json'}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        for empty in (False, True):
+            if empty:
+                topology["panes"] = []
+            (directory / "snapshot.json").write_text(json.dumps(snapshot))
+            popup = Popup(binary, directory, launch_context=json.dumps({"focused_pane_id": "caller"}))
+            try:
+                lines, wraps = screen(popup.initial, 80, 15)
+                assert wraps == 0, lines
+                selected = [line for line in lines if line.startswith("  >")]
+                if empty:
+                    assert not selected, lines
+                else:
+                    assert len(selected) == 1 and "Launch pane" in selected[0], lines
+                    assert not any("Filler 00" in line for line in lines), lines
+                    shown = "\n".join(lines)
+                    assert shown.index("Filler 29") < shown.index("Launch pane"), lines
+                    lines = popup.send(b"j")
+                    assert any(line.startswith("  >") and "Next pane" in line for line in lines), lines
+                    shown = "\n".join(lines)
+                    assert shown.index("Launch pane") < shown.index("Next pane"), lines
+                popup.finish(b"q")
+            finally:
+                popup.abort()
+        assert (directory / "calls").read_text() == (
+            "api snapshot\nworktree list --workspace w1\nworktree list --workspace w2\napi snapshot\n"
+        )
+
+
 def main(binary):
+    launch_selection_cases(binary)
     search_cursor_cases(binary)
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)

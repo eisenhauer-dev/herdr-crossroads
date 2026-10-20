@@ -146,7 +146,7 @@ def assert_source_rows(lines, directory, width, height):
 
 
 class Popup:
-    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None):
+    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None, launch_context=None):
         self.width, self.height = width, height
         keymap = directory / "keymaps.jsonc"
         if config is not None:
@@ -158,6 +158,9 @@ class Popup:
         self.child = None
         env = dict(os.environ, HERDR_BIN_PATH=str(directory / "herdr"), HERDR_PLUGIN_CONFIG_DIR=str(directory), HERDR_CONFIG_PATH=str(directory / "missing"), HERDR_PANE_ID="p-self")
         env.pop("HERDR_SOCKET_PATH", None)
+        env.pop("HERDR_PLUGIN_CONTEXT_JSON", None)
+        if launch_context is not None:
+            env["HERDR_PLUGIN_CONTEXT_JSON"] = launch_context
         if focus_socket:
             env["HERDR_SOCKET_PATH"] = str(focus_socket)
         try:
