@@ -99,6 +99,17 @@ pub(crate) fn run() -> io::Result<()> {
     } else {
         Vec::new()
     });
+    if let Some(row) = std::env::var("HERDR_PLUGIN_CONTEXT_JSON")
+        .ok()
+        .and_then(|context| serde_json::from_str::<serde_json::Value>(&context).ok())
+        .and_then(|context| {
+            ui.rows
+                .iter()
+                .find(|row| Some(row.id.as_str()) == context["focused_pane_id"].as_str())
+        })
+    {
+        ui.selected = Some(row.id.clone());
+    }
     ui.keymap = keymap;
     ui.keymap_errors = keymap_errors;
     ui.status_colors = status_colors;

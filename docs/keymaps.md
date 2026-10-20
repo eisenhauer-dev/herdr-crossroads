@@ -50,6 +50,14 @@ For example, this replaces pane movement while retaining arrows explicitly:
 
 ### `select` — pane navigation
 
+When the popup opens, Crossroads initially highlights the pane focused immediately
+before opening it, using `focused_pane_id` from `HERDR_PLUGIN_CONTEXT_JSON`.
+The table keeps its topology order and scrolls that row into view without changing
+host focus. Missing or invalid launch context, a missing/non-string pane ID, or
+an ID absent from the table retains the first-row fallback; an empty table has
+no selection. This applies only at startup: later navigation, status updates,
+and reconnect snapshots do not reset the highlight to the launch pane.
+
 | Action | Default keys | Effect |
 | --- | --- | --- |
 | `next_row` | `j`, `Down` | Next visible pane |

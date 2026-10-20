@@ -51,6 +51,7 @@ fn isolated_command(program: &str) -> Command {
     let mut command = Command::new(program);
     command
         .env_remove("HERDR_PLUGIN_CONFIG_DIR")
+        .env_remove("HERDR_PLUGIN_CONTEXT_JSON")
         .env_remove("HERDR_SOCKET_PATH")
         .env(
             "HERDR_CONFIG_PATH",
@@ -62,6 +63,60 @@ fn isolated_command(program: &str) -> Command {
         .env_remove("SSH_CLIENT")
         .env_remove("SSH_TTY");
     command
+}
+
+#[cfg(unix)]
+#[test]
+fn launch_context_initializes_highlight_without_reordering_or_focus() {
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
+    for (context, expected, input) in [
+        (
+            Some(r#"{"focused_pane_id":"p-a"}"#),
+            "Same",
+            b"q".as_slice(),
+        ),
+        (Some(r#"{"focused_pane_id":"p-other"}"#), "codex", b"q"),
+        (Some(r#"{"focused_pane_id":"p-other"}"#), "pane 2", b"jq"),
+        (None, "Claude", b"q"),
+        (Some(""), "Claude", b"q"),
+        (Some("{"), "Claude", b"q"),
+        (Some("null"), "Claude", b"q"),
+        (Some("[]"), "Claude", b"q"),
+        (Some("{}"), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":null}"#), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":42}"#), "Claude", b"q"),
+        (Some(r#"{"focused_pane_id":"missing"}"#), "Claude", b"q"),
+    ] {
+        let mut command = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"));
+        command
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env_remove("HERDR_PANE_ID")
+            .env("COLUMNS", "150")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        if let Some(context) = context {
+            command.env("HERDR_PLUGIN_CONTEXT_JSON", context);
+        }
+        let mut child = command.spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{context:?}");
+        let text = String::from_utf8_lossy(&output.stdout);
+        let selected = text.lines().rfind(|line| line.starts_with("  >")).unwrap();
+        assert!(selected.contains(expected), "{context:?}: {selected}");
+        if expected == "Same" {
+            assert!(selected.trim_end().ends_with("Same"), "{selected}");
+        }
+        assert!(text.find("Claude") < text.find("codex"), "{text}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api snapshot\n".repeat(12)
+    );
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
 }
 
 #[cfg(unix)]
@@ -405,6 +460,10 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             .env("CROSSROADS_TEST_LOG", &log)
             .env("CROSSROADS_BASE", &base)
             .env(
+                "HERDR_PLUGIN_CONTEXT_JSON",
+                r#"{"focused_pane_id":"p-other"}"#,
+            )
+            .env(
                 "CROSSROADS_RETRY",
                 if buffered_status == Some("retry") {
                     "1"
@@ -439,7 +498,7 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
                 let found = line.contains(needle);
                 output_lines.push(line);
                 if found {
-                    break;
+                    break output_lines.len();
                 }
             }
         };
@@ -472,6 +531,13 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             .unwrap();
         first.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
         until_line("Claude | blocked");
+        until_line("codex | idle");
+        // Force another pre-navigation repaint, independent of bootstrap scheduling.
+        first.write_all(b"{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p-b\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n").unwrap();
+        until_line("Claude | blocked");
+        let navigation_checkpoint = until_line("codex | idle");
+        child.stdin.as_mut().unwrap().write_all(b"j").unwrap();
+        until_line("  >");
         let deadline = Instant::now() + Duration::from_secs(3);
         while !base.join("first").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
@@ -539,11 +605,31 @@ fn disconnected_status_socket_resubscribes_then_resnapshots_before_updates() {
             until_line("Claude | done");
             expected = "done";
         }
+        until_line("  >");
         drop(retry_connection);
         child.stdin.take().unwrap().write_all(b"q").unwrap();
         let output = child.wait_with_output().unwrap();
         reader.join().unwrap();
         assert!(output.status.success());
+        output_lines.extend(lines_rx.try_iter());
+        let initial_selections: Vec<_> = output_lines[..navigation_checkpoint]
+            .iter()
+            .filter(|line| line.starts_with("  >"))
+            .collect();
+        assert!(
+            initial_selections.len() >= 2
+                && initial_selections.iter().all(|line| line.contains("codex")),
+            "{initial_selections:?}"
+        );
+        let selections: Vec<_> = output_lines[navigation_checkpoint..]
+            .iter()
+            .filter(|line| line.starts_with("  >"))
+            .collect();
+        assert!(selections.len() >= 2, "{output_lines:?}");
+        assert!(
+            selections.iter().all(|line| line.contains("pane 2")),
+            "{selections:?}"
+        );
         let last_agent = output_lines
             .iter()
             .rfind(|line| line.contains("Claude | "))
