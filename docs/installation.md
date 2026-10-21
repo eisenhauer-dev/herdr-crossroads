@@ -71,6 +71,15 @@ Windows installation uses `scripts/windows-files.py`, not Unix directory-FD or
 mode semantics: it requires a local absolute drive path, pins directory ancestors
 against rename, rejects reparse-point ancestors/destinations, and stages/syncs
 individual replacements in `target/release/`. This is not a three-file transaction.
+The pin requests `FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES` and shares read/write
+but not delete access; installation fails closed if those directory permissions or
+sharing requirements cannot be met. Attribute-only handles did not block rename
+in native run `39617733551`; the corrected access mask and expanded native
+rename/swap regressions await Windows execution. See Microsoft's
+[CreateFileW sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+(updated 2025-07-01) and
+[directory access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants)
+(updated 2021-01-07), checked 2026-10-21.
 Close the popup before replacing the executable: Windows can reject replacement
 of a running binary. Nothing here proves an actual Herdr managed installation.
 See [preparation gates and physical-PC sequencing](builds.md#windows-preparation-not-certification).

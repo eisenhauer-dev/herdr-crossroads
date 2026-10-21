@@ -26,10 +26,11 @@ class AttributeTag(ctypes.Structure):
 
 @contextmanager
 def pinned_directory(path):
-    # FILE_READ_ATTRIBUTES, share READ|WRITE but NOT DELETE, OPEN_EXISTING,
-    # BACKUP_SEMANTICS|OPEN_REPARSE_POINT. Holding each ancestor prevents a
+    # FILE_LIST_DIRECTORY|FILE_READ_ATTRIBUTES, share READ|WRITE but NOT DELETE,
+    # OPEN_EXISTING, BACKUP_SEMANTICS|OPEN_REPARSE_POINT. Attribute-only access
+    # does not enforce sharing restrictions. Holding each ancestor prevents a
     # concurrent directory/junction swap while path-based operations run below.
-    handle = KERNEL.CreateFileW(str(path), 0x80, 3, None, 3, 0x02200000, None)
+    handle = KERNEL.CreateFileW(str(path), 0x81, 3, None, 3, 0x02200000, None)
     if handle == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     try:

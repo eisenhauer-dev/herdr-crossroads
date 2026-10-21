@@ -49,8 +49,12 @@ startup/redirected-parent and exact console-restoration checks, then failed a
 test-only raw substring assertion on an SGR-styled search label. Run `39614583553`
 at `6623013` passed that assertion with the emitted-label matcher, then failed a
 stale resize-message expectation despite the correct `80x15` minimum / `60x12`
-actual-size notice. The resize expectation correction awaits native execution;
-theme-save and installed-binary acceptance were not reached
+actual-size notice. Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal, then failed the distribution suite's
+pinned-directory rename assertion. The installer access-mask correction awaits
+native execution; installed-binary acceptance, full pipeline success and exact
+artifact verification remain open
 (see [native test scope](keymaps.md#windows-preparation-verification)).
 This is neither actual Herdr integration nor Windows certification. MSVC/SDK
 attribution review remains open. A physical Windows PC is available, OS version unknown; final live-popup

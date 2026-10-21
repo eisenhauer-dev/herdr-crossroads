@@ -52,7 +52,13 @@ at `6623013` confirms the SGR-aware matcher passed that search assertion and the
 earlier console, focus, reconnect and noninteractive checks. It failed in 2m 56s
 at the stale resize expectation `too small`, despite displaying the correct
 minimum `80x15` and actual `60x12` content-size notice. The corrected expectation
-awaits native execution; theme-save and installed-binary acceptance were not reached. See
+passed in supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649`: all seven native acceptance tests passed, including resize/close and
+theme save/replace/reopen/Auto removal. The job failed in 3m 00s during distribution
+checks: seven of eight passed, but the pinned-directory rename test did not raise
+`OSError`. The installer now requests directory-read as well as attribute access;
+this correction and expanded rename/swap regressions await native execution.
+Installed-binary acceptance was not reached. See
 [the matcher contract and native evidence](keymaps.md#windows-preparation-verification).
 The helper installs no tooling. It checks versions and target notices, forces a
 fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the

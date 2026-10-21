@@ -449,10 +449,14 @@ the UI correctly emitted `ERROR: Crossroads needs minimum content size 80x15.`,
 `Your content size is: 60x12.` and close instructions, not that stale substring.
 The acceptance test now checks those minimum/actual dimensions and close
 instructions, retaining resize recovery and the existing successful-quit check;
-this expectation correction awaits native execution. Theme-save acceptance and
-the installed-binary second pass were not reached. These passes
-prove the handle fix on that runner, not Windows 10/11 certification or overall
-pipeline success.
+supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal. It failed in 3m 00s at the distribution
+suite's pinned-directory rename assertion (seven of eight distribution tests
+passed). The installer access-mask correction and expanded native regressions
+await Windows execution; the installed-binary second pass was not reached.
+These passes prove the console and UI checks on that runner, not Windows 10/11
+certification or overall pipeline success.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
 certification. Windows is
 preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,

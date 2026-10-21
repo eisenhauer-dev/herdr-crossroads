@@ -81,8 +81,12 @@ failed a raw styled-label assertion in 3m 38s with clean teardown and no artifac
 Run `39614583553` (`6623013`) passed the styled-label assertion and earlier console,
 focus, reconnect and noninteractive checks, then failed in 2m 56s on a stale
 resize-message expectation despite the correct minimum/actual-size notice.
-The resize expectation correction awaits native execution; theme-save and
-installed-binary acceptance were not reached. Versioned output
+Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal, then failed the distribution suite's
+pinned-directory rename assertion. The installer access-mask correction awaits
+native execution; installed-binary acceptance was not reached. Full pipeline and
+artifact verification remain open alongside the release gates below. Versioned output
 names still use **0.2.0**;
 do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).

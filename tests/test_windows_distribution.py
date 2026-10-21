@@ -151,9 +151,67 @@ class WindowsFileInstallationTests(unittest.TestCase):
 
     def test_pinned_parent_cannot_be_renamed_during_installation(self):
         module = runpy.run_path(str(ROOT / "scripts/windows-files.py"))
-        with module["pinned_destination"](self.root) as destination:
+        for relative in ("target/release", "target", "."):
+            source = self.root / relative
+            moved = source.with_name(source.name + "-moved")
+            with self.subTest(relative=relative):
+                try:
+                    with module["pinned_destination"](self.root) as destination:
+                        with self.assertRaises(OSError):
+                            source.rename(moved)
+                        self.assertTrue(destination.is_dir())
+                finally:
+                    if moved.exists():
+                        moved.rename(source)
+                # Closing the pin must release the rename restriction.
+                source.rename(moved)
+                moved.rename(source)
+
+    def test_parent_swap_is_blocked_before_staging(self):
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        release = self.root / "target/release"
+        moved = release.with_name("moved")
+        open_file = os.open
+        attempts = []
+
+        def attempt_swap(path, flags, mode):
+            attempts.append(path)
+            try:
+                release.rename(moved)
+            except OSError:
+                pass
+            else:
+                subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(release), str(outside)],
+                               check=True, capture_output=True, timeout=10)
+            return open_file(path, flags, mode)
+
+        try:
+            with patch("os.open", side_effect=attempt_swap):
+                self.install(self.root, {"herdr-crossroads.exe": b"verified"})
+            self.assertEqual(len(attempts), 1)
+            self.assertFalse(moved.exists(), "a pinned directory must not be renamed")
+            self.assertEqual(list(outside.iterdir()), [])
+            self.assertEqual((release / "herdr-crossroads.exe").read_bytes(), b"verified")
+        finally:
+            if moved.exists():
+                if release.exists():
+                    os.rmdir(release)
+                moved.rename(release)
+
+    def test_existing_delete_handle_prevents_installation(self):
+        module = runpy.run_path(str(ROOT / "scripts/windows-files.py"))
+        kernel = module["KERNEL"]
+        # DELETE access with all sharing enabled: the installer must refuse to
+        # proceed while another handle already has permission to rename root.
+        handle = kernel.CreateFileW(str(self.root), 0x10000, 7, None, 3, 0x02200000, None)
+        self.assertNotEqual(handle, module["ctypes"].c_void_p(-1).value)
+        try:
             with self.assertRaises(OSError):
-                destination.rename(destination.with_name("moved"))
+                self.install(self.root, {"herdr-crossroads.exe": b"must not write"})
+            self.assertFalse((self.root / "target").exists())
+        finally:
+            kernel.CloseHandle(handle)
 
 
 if __name__ == "__main__":
