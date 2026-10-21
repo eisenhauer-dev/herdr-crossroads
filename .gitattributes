@@ -1,1 +1,3 @@
 THIRD-PARTY-NOTICES.md -text
+LICENSES/*-system.json -text
+LICENSES/glibc-*-startup.txt -text

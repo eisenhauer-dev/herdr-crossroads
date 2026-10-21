@@ -12,6 +12,8 @@ mod terminal;
 mod theme;
 mod topology;
 mod transport;
+#[cfg(windows)]
+mod windows_pipe;
 
 pub fn run() -> std::io::Result<()> {
     runtime::run()
@@ -53,3 +55,6 @@ mod test_topology;
 #[cfg(test)]
 #[path = "../tests/unit/transport.rs"]
 mod test_transport;
+#[cfg(all(test, windows))]
+#[path = "../tests/unit/windows.rs"]
+mod test_windows;

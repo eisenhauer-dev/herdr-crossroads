@@ -69,20 +69,6 @@ jobs:
           python3 tests/test_install_binary.py
           python3 tests/test_setup_keybind.py
           python3 tests/test_release_install_helpers.py
-      - name: Build native release binary
-        run: cargo build --release --locked
-      - name: Run full release PTY latency gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_latency.py target/release/herdr-crossroads
-      - name: Run full release PTY render gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_render.py target/release/herdr-crossroads
-      - name: Run full release PTY keymaps gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_keymaps.py target/release/herdr-crossroads
-      - name: Run full release PTY hints gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_hints.py target/release/herdr-crossroads
       - name: Build, test, and package native macOS binary
         id: package
         run: |

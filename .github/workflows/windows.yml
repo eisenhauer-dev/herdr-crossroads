@@ -1,0 +1,64 @@
+name: Windows preparation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x86_64 preparation (not certification)
+    if: github.event.repository.private == false
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.0"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare native tooling and locked dependency cache
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64' -or -not [Environment]::Is64BitProcess) { throw 'Native Windows x86_64 is required' }
+          rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile default --component rustfmt --component clippy --component rust-docs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc -vV
+          cargo --version
+          python -c "import sys; assert sys.version_info >= (3, 11), sys.version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fetch --locked
+      - name: Check workflow contract
+        run: python -B tests/test_windows_workflow.py
+      - name: Check command watchdog
+        run: python -B tests/test_windows_process.py
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Check native Clippy
+        run: cargo clippy --locked --lib --bin herdr-crossroads -- -D warnings
+      - name: Build and test native Windows preparation archive
+        run: python -B scripts/build-windows.py
+      - name: Select exact preparation evidence
+        id: preparation
+        run: |
+          $version = python scripts/check-version.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "artifact=herdr-crossroads-$version-x86_64-pc-windows-msvc" >> $env:GITHUB_OUTPUT
+      - name: Upload Windows preparation only (not release approval)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-preparation-${{ steps.preparation.outputs.artifact }}
+          path: |
+            target/builds/${{ steps.preparation.outputs.artifact }}.tar.gz
+            target/builds/${{ steps.preparation.outputs.artifact }}.tar.gz.sha256
+            target/builds/${{ steps.preparation.outputs.artifact }}.provenance.json
+            target/builds/${{ steps.preparation.outputs.artifact }}.link.map
+          if-no-files-found: error
+          retention-days: 7

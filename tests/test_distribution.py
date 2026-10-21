@@ -182,7 +182,9 @@ def prepare_fixture(base, asset_dir, public=None, update=None):
             prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
             path.write_text(path.read_text().replace(
                 prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
-        manifest.write_text(manifest.read_text() + '\nwidth = "90%"\nheight = "90%"\n')
+        manifest.write_text(manifest.read_text().replace(
+            'id = "crossroads"\n',
+            'id = "crossroads"\nwidth = "90%"\nheight = "90%"\n', 1))
     payloads = {}
     for version in ([public, update] if update else [public or "0.0.1"]):
         name = ARCHIVE.format(version)

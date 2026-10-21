@@ -1,11 +1,20 @@
-use std::io::{self, IsTerminal, Write};
+#[cfg(not(windows))]
+use std::io::IsTerminal;
+use std::io::{self, Write};
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub(super) use windows::{terminal_size, Terminal};
 
 use ratatui::{buffer::CellWidth, style::Color};
 
 use super::presentation::{clipped, sgr_fg};
 use super::selection::{Mode, Ui};
 
+#[cfg(not(windows))]
 pub(super) fn terminal_size() -> (usize, usize) {
     let measured = Command::new("stty")
         .arg("size")
@@ -35,7 +44,9 @@ pub(super) fn terminal_size() -> (usize, usize) {
     )
 }
 
+#[cfg(not(windows))]
 pub(super) struct Terminal(pub(super) Option<String>, bool);
+#[cfg(not(windows))]
 impl Terminal {
     pub(super) fn enter() -> io::Result<Self> {
         if !io::stdin().is_terminal() {
@@ -74,6 +85,7 @@ impl Terminal {
         out.flush()
     }
 }
+#[cfg(not(windows))]
 impl Drop for Terminal {
     fn drop(&mut self) {
         if let Some(state) = &self.0 {

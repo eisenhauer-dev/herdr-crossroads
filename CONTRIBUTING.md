@@ -30,10 +30,13 @@ a required-check branch-protection rule there.
 Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
 force pushes and branch deletion are disabled. No independent approval is
-required solely to let the owner merge their own pull request. The `Linux gates`
-and `PR source policy` checks from the GitHub Actions app (ID `15368`) are mandatory
-for all pull requests targeting `main`, including the owner's own branches.
-The latter enforces the source-repository metadata policy above. Branches must
+required solely to let the owner merge their own pull request. The `Linux gates`,
+`PR source policy`, `macOS preparation (aarch64-apple-darwin)`,
+`macOS preparation (x86_64-apple-darwin)`, and
+`Windows x86_64 preparation (not certification)` checks from the GitHub Actions
+app (ID `15368`) are mandatory for all pull requests targeting `main`, including
+the owner's own branches. `PR source policy` enforces the source-repository
+metadata policy above. Branches must
 be up to date with `main` before merging. Pending, missing or failed required
 checks block merging, including for administrators. GitHub also treats `skipped`
 and `neutral` check conclusions as passing; do not weaken the public CI job with
@@ -86,6 +89,28 @@ the checkout. See [README installation](README.md#installation) for optional
 manual build-then-link testing; those Herdr examples were not executed during
 documentation verification.
 
+### Windows preparation
+
+Native Windows 10/11 x86_64 is intended for **0.3.0**, currently **PREPARATION
+only**; the package remains **0.2.0**. The Linux/macOS 0.2.0 release is completed.
+Native Windows CI has run but has **not completed successfully**; no Windows support certification or release
+approval is claimed. `.github/workflows/windows.yml` uses the standard free
+public `windows-2025` runner, public-only/read-only, not a paid larger runner.
+It configures Rust/Cargo 1.99.0, Python 3.11+, formatting, native library/binary
+Clippy and `python -B scripts/build-windows.py`, then uploads preparation-only
+artifacts. Its Windows check is required for merging into `main`; the workflow
+itself does not configure branch protection or publish a release.
+
+Use [Windows build prerequisites and gates](docs/builds.md#windows-preparation-not-certification)
+and [native verification scope](docs/keymaps.md#windows-preparation-verification),
+not the Unix shell/PTY commands below, for Windows preparation. The helper tests
+fake Herdr CLI/named pipes and ConPTY, plus exact installed executable bytes in a
+temporary checkout; **no actual Herdr managed-install/live-popup integration**
+runs. MSVC/SDK attribution review remains open. A physical Windows PC is
+available, OS version unknown; final popup acceptance must wait until the pipeline
+stands. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
+The full native preparation command has not yet completed successfully on Windows.
+
 ### macOS release preparation
 
 The separate `.github/workflows/macos.yml` runs native checks for Apple
@@ -107,12 +132,12 @@ does not establish a minimum macOS version or real Herdr popup, navigation, and
 focus behavior. Exact runner OS builds and Python versions are not recorded here.
 The later exact `6f91a3f` Linux and native macOS CI also passed four full PTYs
 per platform. These historical results predate the new 0.2.0 distribution gates.
-The checkout now prepares macOS **15.0+** ARM64/Intel with explicit deployment
-target 15.0; **0.2.0 is not released**, and published 0.1.0 stays Linux-only.
+Released **0.2.0** targets macOS **15.0+** ARM64/Intel with explicit deployment
+target 15.0; published 0.1.0 stays Linux-only.
 Current native three-platform packaging, provenance/notices and isolated real-Herdr
 installation CI passed, including all four installed-binary PTYs on each target.
 See [candidate identity, artifact verification and limits](docs/builds.md#current-020-three-platform-ci-evidence).
-Independent review and final acceptance remain pending; automated installation
+At that historical checkpoint independent review and final acceptance were pending; automated installation
 does not replace the waived live-popup gate or authorize publication.
 
 ## Optional local pre-commit and pre-push checks
@@ -233,7 +258,8 @@ builders fail rather than generating host-specific distribution notices; see
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts; publication remains a separately authorized action.
-The checkout prepares unreleased `0.2.0` for three targets. Published `0.1.0` is the first regular Linux release for
+Released `0.2.0` covers the three Linux/macOS targets; Windows remains preparation
+only for intended `0.3.0`, with the package still `0.2.0`. Published `0.1.0` is the first regular Linux release for
 `x86_64-unknown-linux-gnu` only, published as Latest on 2026-10-16 with four
 [reviewed clean CI assets](docs/builds.md#regular-010-public-pipeline-evidence),
 not the local personal-path-bearing binary or reused historical assets.
