@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -56,7 +57,8 @@ class WindowsAcceptanceTests(unittest.TestCase):
     def test_console_modes_restore_inside_conpty(self):
         executable = Path(os.environ["CROSSROADS_WINDOWS_CONSOLE_TEST"]).resolve()
         console = self.console([executable, "--ignored", "--exact", "console_modes_and_size_are_restored_exactly", "--nocapture"])
-        self.assertEqual(console.exited(), 0)
+        console.until(b"test result:")
+        self.assertEqual(console.exited(), 0, bytes(console.output).decode("utf-8", "backslashreplace"))
         console.until(b"1 passed")
 
     def test_search_help_themes_navigation_resize_and_close(self):
@@ -183,5 +185,16 @@ class WindowsAcceptanceTests(unittest.TestCase):
         self.assertFalse(path.exists())
 
 
+def native_suite():
+    # A blocked native API (including fixture cleanup) cannot trap the suite.
+    supervise = runpy.run_path(str(ROOT / "scripts/windows-process.py"))["run"]
+    for name in unittest.defaultTestLoader.getTestCaseNames(WindowsAcceptanceTests):
+        supervise([sys.executable, "-B", __file__, "-v", f"WindowsAcceptanceTests.{name}"],
+                  cwd=ROOT, timeout=30)
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if os.name == "nt" and len(sys.argv) == 1:
+        native_suite()
+    else:
+        unittest.main(verbosity=2)

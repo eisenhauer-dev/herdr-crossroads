@@ -20,12 +20,12 @@ import tempfile
 
 ROOT = Path(__file__).absolute().parents[1]
 TARGET = "x86_64-pc-windows-msvc"
+supervise = runpy.run_path(str(ROOT / "scripts/windows-process.py"))["run"]
 
 
-def run(arguments, env=None, capture=False):
-    result = subprocess.run(arguments, cwd=ROOT, env=env, check=True,
-                            capture_output=capture, text=True, encoding="utf-8", errors="backslashreplace")
-    return result.stdout if capture else ""
+def run(arguments, env=None, capture=False, timeout=None):
+    result = supervise(arguments, cwd=ROOT, env=env, capture=capture, timeout=timeout)
+    return result.stdout.decode("utf-8", "backslashreplace") if capture else ""
 
 
 def normalize(text):
@@ -65,7 +65,7 @@ def build():
         run(["cargo", "clean", "--release", "--target", TARGET, "--package", "herdr-crossroads"])
         argv = ["cargo", "rustc", "--release", "--locked", "--bin", "herdr-crossroads", "--target", TARGET,
                 "--", "--print", "link-args", "-C", f"link-arg=/MAP:{outputs[3]}", "-C", "link-arg=/VERBOSE:LIB"]
-        linked = subprocess.run(argv, cwd=ROOT, check=True, capture_output=True)
+        linked = supervise(argv, cwd=ROOT, capture=True)
         data = binary.read_bytes()
         installer["verify_binary"](data, TARGET)
         raw_map = outputs[3].read_bytes()
@@ -93,11 +93,11 @@ def build():
         if len(console_tests) != 1:
             raise ValueError("could not select the native ConPTY console test executable")
         environment["CROSSROADS_WINDOWS_CONSOLE_TEST"] = console_tests[0]
-        run(["cargo", "test", "--locked", "--lib", "test_windows", "--", "--test-threads=1"], env=environment)
+        run(["cargo", "test", "--locked", "--lib", "test_windows", "--", "--test-threads=1"], env=environment, timeout=60)
         for group in ("test_input", "test_search", "test_selection::navigation"):
-            run(["cargo", "test", "--locked", "--lib", group], env=environment)
-        run([sys.executable, "-B", "tests/test_windows_acceptance.py"], env=environment)
-        run([sys.executable, "-B", "tests/test_windows_distribution.py"], env=environment)
+            run(["cargo", "test", "--locked", "--lib", group], env=environment, timeout=60)
+        run([sys.executable, "-B", "tests/test_windows_acceptance.py"], env=environment, timeout=240)
+        run([sys.executable, "-B", "tests/test_windows_distribution.py", "-v"], env=environment, timeout=60)
         if hashlib.sha256(binary.read_bytes()).hexdigest() != digest:
             raise ValueError("final-linked binary changed during native testing")
         members = {"herdr-crossroads.exe": data,
@@ -124,7 +124,7 @@ def build():
             if installed.read_bytes() != data:
                 raise ValueError("installed bytes differ from final-linked executable")
             environment["CROSSROADS_WINDOWS_BINARY"] = str(installed)
-            run([sys.executable, "-B", "tests/test_windows_acceptance.py"], env=environment)
+            run([sys.executable, "-B", "tests/test_windows_acceptance.py"], env=environment, timeout=240)
         print("Windows preparation archive and evidence created; distribution approval and native support certification remain OPEN.")
     except BaseException:
         for output in outputs:
@@ -137,6 +137,6 @@ if __name__ == "__main__":
         if len(sys.argv) != 1:
             raise ValueError("build-windows takes no arguments")
         build()
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Windows preparation failed: {error}", file=sys.stderr)
         sys.exit(1)

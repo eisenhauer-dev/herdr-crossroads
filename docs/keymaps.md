@@ -379,8 +379,38 @@ The Unix four-PTY commands below are not Windows gates; a plain Windows
 `cargo test` does not run this ConPTY suite (its console test is ignored unless
 explicitly launched by the harness).
 
-**None of these native Windows gates has run.** Portable synthetic PE/workflow
-checks are not native execution or Windows 10/11 certification. Windows is
+Each acceptance method runs in a separate process with a 30-second deadline,
+including cleanup. The suite stops on the first failure. `scripts/windows-process.py`
+logs command start/end, PID, exit code and elapsed time; on timeout it attempts
+`taskkill /T /F` with a five-second deadline, then kills/reaps the direct child
+with a further five-second deadline. Cleanup failures are reported, not ignored.
+Captured command output uses temporary files; after command exit or cleanup, the
+supervisor snapshots their byte counts and reads at most the first 1 MiB per
+stream, reporting cap truncation on stderr even for successful commands. Later
+writes are excluded, so a surviving inherited writer cannot prolong capture or
+grow its in-memory result without bound. This does not cap temporary-file disk
+usage while a command or surviving writer runs. Rust test groups and distribution
+checks have 60-second deadlines, each acceptance pass has 240 seconds, and other
+helper commands have 300 seconds. The workflow's overall 30-minute limit is unchanged.
+
+The ConPTY fixture keeps its startup pipe ends until `CreateProcessW` completes
+and drains output on a separate thread during startup and teardown. Its progress
+messages distinguish child exit, `ClosePseudoConsole`, and reader shutdown.
+The latter API can block on older Windows; the process deadline, **not** the
+reader's five-second join, bounds that call. See Microsoft's
+[session lifetime guidance](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+and [shutdown contract](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole)
+(consulted 2026-10-21). The native mode test reports the standard-handle value,
+console mode and Win32 error on failure; it still requires real console handles
+before entering the terminal and verifies exact restoration afterward.
+
+**Native Windows CI has been attempted, but is not green.** The previous run
+failed its initial `GetConsoleMode` check before terminal entry and later timed
+out; that is not evidence of a restoration defect. The fixture lifetime repair
+and watchdog changes still require a native rerun to establish whether the
+initial-handle failure is resolved and to localize any remaining hang.
+Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
+certification. Windows is
 preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,
 OS version unknown; final actual Herdr popup acceptance is pending **only after
 the pipeline stands**, not waived. See [installer/entrypoint limitations](installation.md#windows-preparation-limitations).

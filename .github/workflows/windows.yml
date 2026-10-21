@@ -37,6 +37,8 @@ jobs:
           cargo fetch --locked
       - name: Check workflow contract
         run: python -B tests/test_windows_workflow.py
+      - name: Check command watchdog
+        run: python -B tests/test_windows_process.py
       - name: Check formatting
         run: cargo fmt --check
       - name: Check native Clippy

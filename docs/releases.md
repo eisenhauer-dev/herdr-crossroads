@@ -72,8 +72,12 @@ fresh gates or separate publication approval for the regular `0.1.0` release abo
 ## Windows release boundary
 
 The Windows workflow/helper currently prepare evidence, not releasable or
-certified assets. Native Windows CI has **not run**. Its versioned output names
-still use **0.2.0**; do not relabel those files as 0.3.0 or infer a version bump
+certified assets. Both native Windows CI attempts reached the 30-minute job
+timeout without uploading Windows preparation artifacts; the first also failed
+its initial console-mode check before terminal entry. There is **no native Windows
+GREEN**. The current fixture lifetime repair, diagnostics and watchdog changes
+still await native execution. Versioned output names still use **0.2.0**;
+do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
 
 Before a Windows release, require native pipeline success and exact artifact

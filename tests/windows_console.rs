@@ -12,9 +12,13 @@ fn modes() -> [u32; 2] {
     [-10i32, -11i32].map(|which| {
         let mut mode = 0;
         // SAFETY: borrowed process console handles, writable DWORD output.
+        let handle = unsafe { GetStdHandle(which as u32) };
+        let result = unsafe { GetConsoleMode(handle, &mut mode) };
+        let error = std::io::Error::last_os_error();
+        eprintln!("console which={which} handle={handle:p} mode={mode:#x} result={result}");
         assert_ne!(
-            unsafe { GetConsoleMode(GetStdHandle(which as u32), &mut mode) },
-            0
+            result, 0,
+            "initial/restored GetConsoleMode({which}, {handle:p}) failed: {error}"
         );
         mode
     })

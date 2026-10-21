@@ -123,40 +123,51 @@ class NamedServer:
 
 class Console:
     def __init__(self, command, env, cwd):
+        assert (C.sizeof(Coord), C.sizeof(Startup), C.sizeof(StartupEx), C.sizeof(ProcessInfo)) == (4, 104, 112, 24), "unexpected Windows x64 ctypes ABI"
         self.console = HANDLE()
         self.process = None
+        self.reader = None
         self.output = bytearray()
         self.queue = queue.Queue()
         input_read, self.input = HANDLE(), HANDLE()
         self.read_handle, output_write = HANDLE(), HANDLE()
-        checked(create_pipe(C.byref(input_read), C.byref(self.input), None, 0))
-        checked(create_pipe(C.byref(self.read_handle), C.byref(output_write), None, 0))
-        hr = create_console(Coord(120, 30), input_read, output_write, 0, C.byref(self.console))
-        close(input_read)
-        close(output_write)
-        if hr < 0:
-            raise OSError(f"CreatePseudoConsole HRESULT {hr:#x}")
-        size = C.c_size_t()
-        init_attributes(None, 1, 0, C.byref(size))
-        attributes = C.create_string_buffer(size.value)
-        checked(init_attributes(attributes, 1, 0, C.byref(size)))
         try:
-            checked(update_attributes(attributes, 0, 0x20016, self.console,
-                                      C.sizeof(HANDLE), None, None))
-            startup = StartupEx()
-            startup.startup.cb = C.sizeof(StartupEx)
-            startup.attributes = C.cast(attributes, C.c_void_p)
-            info = ProcessInfo()
-            environment = C.create_unicode_buffer("\0".join(f"{k}={v}" for k, v in sorted(env.items(), key=lambda p: p[0].upper())) + "\0\0")
-            line = C.create_unicode_buffer(subprocess.list2cmdline([str(v) for v in command]))
-            checked(create_process(str(command[0]), line, None, None, False, 0x80000 | 0x400,
-                                   environment, str(cwd), C.byref(startup), C.byref(info)))
-            self.process = info.process
-            close(info.thread)
+            checked(create_pipe(C.byref(input_read), C.byref(self.input), None, 0))
+            checked(create_pipe(C.byref(self.read_handle), C.byref(output_write), None, 0))
+            hr = create_console(Coord(120, 30), input_read, output_write, 0, C.byref(self.console))
+            if hr < 0:
+                raise OSError(f"CreatePseudoConsole HRESULT {hr:#x}")
+            # Drain during startup and ClosePseudoConsole, which can synchronously
+            # emit a final frame on Windows versions before 11 24H2.
+            self.reader = threading.Thread(target=self._read, daemon=True)
+            self.reader.start()
+            size = C.c_size_t()
+            init_attributes(None, 1, 0, C.byref(size))
+            attributes = C.create_string_buffer(size.value)
+            checked(init_attributes(attributes, 1, 0, C.byref(size)))
+            try:
+                checked(update_attributes(attributes, 0, 0x20016, self.console,
+                                          C.sizeof(HANDLE), None, None))
+                startup = StartupEx()
+                startup.startup.cb = C.sizeof(StartupEx)
+                startup.attributes = C.cast(attributes, C.c_void_p)
+                info = ProcessInfo()
+                environment = C.create_unicode_buffer("\0".join(f"{k}={v}" for k, v in sorted(env.items(), key=lambda p: p[0].upper())) + "\0\0")
+                line = C.create_unicode_buffer(subprocess.list2cmdline([str(v) for v in command]))
+                checked(create_process(str(command[0]), line, None, None, False, 0x80000 | 0x400,
+                                       environment, str(cwd), C.byref(startup), C.byref(info)))
+                self.process = info.process
+                close(info.thread)
+            finally:
+                delete_attributes(attributes)
         finally:
-            delete_attributes(attributes)
-        self.reader = threading.Thread(target=self._read, daemon=True)
-        self.reader.start()
+            # Microsoft requires these ends to remain alive through CreateProcess.
+            for handle in (input_read, output_write):
+                if handle.value:
+                    close(handle)
+            if self.process is None:
+                self.close()
+        print(f"ConPTY created pid={info.pid} handle={self.console.value:#x}", flush=True)
 
     def _read(self):
         try:
@@ -164,6 +175,8 @@ class Console:
                 self.queue.put(data)
         except OSError as error:
             self.queue.put(error)
+        finally:
+            self.queue.put(b"")
 
     def send(self, data):
         send(self.input, data)
@@ -174,15 +187,23 @@ class Console:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AssertionError(f"missing {text!r}: {bytes(self.output)[-4000:]!r}")
-            data = self.queue.get(timeout=remaining)
+            try:
+                data = self.queue.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"missing {text!r}: {bytes(self.output)[-4000:]!r}") from None
             if isinstance(data, Exception):
                 raise data
+            if not data:
+                raise AssertionError(f"ConPTY output closed before {text!r}: {bytes(self.output)[-4000:]!r}")
             self.output.extend(data)
         return bytes(self.output)
 
     def reset_output(self):
         while not self.queue.empty():
-            self.output.extend(self.queue.get_nowait())
+            data = self.queue.get_nowait()
+            if isinstance(data, Exception):
+                raise data
+            self.output.extend(data)
         self.output.clear()
 
     def exited(self, timeout=5):
@@ -198,13 +219,26 @@ class Console:
             raise OSError(f"ResizePseudoConsole HRESULT {hr:#x}")
 
     def close(self):
+        print("ConPTY cleanup: terminate/wait child", flush=True)
         if self.process:
             if wait(self.process, 0) != 0:
                 terminate(self.process, 1)
                 wait(self.process, 5000)
             close(self.process)
             self.process = None
-        close(self.input)
-        close_console(self.console)
-        self.reader.join(timeout=5)
-        close(self.read_handle)
+        if self.input.value:
+            close(self.input)
+            self.input = HANDLE()
+        if self.console.value:
+            print("ConPTY cleanup: ClosePseudoConsole (reader draining)", flush=True)
+            close_console(self.console)
+            self.console = HANDLE()
+        if self.reader:
+            print("ConPTY cleanup: join output reader", flush=True)
+            self.reader.join(timeout=5)
+            if self.reader.is_alive():
+                raise AssertionError("ConPTY output reader did not stop after ClosePseudoConsole")
+        if self.read_handle.value:
+            close(self.read_handle)
+            self.read_handle = HANDLE()
+        print("ConPTY cleanup: complete", flush=True)

@@ -37,7 +37,8 @@ on:
             self.assertIn(expected, self.workflow)
         self.assertNotIn("target/builds/*", self.workflow)
         self.assertNotIn("target/release/", self.workflow)
-        gates = ["cargo fetch --locked", "python -B tests/test_windows_workflow.py", "cargo fmt --check",
+        gates = ["cargo fetch --locked", "python -B tests/test_windows_workflow.py",
+                 "python -B tests/test_windows_process.py", "cargo fmt --check",
                  "cargo clippy --locked --lib --bin herdr-crossroads -- -D warnings",
                  "python -B scripts/build-windows.py", "Select exact preparation evidence", "Upload Windows preparation only"]
         self.assertEqual(sorted(gates, key=self.workflow.index), gates)

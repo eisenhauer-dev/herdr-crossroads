@@ -15,7 +15,9 @@ Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 
 ## Windows preparation (not certification)
 
-The WIP target is `x86_64-pc-windows-msvc`. Native Windows CI **has not run**.
+The WIP target is `x86_64-pc-windows-msvc`. Native Windows CI has been attempted
+twice; both attempts reached the 30-minute job timeout without uploading Windows
+preparation artifacts. There is **no native Windows GREEN**.
 The public-only `.github/workflows/windows.yml` selects the standard free public
 `windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
 read-only contents permission, pinned checkout/upload actions, no persisted Git
@@ -30,9 +32,12 @@ dependencies, the repository-root command is:
 python -B scripts/build-windows.py
 ```
 
-This command is source-verified only, **not executed on Windows**. The helper
-installs no tooling. It checks versions and target notices, forces a fresh final
-link with an MSVC map and library diagnostics, validates PE bytes, and binds the
+The command has run on Windows, but has not completed successfully. The first
+attempt failed the initial `GetConsoleMode` check before terminal entry, then
+hung; the unchanged second attempt also timed out. The current fixture lifetime
+repair, diagnostics and watchdog changes have **not yet run on Windows**.
+The helper installs no tooling. It checks versions and target notices, forces a
+fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the
 binary/map SHA256 in preparation-only provenance. It runs selected Windows,
 input, search and navigation Rust tests, fake-host named-pipe/ConPTY acceptance,
 and distribution checks. It packages exactly `herdr-crossroads.exe`,
@@ -40,6 +45,12 @@ and distribution checks. It packages exactly `herdr-crossroads.exe`,
 the Python installer in a temporary checkout, compares installed bytes with the
 final-linked executable, and repeats fake-host acceptance on those installed bytes.
 It does **not** run an actual Herdr managed install, server, client or live popup.
+
+The workflow now checks `tests/test_windows_process.py` before native preparation.
+The shared `scripts/windows-process.py` supervisor logs progress and enforces
+command deadlines with bounded process-tree cleanup. Each acceptance method is
+isolated in a process with a 30-second deadline, including fixture teardown;
+the overall job timeout is unchanged. See [native test scope and timeout limits](keymaps.md#windows-preparation-verification).
 
 Outputs under `target/builds/` currently use
 `herdr-crossroads-0.2.0-x86_64-pc-windows-msvc` with `.tar.gz`, `.tar.gz.sha256`,
@@ -49,7 +60,7 @@ version, not the intended 0.3.0 release. CI uploads exactly these four files as 
 release assets. Handled failures after output selection remove the selected
 sidecars/archive; stale files never establish a successful invocation.
 
-**Open gates:** native pipeline execution and exact artifact verification;
+**Open gates:** successful native pipeline execution and exact artifact verification;
 MSVC/SDK linked-input attribution review (a map/diagnostic capture is not license
 clearance); Windows 10/11 runtime certification; actual Herdr popup acceptance;
 independent review and separate release approval. A physical Windows PC **is
