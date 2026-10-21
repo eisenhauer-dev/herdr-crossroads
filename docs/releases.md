@@ -72,11 +72,12 @@ fresh gates or separate publication approval for the regular `0.1.0` release abo
 ## Windows release boundary
 
 The Windows workflow/helper currently prepare evidence, not releasable or
-certified assets. Both native Windows CI attempts reached the 30-minute job
-timeout without uploading Windows preparation artifacts; the first also failed
-its initial console-mode check before terminal entry. There is **no native Windows
-GREEN**. The current fixture lifetime repair, diagnostics and watchdog changes
-still await native execution. Versioned output names still use **0.2.0**;
+certified assets. The first two native Windows CI attempts reached the 30-minute
+job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
+console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
+is **no native Windows GREEN**. The subsequent standard-handle startup correction
+and redirected-parent regression still await native execution. Versioned output
+names still use **0.2.0**;
 do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
 

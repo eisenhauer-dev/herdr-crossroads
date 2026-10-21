@@ -150,6 +150,10 @@ class Console:
                                           C.sizeof(HANDLE), None, None))
                 startup = StartupEx()
                 startup.startup.cb = C.sizeof(StartupEx)
+                # Suppress copying redirected parent stdio even with inheritance
+                # disabled; null handles are filled by the attached ConPTY.
+                # https://github.com/microsoft/terminal/discussions/15814
+                startup.startup.flags = 0x100  # STARTF_USESTDHANDLES; stdio stays NULL
                 startup.attributes = C.cast(attributes, C.c_void_p)
                 info = ProcessInfo()
                 environment = C.create_unicode_buffer("\0".join(f"{k}={v}" for k, v in sorted(env.items(), key=lambda p: p[0].upper())) + "\0\0")

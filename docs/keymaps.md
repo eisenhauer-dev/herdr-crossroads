@@ -404,11 +404,26 @@ and [shutdown contract](https://learn.microsoft.com/en-us/windows/console/closep
 console mode and Win32 error on failure; it still requires real console handles
 before entering the terminal and verifies exact restoration afterward.
 
-**Native Windows CI has been attempted, but is not green.** The previous run
-failed its initial `GetConsoleMode` check before terminal entry and later timed
-out; that is not evidence of a restoration defect. The fixture lifetime repair
-and watchdog changes still require a native rerun to establish whether the
-initial-handle failure is resolved and to localize any remaining hang.
+The fixture sets `STARTF_USESTDHANDLES` with null standard handles so Windows
+connects them to ConPTY instead of copying redirected parent handles, even with
+`bInheritHandles=False`. This addresses the mechanism described by a Microsoft
+Terminal maintainer in [discussion 15814](https://github.com/microsoft/terminal/discussions/15814#discussioncomment-6684982)
+(2021-09-20; consulted 2026-10-21), alongside Microsoft's
+[null-handle attachment contract](https://learn.microsoft.com/en-us/windows/console/getstdhandle#attachdetach-behavior).
+An additional native regression explicitly redirects the Python parent's three
+standard streams and requires the unchanged mode/restoration test to pass through
+ConPTY. No `CONIN$` fallback or plain-input substitution is used.
+
+**Native Windows CI has been attempted, but is not green.** The first two runs
+reached the 30-minute job timeout. The supplied evidence for
+[run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
+at `343144f` shows failure in 2m 50s: all nine watchdog checks, native Clippy,
+compilation and selected Rust suites passed, but initial `GetConsoleMode` still
+failed before terminal entry. Rust output bypassed ConPTY; cleanup completed
+immediately after the five-second capture timeout, and no artifact was uploaded.
+This verifies bounded teardown/fail-fast, not console restoration or native
+pipeline success. The standard-handle startup correction and redirected-parent
+regression above still require a native rerun.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
 certification. Windows is
 preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,

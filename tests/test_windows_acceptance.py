@@ -61,6 +61,16 @@ class WindowsAcceptanceTests(unittest.TestCase):
         self.assertEqual(console.exited(), 0, bytes(console.output).decode("utf-8", "backslashreplace"))
         console.until(b"1 passed")
 
+    def test_console_handles_ignore_redirected_parent_stdio(self):
+        # Force redirected stdin/stdout/stderr regardless of the launching shell.
+        # The nested test must receive its Rust output through ConPTY, not here.
+        # Keep the outer 30s watchdog responsible for killing the whole tree.
+        output = subprocess.run(
+            [sys.executable, "-B", __file__, "-v",
+             "WindowsAcceptanceTests.test_console_modes_restore_inside_conpty"],
+            input=b"", capture_output=True, env=self.env, cwd=ROOT)
+        self.assertEqual(output.returncode, 0, (output.stdout, output.stderr))
+
     def test_search_help_themes_navigation_resize_and_close(self):
         console = self.console()
         console.until(b"Claude")

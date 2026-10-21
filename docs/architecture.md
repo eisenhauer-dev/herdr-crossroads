@@ -42,9 +42,10 @@ decoder, status coordinator and stable pane-ID validation remain shared.
 
 The Windows preparation helper binds a fresh final link/map to the binary tested
 with fake CLI/named pipes and ConPTY, then compares installed bytes and repeats
-fake-host acceptance. Native Windows CI has failed before terminal entry and
-timed out; fixture lifetime/diagnostic repairs and process-isolated watchdogs
-await native verification (see [native test scope](keymaps.md#windows-preparation-verification)).
+fake-host acceptance. After two native CI job timeouts, the third run verified
+bounded cleanup/fail-fast but still failed before terminal entry, with output
+bypassing ConPTY. The explicit null standard-handle startup correction awaits
+native verification (see [native test scope](keymaps.md#windows-preparation-verification)).
 This is neither actual Herdr integration nor Windows certification. MSVC/SDK
 attribution review remains open. A physical Windows PC is available, OS version unknown; final live-popup
 acceptance waits **until the pipeline stands**. See [gates and limitations](builds.md#windows-preparation-not-certification).

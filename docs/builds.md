@@ -15,9 +15,10 @@ Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 
 ## Windows preparation (not certification)
 
-The WIP target is `x86_64-pc-windows-msvc`. Native Windows CI has been attempted
-twice; both attempts reached the 30-minute job timeout without uploading Windows
-preparation artifacts. There is **no native Windows GREEN**.
+The WIP target is `x86_64-pc-windows-msvc`. The first two native Windows CI attempts
+reached the 30-minute job timeout. The third failed in 2m 50s at the initial
+console-handle check, with bounded cleanup and no preparation artifact upload.
+There is **no native Windows GREEN**.
 The public-only `.github/workflows/windows.yml` selects the standard free public
 `windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
 read-only contents permission, pinned checkout/upload actions, no persisted Git
@@ -34,8 +35,13 @@ python -B scripts/build-windows.py
 
 The command has run on Windows, but has not completed successfully. The first
 attempt failed the initial `GetConsoleMode` check before terminal entry, then
-hung; the unchanged second attempt also timed out. The current fixture lifetime
-repair, diagnostics and watchdog changes have **not yet run on Windows**.
+hung; the unchanged second attempt also timed out. Supplied evidence from
+[run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
+at `343144f` confirms nine watchdog checks, native Clippy, compilation and selected
+Rust suites passed; the console test still failed before terminal entry, but
+teardown and fail-fast completed without a hang. The subsequent explicit null
+standard-handle startup correction and redirected-parent regression have **not
+yet run on Windows**; see [the cause and native evidence](keymaps.md#windows-preparation-verification).
 The helper installs no tooling. It checks versions and target notices, forces a
 fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the
 binary/map SHA256 in preparation-only provenance. It runs selected Windows,
