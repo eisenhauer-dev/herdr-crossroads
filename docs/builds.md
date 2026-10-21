@@ -71,7 +71,12 @@ It installs no tooling. Rosetta is rejected as a release builder.
 
 The helper validates versions/notices, forces a fresh final link, verifies the
 binary/evidence hash binding, then runs all four full PTYs against that exact
-explicit-target executable. Link-time ad-hoc signing occurs **before** testing;
+explicit-target executable, in latency/render/keymaps/hints order. Each gate has
+a 300-second timeout; timeout or interruption kills its process group, and timeout
+diagnostics retain captured output. CI relies on these final-binary gates instead
+of a duplicate ordinary release build/PTY pass, then retains the separate
+installed-package real-Herdr acceptance before upload. The job limit remains
+30 minutes. Link-time ad-hoc signing occurs **before** testing;
 there is no post-test signing, stripping or other binary mutation. These are
 **not Developer ID signed or notarized** assets; ad-hoc signing and SHA256 do not
 authenticate a publisher or establish Gatekeeper acceptance.

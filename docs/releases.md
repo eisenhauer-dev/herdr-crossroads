@@ -499,9 +499,11 @@ the exact packaged archive before upload. This actual managed install/reinstall,
 negative/config-retention and installed-binary four-PTY gate uses local Git/assets
 and no server/popup. Its native execution passed on all three targets in the
 [current candidate runs](builds.md#current-020-three-platform-ci-evidence), separately
-from the historical public runs below. The macOS workflow preserves its individual existing
-five-minute PTY steps and adds native packaging/real installation before exact-asset
-upload. Both workflows remain public-only/read-only with manual publication separate.
+from the historical public runs below. The macOS workflow runs its four full PTY
+gates on the fresh final-linked binary inside packaging, each with a five-minute
+watchdog, rather than also testing a separate ordinary release build. Real
+installation acceptance still precedes exact-asset upload. Both workflows remain
+public-only/read-only with manual publication separate.
 
 The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
 passed the gates, explicit-target build, all four full isolated PTYs, packaging,
