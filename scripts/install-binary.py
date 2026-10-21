@@ -25,6 +25,10 @@ import zlib
 # and its full-text-equivalent Markdown (including original crate line endings).
 LEGACY_NOTICE_SHA256 = "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174"
 LEGACY_MARKDOWN_SHA256 = "ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56"
+# Released v0.2.0 Unix archives retain the 78-package Markdown inventory.
+# Accept it only with this exact Windows-expanded preparation checkout inventory.
+RELEASE_020_NOTICE_SHA256 = "ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56"
+WINDOWS_PREP_NOTICE_SHA256 = "d18beb57a9837f22267622470a25bbac419646faf7b978888068b5a2377fffc4"
 
 
 def require_https(url):
@@ -113,10 +117,29 @@ def host_target():
         # uname describes the running process under Rosetta: never probe hardware.
         architecture = "aarch64" if machine in ("arm64", "aarch64") else "x86_64"
         return architecture + "-apple-darwin"
-    raise ValueError("only Linux x86_64 glibc and macOS arm64/x86_64 hosts are supported")
+    if system == "Windows" and machine in ("AMD64", "x86_64"):
+        version = platform.win32_ver()[1]
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?", version) or int(version.split(".")[0]) < 10:
+            raise ValueError("Windows 10 or newer is required; cannot use an older or unknown OS version")
+        return "x86_64-pc-windows-msvc"
+    raise ValueError("only Linux x86_64 glibc, macOS arm64/x86_64 and Windows x86_64 hosts are supported")
 
 
 def verify_binary(binary, target):
+    if target == "x86_64-pc-windows-msvc":
+        if len(binary) < 64 or binary[:2] != b"MZ":
+            raise ValueError("binary must be a PE32+ x86-64 console executable")
+        offset = struct.unpack_from("<I", binary, 0x3c)[0]
+        if offset < 64 or offset + 24 > len(binary) or binary[offset:offset + 4] != b"PE\0\0":
+            raise ValueError("invalid PE header bounds or signature")
+        machine, count, _, _, _, size, flags = struct.unpack_from("<HHIIIHH", binary, offset + 4)
+        optional = offset + 24
+        if (machine != 0x8664 or count == 0 or size < 112 or optional + size + count * 40 > len(binary)
+                or not flags & 0x2 or flags & 0x2000
+                or struct.unpack_from("<H", binary, optional)[0] != 0x20b
+                or struct.unpack_from("<H", binary, optional + 68)[0] != 3):
+            raise ValueError("binary must be a bounded PE32+ x86-64 console executable, not a DLL")
+        return
     if target == "x86_64-unknown-linux-gnu":
         if (len(binary) < 64 or binary[:7] != b"\x7fELF\x02\x01\x01"
                 or binary[16:18] not in [b"\x02\x00", b"\x03\x00"]
@@ -158,6 +181,7 @@ def verify_binary(binary, target):
 
 def install():
     target = host_target()
+    binary_name = "herdr-crossroads.exe" if target == "x86_64-pc-windows-msvc" else "herdr-crossroads"
     root = Path(__file__).absolute().parents[1]
     if Path(__file__).is_symlink():
         raise ValueError("installer must not be a symlink")
@@ -187,12 +211,12 @@ def install():
                 "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}:
             notice_name = "THIRD-PARTY-NOTICES.html"
         if (len(members) != 4 or {member.name for member in members}
-                != {"herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", notice_name}
+                != {binary_name, binary_name + ".sha256", "LICENSE", notice_name}
                 or any(member.type not in [tarfile.REGTYPE, tarfile.AREGTYPE]
                        or member.issparse() for member in members)):
             raise ValueError("archive must contain exactly the four regular release members")
-        binary = package.extractfile("herdr-crossroads").read()
-        checksum = package.extractfile("herdr-crossroads.sha256").read()
+        binary = package.extractfile(binary_name).read()
+        checksum = package.extractfile(binary_name + ".sha256").read()
         notices = {}
         for name in ["LICENSE", notice_name]:
             data = package.extractfile(name).read()
@@ -205,10 +229,24 @@ def install():
                         or hashlib.sha256(trusted).hexdigest() != LEGACY_MARKDOWN_SHA256):
                     raise ValueError("legacy release notice does not match trusted Markdown inventory")
             elif data != trusted:
-                raise ValueError(f"release notice does not match trusted checkout: {name}")
+                if (version == "0.2.0" and target in (
+                        "x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin")
+                        and name == "THIRD-PARTY-NOTICES.md"
+                        and hashlib.sha256(data).hexdigest() == RELEASE_020_NOTICE_SHA256
+                        and hashlib.sha256(trusted).hexdigest() == WINDOWS_PREP_NOTICE_SHA256):
+                    # Keep the licenses accompanying the released binary, not a
+                    # later inventory that attributes additional Windows crates.
+                    trusted = data
+                else:
+                    raise ValueError(f"release notice does not match trusted checkout: {name}")
             notices[destination] = trusted
-    verify_checksum(binary, checksum, "herdr-crossroads")
+    verify_checksum(binary, checksum, binary_name)
     verify_binary(binary, target)
+
+    if target == "x86_64-pc-windows-msvc":
+        runpy.run_path(str(root / "scripts/windows-files.py"))["install_files"](
+            root, {**notices, binary_name: binary})
+        return
 
     directory = destination_directory(root)
     staged = []

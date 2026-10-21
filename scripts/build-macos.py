@@ -13,8 +13,27 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(argv):
-    return subprocess.run(argv, cwd=ROOT, check=True, text=True, capture_output=True)
+def run(argv, *, timeout=None):
+    if timeout is None:
+        return subprocess.run(argv, cwd=ROOT, check=True, text=True, capture_output=True)
+    # PTY children inherit this session/group; kill the whole gate on interruption.
+    process = subprocess.Popen(argv, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException as error:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = process.communicate()
+        if isinstance(error, subprocess.TimeoutExpired):
+            raise RuntimeError(f"PTY command timed out after {timeout}s: {' '.join(argv)}\n"
+                               f"{stdout}\n{stderr}") from error
+        raise
+    result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    result.check_returncode()
+    return result
 
 
 def digest(data):
@@ -66,7 +85,7 @@ def build():
         if digest(data) != evidence["binary"]["sha256"]:
             raise RuntimeError("binary changed since link evidence")
         for gate in ["latency", "render", "keymaps", "hints"]:
-            result = run(["python3", f"tests/pty_{gate}.py", str(binary)])
+            result = run(["python3", f"tests/pty_{gate}.py", str(binary)], timeout=300)
             print(result.stdout, end="")
             print(result.stderr, end="", file=sys.stderr)
             if regular(binary) != data:

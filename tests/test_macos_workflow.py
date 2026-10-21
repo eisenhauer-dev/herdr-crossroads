@@ -97,20 +97,12 @@ jobs:
             "python3 tests/test_install_binary.py",
             "python3 tests/test_setup_keybind.py",
             "python3 tests/test_release_install_helpers.py",
-            "cargo build --release --locked",
-            "python3 -u tests/pty_latency.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_render.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_keymaps.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_hints.py target/release/herdr-crossroads",
         ]
         actual = re.findall(r"^\s+(?:run: )?((?:cargo |python3 (?:-u )?tests/).*)$", self.workflow, re.M)
         self.assertEqual(actual, ["cargo --version", *commands,
             'python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"'])
-        for harness in ["latency", "render", "keymaps", "hints"]:
-            self.assertIn(f"Run full release PTY {harness} gate\n"
-                          "        timeout-minutes: 5\n"
-                          f"        run: python3 -u tests/pty_{harness}.py target/release/herdr-crossroads\n",
-                          self.workflow)
+        self.assertNotIn("cargo build --release", self.workflow)
+        self.assertNotIn("target/release/herdr-crossroads", self.workflow)
 
     def test_native_packaging_then_real_installation_then_exact_upload(self):
         reader = "python3 -B -m unittest discover -s tests -p test_pty_readers.py"

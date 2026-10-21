@@ -46,8 +46,8 @@ Historical native previews (not current release verification):
 
 ## Requirements and compatibility
 
-[![Published: 0.1.0](https://img.shields.io/badge/published-0.1.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
-[![Preparing: 0.2.0](https://img.shields.io/badge/preparing-0.2.0-orange?style=flat)](docs/releases.md)
+[![Published: 0.2.0](https://img.shields.io/badge/published-0.2.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.2.0)
+[![Preparing: Windows for 0.3.0](https://img.shields.io/badge/preparing-Windows_for_0.3.0-orange?style=flat)](docs/builds.md#windows-preparation-not-certification)
 [![Herdr: ≥ 0.9.1](https://img.shields.io/badge/Herdr-%E2%89%A5%200.9.1-5865a3?style=flat)](https://herdr.dev)
 [![Managed installation: Python ≥ 3.11](https://img.shields.io/badge/managed_install-Python_%E2%89%A5_3.11-3776ab?style=flat&logo=python&logoColor=white)](docs/installation.md)
 [![Supported: Linux x86_64 glibc](https://img.shields.io/badge/Linux-x86__64_glibc-2ea44f?style=flat&logo=linux&logoColor=white)](docs/builds.md#runtime-and-verification-limits)
@@ -56,9 +56,11 @@ Historical native previews (not current release verification):
 
 - **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
-- Upcoming **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
-  `MACOSX_DEPLOYMENT_TARGET=15.0`. Native packaging/installation CI passed on all
-  three targets; **0.2.0 is not released**. Published 0.1.0 remains Linux-only.
+- Released **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
+  `MACOSX_DEPLOYMENT_TARGET=15.0`. Published 0.1.0 remains Linux-only.
+- Native **Windows 10/11 x86_64** is intended for **0.3.0**, currently
+  **PREPARATION only**, not supported or certified. The package version is still
+  **0.2.0**; native Windows CI has not run. See [Windows gates and limits](docs/builds.md#windows-preparation-not-certification).
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
 
 ### Managed installation
@@ -74,7 +76,7 @@ Historical native previews (not current release verification):
 
 ### Compatibility status
 
-- No Windows, other-architecture, or SSH support is claimed; no minimum glibc
+- No released Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
 - **[0.1.0](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
@@ -84,14 +86,16 @@ Historical native previews (not current release verification):
 - Current Linux/Apple Silicon/Intel CI passed packaging, provenance and isolated
   real-Herdr installation with four full PTYs against each installed binary.
   Actual macOS Herdr live-popup acceptance was **waived, not performed**; automated
-  evidence is not live-popup acceptance or release approval. See [verified build evidence and limits](docs/builds.md#current-020-three-platform-ci-evidence).
+  evidence is not live-popup acceptance. Those historical results do not certify
+  the Windows preparation. See [verified build evidence and limits](docs/builds.md#current-020-three-platform-ci-evidence).
 
 ## Installation
 
 ### Quickstart
 
 Install [Herdr](https://herdr.dev) first and check the
-[requirements](#requirements-and-compatibility) (published 0.1.0: Linux only).
+[requirements](#requirements-and-compatibility). This quickstart is for Linux/macOS;
+Windows preparation uses a separate entrypoint and has no setup action.
 **Review the source, manifest, and assets before approving installation: it executes
 code and registers a plugin globally for your user, not in a sandbox.**
 
@@ -102,9 +106,9 @@ herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
 This follows the public default branch and downloads the checkout's matching
-version and platform binary. Until 0.2.0 assets are approved and available, use
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0` for the
-published Linux version if the default branch has moved ahead. See [installation options and safeguards](docs/installation.md) and
+version and platform binary. To select released Linux/macOS 0.2.0 rather than
+the development branch, use `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`.
+The Windows WIP is not a released Windows installation route. See [installation options and safeguards](docs/installation.md) and
 [public installation evidence](docs/installation.md#regular-010-public-installation).
 
 <a id="add-the-launch-binding-reload-and-open"></a>

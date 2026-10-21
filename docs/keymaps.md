@@ -318,7 +318,7 @@ legacy `.json`.
 
 ## Terminal limits
 
-In an interactive popup Crossroads queries local Kitty keyboard-protocol support.
+On Linux/macOS an interactive popup queries local Kitty keyboard-protocol support.
 A valid response within the 100-ms opening probe activates Kitty disambiguation
 with its own push; normal closing and error unwinding pop that change. Without
 a response, Crossroads uses classical input, **not** a modifyOtherKeys fallback.
@@ -356,6 +356,112 @@ universal guarantee for every physical key combination.
 Verification sources: [Herdr v0.9.3 input routing](https://github.com/herdrdev/herdr/blob/v0.9.3/src/client/shell/input.rs#L503-L578),
 [recoding](https://github.com/herdrdev/herdr/blob/v0.9.3/src/input/encode.rs#L304-L342),
 [Ghostty VT](https://github.com/herdrdev/herdr/blob/v0.9.3/vendor/libghostty-vt/src/terminal/stream_terminal.zig#L4702-L4732).
+
+### Windows preparation verification
+
+The Windows WIP uses native console modes and VT input/output, not `stty`.
+It saves/restores the original input/output modes, uses native terminal sizing
+with an 80×24 fallback, and does **not** send Kitty query/push/pop sequences.
+Shared decoding and keymap rules remain in place; this is not a guarantee that
+Windows delivers every key identity or resolves the classical aliases above.
+
+The prepared native gate is `python -B scripts/build-windows.py` from the repository
+root with [native builder prerequisites](builds.md#windows-preparation-not-certification).
+It runs selected Rust suites and `tests/test_windows_acceptance.py` with the
+final-linked release executable, compiled fake Herdr CLI, and native ConPTY test
+executable selected by the helper. The acceptance harness covers console-mode
+restoration, search/help/themes/navigation, resize/close, filtered stable-ID focus,
+status disconnect/reconnect/resnapshot, noninteractive EOF/missing CLI and theme
+save/reopen/Auto removal. Pipes and CLI are fake-host fixtures, not a real Herdr
+server/client. After packaging, the helper also installs in a temporary checkout,
+checks exact executable bytes, and repeats acceptance on that installed binary.
+The Unix four-PTY commands below are not Windows gates; a plain Windows
+`cargo test` does not run this ConPTY suite (its console test is ignored unless
+explicitly launched by the harness).
+
+Each acceptance method runs in a separate process with a 30-second deadline,
+including cleanup. The suite stops on the first failure. `scripts/windows-process.py`
+logs command start/end, PID, exit code and elapsed time; on timeout it attempts
+`taskkill /T /F` with a five-second deadline, then kills/reaps the direct child
+with a further five-second deadline. Cleanup failures are reported, not ignored.
+Captured command output uses temporary files; after command exit or cleanup, the
+supervisor snapshots their byte counts and reads at most the first 1 MiB per
+stream, reporting cap truncation on stderr even for successful commands. Later
+writes are excluded, so a surviving inherited writer cannot prolong capture or
+grow its in-memory result without bound. This does not cap temporary-file disk
+usage while a command or surviving writer runs. Rust test groups and distribution
+checks have 60-second deadlines, each acceptance pass has 240 seconds, and other
+helper commands have 300 seconds. The workflow's overall 30-minute limit is unchanged.
+
+The ConPTY fixture keeps its startup pipe ends until `CreateProcessW` completes
+and drains output on a separate thread during startup and teardown. Its progress
+messages distinguish child exit, `ClosePseudoConsole`, and reader shutdown.
+The latter API can block on older Windows; the process deadline, **not** the
+reader's five-second join, bounds that call. See Microsoft's
+[session lifetime guidance](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+and [shutdown contract](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole)
+(consulted 2026-10-21). The native mode test reports the standard-handle value,
+console mode and Win32 error on failure; it still requires real console handles
+before entering the terminal and verifies exact restoration afterward.
+
+The fixture sets `STARTF_USESTDHANDLES` with null standard handles so Windows
+connects them to ConPTY instead of copying redirected parent handles, even with
+`bInheritHandles=False`. This addresses the mechanism described by a Microsoft
+Terminal maintainer in [discussion 15814](https://github.com/microsoft/terminal/discussions/15814#discussioncomment-6684982)
+(2021-09-20; consulted 2026-10-21), alongside Microsoft's
+[null-handle attachment contract](https://learn.microsoft.com/en-us/windows/console/getstdhandle#attachdetach-behavior).
+An additional native regression explicitly redirects the Python parent's three
+standard streams and requires the unchanged mode/restoration test to pass through
+ConPTY. No `CONIN$` fallback or plain-input substitution is used.
+
+`Console.until` checks emitted label runs, ignoring only complete SGR styling
+sequences, including those fragmented across reads. Cursor/erase commands,
+newlines and other controls remain boundaries; control-string payloads are not
+labels. OSC ends at BEL or ST (`ESC \`); DCS/SOS/PM/APC remain hidden through
+BEL and end only at ST. This is not current-screen reconstruction and does not
+join labels across cursor movements or redraws. Protocol-byte checks use `raw=True`.
+Returned output and timeout/EOF diagnostics retain the original bytes; output
+resets and the five-second default deadline are unchanged. Portable regressions
+in `tests/test_windows_support.py` exercise the actual wait loop without invoking
+native APIs.
+
+**Native Windows CI has been attempted, but is not green.** The first two runs
+reached the 30-minute job timeout. The supplied evidence for
+[run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
+at `343144f` shows failure in 2m 50s: all nine watchdog checks, native Clippy,
+compilation and selected Rust suites passed, but initial `GetConsoleMode` still
+failed before terminal entry. Rust output bypassed ConPTY; cleanup completed
+immediately after the five-second capture timeout, and no artifact was uploaded.
+This verified bounded teardown/fail-fast, not console restoration. The supplied
+[run 39605428457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39605428457)
+at `bcbd93e` subsequently passed redirected-parent stdio, exact console-mode
+restoration, filtered stable-ID focus, live status disconnect/reconnect/resnapshot/
+quit, and noninteractive startup/EOF/missing CLI. It failed in 3m 38s at the
+search/help/themes/navigation test's `codex` assertion: ConPTY emitted `cod`, SGR
+color/underline changes, then `ex`, so the visible label was correct but the raw
+substring was absent. Teardown was clean and no preparation artifacts were
+uploaded. Supplied evidence from
+[run 39614583553](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39614583553)
+at `6623013` confirms the SGR-aware matcher passed the search assertion, alongside
+the earlier console, stable-ID focus, reconnect and noninteractive checks. It
+failed in 2m 56s at `console.until(b"too small")` after resizing to `60x12`:
+the UI correctly emitted `ERROR: Crossroads needs minimum content size 80x15.`,
+`Your content size is: 60x12.` and close instructions, not that stale substring.
+The acceptance test now checks those minimum/actual dimensions and close
+instructions, retaining resize recovery and the existing successful-quit check;
+supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal. It failed in 3m 00s at the distribution
+suite's pinned-directory rename assertion (seven of eight distribution tests
+passed). The installer access-mask correction and expanded native regressions
+await Windows execution; the installed-binary second pass was not reached.
+These passes prove the console and UI checks on that runner, not Windows 10/11
+certification or overall pipeline success.
+Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
+certification. Windows is
+preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,
+OS version unknown; final actual Herdr popup acceptance is pending **only after
+the pipeline stands**, not waived. See [installer/entrypoint limitations](installation.md#windows-preparation-limitations).
 
 ## Local verification
 
@@ -496,9 +602,9 @@ The later exact `6f91a3f` Linux and native Apple Silicon/Intel CI also passed al
 four full PTYs per platform. These earlier results predate the new 0.2.0
 distribution gates; [current three-platform CI and artifact verification](builds.md#current-020-three-platform-ci-evidence)
 now cover packaging/provenance and isolated real-Herdr installation.
-The checkout prepares macOS 15.0+ on both architectures, with explicit
-`MACOSX_DEPLOYMENT_TARGET=15.0`; 0.2.0 is not released and published 0.1.0 remains
-Linux-only. This approved deployment minimum is not an exact OS-version test matrix.
+Released 0.2.0 targets macOS 15.0+ on both architectures, with explicit
+`MACOSX_DEPLOYMENT_TARGET=15.0`; published 0.1.0 remains Linux-only. This approved
+deployment minimum is not an exact OS-version test matrix or Windows evidence.
 Automated installation/distribution is not waived: the new CI gate runs all four
 full fake-host PTYs against the real-Herdr-installed binary, without a server or
 popup. See [its verified scope and limits](installation.md#automated-release-installation-gate).
