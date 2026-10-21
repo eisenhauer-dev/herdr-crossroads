@@ -46,8 +46,13 @@ at `bcbd93e` confirms the standard-handle correction: redirected-parent and exac
 console-restoration checks passed, along with filtered stable-ID focus, live
 status reconnect/resnapshot/quit, and noninteractive startup/EOF/missing CLI.
 Search then failed because styling split the visible `codex` label in raw bytes.
-The SGR-aware test matcher has portable regression coverage but awaits native
-execution; theme-save and installed-binary acceptance were not reached. See
+Supplied evidence from
+[run 39614583553](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39614583553)
+at `6623013` confirms the SGR-aware matcher passed that search assertion and the
+earlier console, focus, reconnect and noninteractive checks. It failed in 2m 56s
+at the stale resize expectation `too small`, despite displaying the correct
+minimum `80x15` and actual `60x12` content-size notice. The corrected expectation
+awaits native execution; theme-save and installed-binary acceptance were not reached. See
 [the matcher contract and native evidence](keymaps.md#windows-preparation-verification).
 The helper installs no tooling. It checks versions and target notices, forces a
 fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the

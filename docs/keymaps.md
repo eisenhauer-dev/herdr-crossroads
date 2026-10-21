@@ -440,8 +440,17 @@ quit, and noninteractive startup/EOF/missing CLI. It failed in 3m 38s at the
 search/help/themes/navigation test's `codex` assertion: ConPTY emitted `cod`, SGR
 color/underline changes, then `ex`, so the visible label was correct but the raw
 substring was absent. Teardown was clean and no preparation artifacts were
-uploaded. The SGR-aware matcher above awaits native execution; theme-save
-acceptance and the installed-binary second pass were not reached. These passes
+uploaded. Supplied evidence from
+[run 39614583553](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39614583553)
+at `6623013` confirms the SGR-aware matcher passed the search assertion, alongside
+the earlier console, stable-ID focus, reconnect and noninteractive checks. It
+failed in 2m 56s at `console.until(b"too small")` after resizing to `60x12`:
+the UI correctly emitted `ERROR: Crossroads needs minimum content size 80x15.`,
+`Your content size is: 60x12.` and close instructions, not that stale substring.
+The acceptance test now checks those minimum/actual dimensions and close
+instructions, retaining resize recovery and the existing successful-quit check;
+this expectation correction awaits native execution. Theme-save acceptance and
+the installed-binary second pass were not reached. These passes
 prove the handle fix on that runner, not Windows 10/11 certification or overall
 pipeline success.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11

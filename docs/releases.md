@@ -78,8 +78,11 @@ console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
 is **no native Windows GREEN**. The fourth (`bcbd93e`, run `39605428457`) passed
 the standard-handle/redirected-parent and exact console-restoration checks, then
 failed a raw styled-label assertion in 3m 38s with clean teardown and no artifacts.
-The test-matcher correction awaits native execution; theme-save and installed-binary
-acceptance were not reached. Versioned output
+Run `39614583553` (`6623013`) passed the styled-label assertion and earlier console,
+focus, reconnect and noninteractive checks, then failed in 2m 56s on a stale
+resize-message expectation despite the correct minimum/actual-size notice.
+The resize expectation correction awaits native execution; theme-save and
+installed-binary acceptance were not reached. Versioned output
 names still use **0.2.0**;
 do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
