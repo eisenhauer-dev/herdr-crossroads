@@ -318,7 +318,7 @@ legacy `.json`.
 
 ## Terminal limits
 
-In an interactive popup Crossroads queries local Kitty keyboard-protocol support.
+On Linux/macOS an interactive popup queries local Kitty keyboard-protocol support.
 A valid response within the 100-ms opening probe activates Kitty disambiguation
 with its own push; normal closing and error unwinding pop that change. Without
 a response, Crossroads uses classical input, **not** a modifyOtherKeys fallback.
@@ -356,6 +356,34 @@ universal guarantee for every physical key combination.
 Verification sources: [Herdr v0.9.3 input routing](https://github.com/herdrdev/herdr/blob/v0.9.3/src/client/shell/input.rs#L503-L578),
 [recoding](https://github.com/herdrdev/herdr/blob/v0.9.3/src/input/encode.rs#L304-L342),
 [Ghostty VT](https://github.com/herdrdev/herdr/blob/v0.9.3/vendor/libghostty-vt/src/terminal/stream_terminal.zig#L4702-L4732).
+
+### Windows preparation verification
+
+The Windows WIP uses native console modes and VT input/output, not `stty`.
+It saves/restores the original input/output modes, uses native terminal sizing
+with an 80×24 fallback, and does **not** send Kitty query/push/pop sequences.
+Shared decoding and keymap rules remain in place; this is not a guarantee that
+Windows delivers every key identity or resolves the classical aliases above.
+
+The prepared native gate is `python -B scripts/build-windows.py` from the repository
+root with [native builder prerequisites](builds.md#windows-preparation-not-certification).
+It runs selected Rust suites and `tests/test_windows_acceptance.py` with the
+final-linked release executable, compiled fake Herdr CLI, and native ConPTY test
+executable selected by the helper. The acceptance harness covers console-mode
+restoration, search/help/themes/navigation, resize/close, filtered stable-ID focus,
+status disconnect/reconnect/resnapshot, noninteractive EOF/missing CLI and theme
+save/reopen/Auto removal. Pipes and CLI are fake-host fixtures, not a real Herdr
+server/client. After packaging, the helper also installs in a temporary checkout,
+checks exact executable bytes, and repeats acceptance on that installed binary.
+The Unix four-PTY commands below are not Windows gates; a plain Windows
+`cargo test` does not run this ConPTY suite (its console test is ignored unless
+explicitly launched by the harness).
+
+**None of these native Windows gates has run.** Portable synthetic PE/workflow
+checks are not native execution or Windows 10/11 certification. Windows is
+preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,
+OS version unknown; final actual Herdr popup acceptance is pending **only after
+the pipeline stands**, not waived. See [installer/entrypoint limitations](installation.md#windows-preparation-limitations).
 
 ## Local verification
 
@@ -496,9 +524,9 @@ The later exact `6f91a3f` Linux and native Apple Silicon/Intel CI also passed al
 four full PTYs per platform. These earlier results predate the new 0.2.0
 distribution gates; [current three-platform CI and artifact verification](builds.md#current-020-three-platform-ci-evidence)
 now cover packaging/provenance and isolated real-Herdr installation.
-The checkout prepares macOS 15.0+ on both architectures, with explicit
-`MACOSX_DEPLOYMENT_TARGET=15.0`; 0.2.0 is not released and published 0.1.0 remains
-Linux-only. This approved deployment minimum is not an exact OS-version test matrix.
+Released 0.2.0 targets macOS 15.0+ on both architectures, with explicit
+`MACOSX_DEPLOYMENT_TARGET=15.0`; published 0.1.0 remains Linux-only. This approved
+deployment minimum is not an exact OS-version test matrix or Windows evidence.
 Automated installation/distribution is not waived: the new CI gate runs all four
 full fake-host PTYs against the real-Herdr-installed binary, without a server or
 popup. See [its verified scope and limits](installation.md#automated-release-installation-gate).

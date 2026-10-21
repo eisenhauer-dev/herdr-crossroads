@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use crate::windows_pipe::Pipe as LocalStream;
 use std::io::{self, Read, Write};
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use std::os::{
@@ -5,18 +7,18 @@ use std::os::{
     unix::ffi::OsStrExt,
 };
 #[cfg(unix)]
-use std::os::{unix::fs::OpenOptionsExt, unix::net::UnixStream};
+use std::os::{unix::fs::OpenOptionsExt, unix::net::UnixStream as LocalStream};
 use std::path::Path;
 use std::process::{Command, Stdio};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{self, Receiver, SyncSender},
     Arc,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::thread;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -26,18 +28,18 @@ pub(super) enum StatusMessage {
     Disconnected,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 thread_local! {
     pub(super) static RECONNECT_CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) struct StatusSubscription {
     pub(super) rx: Receiver<StatusMessage>,
-    pub(super) socket: UnixStream,
+    pub(super) socket: LocalStream,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for StatusSubscription {
     fn drop(&mut self) {
         let _ = self.socket.shutdown(std::net::Shutdown::Both);
@@ -54,7 +56,7 @@ pub(super) fn cli_output(
     if !bounded {
         return Command::new(executable).args(args).output();
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     {
         let cancel = RECONNECT_CANCEL.with(|flag| flag.borrow().clone());
         if cancel
@@ -78,11 +80,11 @@ pub(super) fn cli_output(
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(&path)?;
         let result = (|| {
             let mut child = Command::new(executable)
                 .args(args)
@@ -136,12 +138,15 @@ pub(super) fn cli_output(
         let _ = std::fs::remove_file(path);
         result
     }
-    #[cfg(not(unix))]
-    unreachable!("bounded CLI is only used by Unix reconnects")
+    #[cfg(not(any(unix, windows)))]
+    unreachable!("unsupported reconnect platform")
 }
 
-#[cfg(unix)]
-pub(super) fn socket_line(stream: &mut UnixStream, deadline: Option<Instant>) -> io::Result<Value> {
+#[cfg(any(unix, windows))]
+pub(super) fn socket_line(
+    stream: &mut LocalStream,
+    deadline: Option<Instant>,
+) -> io::Result<Value> {
     let mut bytes = Vec::new();
     let mut byte = [0];
     let cancel = RECONNECT_CANCEL.with(|flag| flag.borrow().clone());
@@ -199,7 +204,7 @@ pub(super) fn socket_line(stream: &mut UnixStream, deadline: Option<Instant>) ->
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn pane_ids(executable: &std::ffi::OsStr, bounded: bool) -> io::Result<Vec<String>> {
     let output = cli_output(executable, &["pane", "list"], bounded)?;
     if !output.status.success() {
@@ -230,7 +235,7 @@ pub(super) fn pane_ids(executable: &std::ffi::OsStr, bounded: bool) -> io::Resul
 // The Linux x86_64 socket constants and sockaddr_un layout match the local
 // sys/socket.h and sys/un.h ABI; other targets keep the existing path.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub(super) fn reconnect_socket(path: &std::ffi::OsStr) -> io::Result<UnixStream> {
+pub(super) fn reconnect_socket(path: &std::ffi::OsStr) -> io::Result<LocalStream> {
     #[repr(C)]
     struct SocketAddress {
         family: u16,
@@ -297,7 +302,7 @@ pub(super) fn reconnect_socket(path: &std::ffi::OsStr) -> io::Result<UnixStream>
             )
         };
         if result == 0 {
-            let stream = UnixStream::from(fd);
+            let stream = LocalStream::from(fd);
             stream.set_nonblocking(false)?;
             if cancel
                 .as_ref()
@@ -325,7 +330,7 @@ pub(super) fn reconnect_socket(path: &std::ffi::OsStr) -> io::Result<UnixStream>
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn subscribe(
     executable: &std::ffi::OsStr,
     bounded: bool,
@@ -341,10 +346,10 @@ pub(super) fn subscribe(
         }
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         {
-            UnixStream::connect(&path)?
+            LocalStream::connect(&path)?
         }
     } else {
-        UnixStream::connect(&path)?
+        LocalStream::connect(&path)?
     };
     stream.set_write_timeout(Some(Duration::from_millis(500)))?;
     serde_json::to_writer(

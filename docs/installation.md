@@ -1,7 +1,8 @@
 # Binary installation
 
-The checkout prepares **0.2.0, not yet released**, retaining Linux x86_64 glibc
-and adding Apple Silicon/Intel **macOS 15.0+**. Published **0.1.0 remains
+Released **0.2.0** retains Linux x86_64 glibc and adds Apple Silicon/Intel
+**macOS 15.0+**. Native Windows 10/11 x86_64 is intended for **0.3.0**, currently
+**PREPARATION only**, while the package version remains **0.2.0**. Published **0.1.0 remains
 Linux-only and immutable**. Native packaging and isolated real-Herdr installation
 CI passed on all three targets; see [candidate evidence and remaining limits](builds.md#current-020-three-platform-ci-evidence).
 
@@ -39,6 +40,43 @@ the local binary with personal build paths. The real public
 0.0.1 → 0.0.2 → 0.0.1 cycle passed on 2026-10-16, as detailed below. This verified
 test cycle is not approval for a regular 0.1.0 release.
 There is no short-name registry.
+
+## Windows preparation limitations
+
+There is no approved Windows release/install route yet. The WIP manifest uses
+`python scripts/install-binary.py` on Windows (not `python3`) and a separate
+`crossroads-windows` pane pointing to `./target/release/herdr-crossroads.exe`.
+The `crossroads` pane and `setup-keybind` action remain **Linux/macOS-only**.
+Do not invoke setup or copy the Unix quickstart's launch entry unchanged on Windows.
+The source-declared Windows launch command is:
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
+```
+
+This is an **unexecuted preparation example**, not live Herdr acceptance or a
+recommendation to install the WIP. Windows host keybinding setup remains manual
+and unverified; no native host-config path or shortcut sequence is certified here.
+
+The installer selects `x86_64-pc-windows-msvc` for an AMD64/x86_64 host reporting
+Windows version 10 or newer; old/unknown versions and other architectures fail.
+It expects the current version's `.tar.gz` plus checksum, currently
+`herdr-crossroads-0.2.0-x86_64-pc-windows-msvc.tar.gz[.sha256]`, with exactly
+`herdr-crossroads.exe`, `herdr-crossroads.exe.sha256`, `LICENSE`, and
+`THIRD-PARTY-NOTICES.md`. Common checksum/notice/member checks precede native
+writes; the binary must pass AMD64 PE32+ console-executable header checks, not
+be a DLL. Header checks do not prove execution or OS compatibility.
+
+Windows installation uses `scripts/windows-files.py`, not Unix directory-FD or
+mode semantics: it requires a local absolute drive path, pins directory ancestors
+against rename, rejects reparse-point ancestors/destinations, and stages/syncs
+individual replacements in `target/release/`. This is not a three-file transaction.
+Close the popup before replacing the executable: Windows can reject replacement
+of a running binary. Nothing here proves an actual Herdr managed installation.
+See [preparation gates and physical-PC sequencing](builds.md#windows-preparation-not-certification).
+
+The remaining setup and Unix permission details below apply to Linux/macOS;
+dated installation receipts retain their original platform/version scope.
 
 ## Keyboard launch setup
 
@@ -261,7 +299,8 @@ installation: opening/searching the runtime does not download or update anything
 The gzip tar must contain exactly four regular, non-sparse members named
 `herdr-crossroads`, `herdr-crossroads.sha256`, `LICENSE`, and
 `THIRD-PARTY-NOTICES.md`. Both notice files must match the trusted checkout's
-bytes exactly; missing, tampered or malformed notice payloads fail even if the
+bytes exactly except for the narrowly pinned historical inventories below;
+missing, tampered or malformed notice payloads fail even if the
 outer checksum was recomputed. Older two-member assets are no longer accepted.
 Duplicates, unexpected members,
 path traversal, absolute names, directories, symlinks, and hardlinks fail. No tar
@@ -286,6 +325,17 @@ The old source-SHA-pinned checkout continues using its own HTML installer and
 trusted HTML notices unchanged. The earlier format conversion did not replace
 the public asset. A 0.2.0 checkout instead requires 0.2.0 assets; it cannot silently
 fall back to the public `v0.1.0` archive.
+
+The released `v0.2.0` Linux/macOS archives retain the 78-package Markdown inventory
+with SHA256 `ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56`.
+For those three Unix targets and version `0.2.0` only, the installer also accepts
+that exact notice when the trusted checkout contains the Windows-expanded
+81-package inventory with SHA256
+`d18beb57a9837f22267622470a25bbac419646faf7b978888068b5a2377fffc4`.
+It installs the released notice bytes beside the released binary, not the expanded
+inventory. `LICENSE` still requires exact checkout equality; all other checks
+remain unchanged. This exception does not accept modified inventories, other
+versions, or Windows archives, and does not change any published asset.
 
 After validation, all three payload files are staged in exclusive temporary
 files in `target/release/`, flushed/synced, then individually atomically replaced:
@@ -326,12 +376,12 @@ was tested separately, as recorded below.
 See [README installation](../README.md#installation) for the explicit source
 clone/build/link alternative.
 
-**Publication order matters:** do not move the default branch to 0.2.0 without
+**Publication order matters:** do not move the default branch to a new version without
 matching approved assets available, unless a separately approved, controlled
 publication window explicitly handles that gap. Otherwise the normal install
-command fails closed. During preparation, the published Linux fallback is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`.
-There is no published macOS fallback. Close the popup before update/reinstall;
+command fails closed. The released Linux/macOS fallback is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`;
+there is no released Windows fallback. Close the popup before update/reinstall;
 Herdr 0.9.5's `herdr plugin update herdr-crossroads` follows the installed source
 ref (an unpinned install follows default HEAD). To return to published Linux
 0.1.0, reinstall with `--ref v0.1.0` and its retained matching assets. Prefer a

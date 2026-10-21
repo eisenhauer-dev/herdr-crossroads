@@ -195,7 +195,7 @@ def system_notices(validate_installed=True):
         profile = json.loads(data)
         evidence = ROOT / f"LICENSES/glibc-{source}-startup.txt"
         raw = evidence.read_bytes()
-        expected = dict(path=str(evidence.relative_to(ROOT)),
+        expected = dict(path=evidence.relative_to(ROOT).as_posix(),
                         sha256=hashlib.sha256(raw).hexdigest(), source="glibc " + source)
         if (profile["glibc_evidence"] != expected
                 or raw.decode().splitlines()[0] != "Source: glibc " + source):
@@ -205,13 +205,13 @@ def system_notices(validate_installed=True):
                 raise ValueError("reviewed system notice hash mismatch")
         matched |= installed == (profile["candidates"], profile["notices"])
         output += [f"<h2>{html.escape(profile['label'])}</h2>",
-                   f"<p>{path.relative_to(ROOT)}; SHA256: {hashlib.sha256(data).hexdigest()}</p>",
+                   f"<p>{path.relative_to(ROOT).as_posix()}; SHA256: {hashlib.sha256(data).hexdigest()}</p>",
                    "<pre>" + html.escape(json.dumps(profile["provenance"], indent=2)) + "</pre>"]
         for candidate in profile["candidates"]:
             output += [f"<h3>{html.escape(candidate['query'])}</h3>",
                        "<pre>" + html.escape(json.dumps(candidate, indent=2)) + "</pre>"]
         output += ["<h3>Verified glibc startup source exceptions</h3>",
-                   f"<p>{evidence.relative_to(ROOT)}; SHA256: {expected['sha256']}</p>",
+                   f"<p>{evidence.relative_to(ROOT).as_posix()}; SHA256: {expected['sha256']}</p>",
                    "<pre>" + html.escape(raw.decode()) + "</pre>"]
         for notice in profile["notices"]:
             output += [f"<h3>{html.escape(notice['path'])}</h3>",
@@ -222,15 +222,20 @@ def system_notices(validate_installed=True):
     return output
 
 
-def generate_html():
-    tree = command("cargo", "tree", "--offline", "--locked", "--target", TARGET,
-                   "-e", "normal,build", "--prefix", "none")
-    active = set(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
-    metadata = json.loads(command("cargo", "metadata", "--offline", "--locked",
-                                  "--format-version", "1", "--filter-platform", TARGET))
-    packages = sorted((p for p in metadata["packages"]
-                       if p["source"] and (p["name"], p["version"]) in active),
-                      key=lambda p: (p["name"], p["version"]))
+def generate_html(windows=False):
+    active = set()
+    inventory = {}
+    targets = [TARGET, "x86_64-pc-windows-msvc"] if windows else [TARGET]
+    for target in targets:
+        tree = command("cargo", "tree", "--offline", "--locked", "--target", target,
+                       "-e", "normal,build", "--prefix", "none")
+        selected = set(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
+        active.update(selected)
+        metadata = json.loads(command("cargo", "metadata", "--offline", "--locked",
+                                      "--format-version", "1", "--filter-platform", target))
+        inventory.update({(p["name"], p["version"]): p for p in metadata["packages"]
+                          if p["source"] and (p["name"], p["version"]) in selected})
+    packages = [inventory[key] for key in sorted(inventory)]
     checksums = {(p["name"], p["version"]): p.get("checksum", "")
                  for p in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]}
     if len(packages) != len(active) - 1:
@@ -248,11 +253,13 @@ def generate_html():
               f"<!-- inputs-sha256: {fingerprint()} -->",
               f"<!-- rustc: {html.escape(toolchain)} -->",
               "<h1>Crossroads third-party notices</h1>",
-              f"<p>Target: {TARGET}. Active normal + build graph: {len(packages)} "
+              (f"<p>Targets: {', '.join(targets)}. Union of active normal + build graphs: {len(packages)} "
+               if windows else f"<p>Target: {TARGET}. Active normal + build graph: {len(packages)} ") +
               "unique registry package versions. This is a conservative inventory, "
               "including build-only and proc-macro dependencies, not a claim that "
-              "all packages are linked into the executable. Dev-only and inactive "
-              "target dependencies are excluded.</p>",
+              "all packages are linked into the executable. Dev-only and inactive " +
+              ("target dependencies outside this union are excluded.</p>" if windows
+               else "target dependencies are excluded.</p>"),
               "<p>Source: exact Cargo.lock versions, cached crates.io package manifests "
               "and all packaged license, copyright, NOTICE and attribution files. "
               "Texts below are reproduced without modification (HTML-escaped). "
@@ -286,20 +293,21 @@ def generate_html():
     return "\n".join(output)
 
 
-def generate():
-    return markdown(generate_html()).replace(
+def generate(windows=True):
+    return markdown(generate_html(windows=windows)).replace(
         "Texts below are reproduced without modification (HTML-escaped).",
         "Texts below are reproduced without modification in verbatim fenced blocks.")
 
 
 def check_darwin(target):
-    """Darwin's graph is a subset; verify attribution, never invoke gcc/dpkg there.
+    """Check non-Linux target attribution without invoking Linux gcc/dpkg.
 
-    Native system static inputs are separately rejected using the actual Apple
-    link map in build-provenance.py. Only OS-provided dylibs may remain external.
+    Darwin system inputs are separately checked in build-provenance.py. Windows
+    MSVC/SDK system inputs still require native evidence and independent review;
+    crate and Rust notices alone do not approve Windows binary distribution.
     """
-    if target not in {"aarch64-apple-darwin", "x86_64-apple-darwin"}:
-        raise ValueError("unsupported Darwin notice target")
+    if target not in {"aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"}:
+        raise ValueError("unsupported non-Linux notice target")
     text = NOTICE.read_bytes().decode()
     if f"<!-- inputs-sha256: {fingerprint()} -->" not in text:
         raise ValueError("stale third-party notices: review and regenerate")

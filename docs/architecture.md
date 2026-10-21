@@ -1,9 +1,9 @@
 # Architecture
 
 Crossroads is a Rust terminal-popup process, not an embedded Herdr extension.
-Herdr launches the manifest's `crossroads` pane entrypoint with the plugin root
+Herdr launches the manifest's platform-specific pane entrypoint with the plugin root
 as working directory and supplies runtime environment context. The manifest
-declares Linux/macOS, minimum Herdr 0.9.1, popup placement, and a release-binary path;
+declares Linux/macOS/Windows, minimum Herdr 0.9.1, popup placement, and release-binary paths;
 it declares a Python binary-installer build hook and the global `setup-keybind`
 action. Managed installation invokes the build hook; linking a source checkout
 does not. Only explicit invocation of `setup-keybind` may append the agreed host
@@ -11,16 +11,41 @@ launch binding. Opening or searching the popup invokes neither path and does not
 install/update binaries or change host configuration. There are no startup or
 event hooks. See [installation and setup safeguards](installation.md).
 
-The checkout prepares unreleased 0.2.0 for Linux x86_64 glibc and macOS 15.0+
-ARM64/Intel; published 0.1.0 stays Linux-only. Installation selects the running
+Released 0.2.0 covers Linux x86_64 glibc and macOS 15.0+ ARM64/Intel;
+published 0.1.0 stays Linux-only. The following Unix distribution evidence does
+not cover the Windows WIP. Installation selects the running
 process architecture, validates ELF/Mach-O and archive/checksum/notice contracts,
 and places the payload at the same entrypoint path without Cargo. Native release
 helpers bind a fresh final link/map to the exact four-PTY-tested executable;
 Darwin ad-hoc signing is link-time only, with no Developer ID or notarization.
 CI's real-Herdr local-fixture install gate then tests that installed binary before
 artifact upload, without a server/popup. [Current three-platform distribution CI](builds.md#current-020-three-platform-ci-evidence)
-passed; independent review and final acceptance remain pending. The macOS live
+passed at that historical pre-release checkpoint. The macOS live
 acceptance waiver is not an automated-installation waiver.
+
+### Windows preparation boundary
+
+Native Windows 10/11 x86_64 is intended for 0.3.0, **PREPARATION only**, package
+still 0.2.0. The manifest separates Unix `crossroads` from Windows
+`crossroads-windows` (`./target/release/herdr-crossroads.exe`), with `python` for
+Windows installation and `python3` on Unix. `setup-keybind` remains Unix-only.
+The Windows installer shares archive/checksum/notice validation but validates
+AMD64 PE32+ console headers and uses a native pinned-directory/reparse-rejecting
+replacement helper instead of Unix directory descriptors.
+
+`src/terminal/windows.rs` owns native console mode/VT setup and restoration and
+terminal sizing; it does not negotiate Kitty. `src/windows_pipe.rs` provides local
+byte-mode named-pipe transport for focus and live status, deriving the pipe name
+from Herdr's socket marker without opening the marker file. Connect/read/write
+paths retain bounded polling and reconnect cancellation. The common UI, byte
+decoder, status coordinator and stable pane-ID validation remain shared.
+
+The Windows preparation helper binds a fresh final link/map to the binary tested
+with fake CLI/named pipes and ConPTY, then compares installed bytes and repeats
+fake-host acceptance. Native Windows CI **has not run**; this is neither actual
+Herdr integration nor Windows certification. MSVC/SDK attribution review remains
+open. A physical Windows PC is available, OS version unknown; final live-popup
+acceptance waits **until the pipeline stands**. See [gates and limitations](builds.md#windows-preparation-not-certification).
 
 ## Module responsibilities
 
@@ -53,6 +78,8 @@ acceptance waiver is not an automated-installation waiver.
 | `src/presentation/help.rs` | Help layout, category spacing, selected-entry viewport, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
 | `src/presentation/themes.rs` | Theme-list picker layout, visible choices and preview highlight; theme state/persistence remain in `selection`/`theme` |
 | `src/terminal.rs` | Terminal sizing, raw-mode and Kitty ownership/restoration, stdout drawing and cursor placement |
+| `src/terminal/windows.rs` | Windows console-mode/VT ownership and restoration, native terminal sizing, no Kitty negotiation |
+| `src/windows_pipe.rs` | Windows byte-mode named-pipe transport for focus/status, bounded polling and cancellation |
 
 Dependencies are the existing pinned JSONC parser, `serde_json`, `ratatui`, and
 Unicode general-category tables. There is no plugin SDK, async runtime, database,
@@ -159,7 +186,8 @@ When no bytes are ready, it sleeps for at most 1 ms before checking the deadline
 again; this is not a general socket-connect/write timeout promise.
 Stale/error replies fail without choosing another target. Help, search, themes,
 empty results, and error-page close do not focus panes. Terminal ownership restores
-the saved `stty` state, shows the cursor, and pops an owned Kitty mode on normal
+the saved `stty` state on Unix (native console modes on Windows), shows the cursor,
+and pops an owned Unix Kitty mode on normal
 return or error unwinding.
 
 ### Live status and reconnection

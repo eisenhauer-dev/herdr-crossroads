@@ -531,6 +531,9 @@ class DistributionHelpers(unittest.TestCase):
             manifest = tomllib.loads((repo / "herdr-plugin.toml").read_text())
             self.assertEqual(manifest["version"], "0.1.1")
             self.assertEqual(manifest["panes"][0]["width"], "90%")
+            windows_pane = next(pane for pane in manifest["panes"] if pane["id"] == "crossroads-windows")
+            self.assertNotIn("width", windows_pane)
+            self.assertNotIn("height", windows_pane)
             self.assertEqual(tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"], "0.1.1")
             package = next(p for p in tomllib.loads((repo / "Cargo.lock").read_text())["package"]
                            if p["name"] == "herdr-crossroads")

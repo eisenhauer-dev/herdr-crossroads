@@ -6,11 +6,58 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-The checkout prepares **0.2.0, not yet released**. The latest published version is
-`0.1.0`, the first regular Linux release, published as
+**0.2.0 is released** for Linux and macOS. Native Windows 10/11 x86_64 is intended
+for **0.3.0**, currently **PREPARATION only**; the checkout's package/manifest
+version remains **0.2.0**. The historical `0.1.0` Linux release was published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Historical local/CI `0.1.0` artifacts below were not reused or renamed.
+
+## Windows preparation (not certification)
+
+The WIP target is `x86_64-pc-windows-msvc`. Native Windows CI **has not run**.
+The public-only `.github/workflows/windows.yml` selects the standard free public
+`windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
+read-only contents permission, pinned checkout/upload actions, no persisted Git
+credentials, and no release publication job. It checks formatting and native
+library/binary Clippy before invoking the preparation helper.
+
+On a native Windows x86_64 builder with Rust/Cargo 1.99.0, Python 3.11+, Git,
+MSVC linker/Windows SDK, installed Rust documentation and cached locked
+dependencies, the repository-root command is:
+
+```powershell
+python -B scripts/build-windows.py
+```
+
+This command is source-verified only, **not executed on Windows**. The helper
+installs no tooling. It checks versions and target notices, forces a fresh final
+link with an MSVC map and library diagnostics, validates PE bytes, and binds the
+binary/map SHA256 in preparation-only provenance. It runs selected Windows,
+input, search and navigation Rust tests, fake-host named-pipe/ConPTY acceptance,
+and distribution checks. It packages exactly `herdr-crossroads.exe`,
+`herdr-crossroads.exe.sha256`, `LICENSE`, and `THIRD-PARTY-NOTICES.md`, then runs
+the Python installer in a temporary checkout, compares installed bytes with the
+final-linked executable, and repeats fake-host acceptance on those installed bytes.
+It does **not** run an actual Herdr managed install, server, client or live popup.
+
+Outputs under `target/builds/` currently use
+`herdr-crossroads-0.2.0-x86_64-pc-windows-msvc` with `.tar.gz`, `.tar.gz.sha256`,
+`.provenance.json`, and `.link.map` suffixes. They follow the unchanged package
+version, not the intended 0.3.0 release. CI uploads exactly these four files as a
+`windows-preparation-` artifact with seven-day retention; these are not approved
+release assets. Handled failures after output selection remove the selected
+sidecars/archive; stale files never establish a successful invocation.
+
+**Open gates:** native pipeline execution and exact artifact verification;
+MSVC/SDK linked-input attribution review (a map/diagnostic capture is not license
+clearance); Windows 10/11 runtime certification; actual Herdr popup acceptance;
+independent review and separate release approval. A physical Windows PC **is
+available**, but its OS version is not yet known. Final popup acceptance on that
+PC is scheduled **only after the pipeline stands**, not waived or already passed.
+Neither the runner label nor synthetic PE tests establish Windows 10/11 support.
+See [installer and launch limitations](installation.md#windows-preparation-limitations)
+and [native test scope](keymaps.md#windows-preparation-verification).
 
 ## macOS 0.2.0 preparation
 
@@ -125,8 +172,10 @@ attribution limits above remain. Independent combined review has **not** been
 performed and final acceptance is pending. True macOS Herdr live-popup acceptance
 is **waived, not passed**; automated distribution was not waived. No Rosetta
 execution, Developer ID signing/notarization or public 0.2.0 download is proven.
-**0.2.0 is not released**; no release, tag, merge or publication is authorized by
-this evidence. Published 0.1.0 remains the immutable Linux-only Latest release.
+These are historical pre-release evidence limits; **0.2.0 was subsequently
+released**. They do not authorize a new release, tag, merge or publication, and
+none of this evidence certifies the Windows WIP. Published 0.1.0 remains immutable
+and Linux-only.
 
 ## Build and verify locally
 

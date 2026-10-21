@@ -3,8 +3,10 @@
 This process prepares reviewable versioned Linux/macOS assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The checkout prepares **0.2.0, not released**; no tag, merge, push or publication
-is approved by this preparation. The latest published version is `0.1.0`, the first regular Linux release, for
+**0.2.0 is released** for Linux/macOS. Windows 10/11 x86_64 is intended for
+**0.3.0**, currently **PREPARATION only**, with the package version still **0.2.0**;
+no new tag, merge, push or publication is approved by this preparation.
+The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
 publication as the regular [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0),
@@ -66,6 +68,27 @@ passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d
 including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
 all four full PTYs, packaging and upload. These are test-version results, not the
 fresh gates or separate publication approval for the regular `0.1.0` release above.
+
+## Windows release boundary
+
+The Windows workflow/helper currently prepare evidence, not releasable or
+certified assets. Native Windows CI has **not run**. Its versioned output names
+still use **0.2.0**; do not relabel those files as 0.3.0 or infer a version bump
+from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
+
+Before a Windows release, require native pipeline success and exact artifact
+verification, MSVC/SDK linked-input attribution review, Windows 10/11 runtime
+certification, independent combined review and primary acceptance. The helper's
+fake-host ConPTY/named-pipe and installer-byte checks are **not** actual Herdr
+managed-install/live-popup integration. A physical Windows PC is available;
+record its still-unknown OS version and perform final popup acceptance **only
+after the pipeline stands**. This gate is pending, not waived. Host keybinding
+setup is Unix-only and Windows uses `crossroads-windows`; reconcile those
+[launch limits](installation.md#windows-preparation-limitations) before acceptance.
+Version changes, remote actions and release/publication approval remain separate.
+
+The 0.2.0 gate checklist and dated receipts below describe the earlier macOS
+release preparation, not remaining Windows acceptance or authority to release again.
 
 ## Version and asset contract
 
@@ -237,7 +260,12 @@ stripping or reflowing it; fences exceed any backtick run in the text. Cached
 crate files are read as UTF-8 bytes, preserving their original CRLF where present
 (the old HTML generator normalized those line endings). `.gitattributes` disables
 Git text normalization for this generated file so checkouts retain those bytes
-and the installer compatibility pin. The upstream Rust HTML
+and the installer compatibility pin. Targeted `-text` rules also preserve
+`LICENSES/*-system.json` and `LICENSES/glibc-*-startup.txt`: their exact bytes are
+part of the checked notice provenance, including on `core.autocrlf=true` Windows
+checkouts. Tests materialize a real Git index with that conversion enabled and
+verify both preserved evidence and rejection/detection of changed evidence.
+The upstream Rust HTML
 SHA256 still identifies the original source bytes, not the Markdown rendition.
 Tests compare all 458 preformatted blocks in order, all prose and external links,
 and all 140 active packaged license/notice files against the exact local sources.

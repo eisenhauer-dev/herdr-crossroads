@@ -11,12 +11,12 @@ use crate::status_colors::StatusColors;
 use crate::terminal::{draw, terminal_size, Terminal};
 use crate::theme;
 use crate::topology::snapshot_rows;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::transport::subscribe;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) mod live_status;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use live_status::LiveStatus;
 
 pub(crate) fn run() -> io::Result<()> {
@@ -84,10 +84,10 @@ pub(crate) fn run() -> io::Result<()> {
         terminal.enable_kitty()?;
     }
     keys = Keys::new();
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let live_status_enabled =
         std::env::var_os("HERDR_SOCKET_PATH").is_some_and(|path| !path.is_empty());
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let mut status = if live_status_enabled && keymap_errors.is_empty() && status_errors.is_empty()
     {
         subscribe(&executable, false).ok()
@@ -132,13 +132,13 @@ pub(crate) fn run() -> io::Result<()> {
         let (height, width) = terminal_size();
         ui.popup_size = Some((width, height));
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     live_status::bootstrap(&mut status, &mut ui);
     draw(&ui, terminal.0.is_some())?;
     let mut next_hint = Instant::now() + Duration::from_secs(2);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let mut next_size_check = Instant::now() + Duration::from_millis(250);
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     let mut live_status = LiveStatus::new(live_status_enabled, status);
     loop {
         let hint_due = ui.hint_more.get() && terminal.0.is_some() && Instant::now() >= next_hint;
@@ -153,7 +153,7 @@ pub(crate) fn run() -> io::Result<()> {
                 break;
             }
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         if terminal.0.is_some() && (Instant::now() >= next_size_check || hint_due) {
             let (height, width) = terminal_size();
             if ui.popup_size != Some((width, height)) {
@@ -174,7 +174,7 @@ pub(crate) fn run() -> io::Result<()> {
             draw(&ui, true)?;
             next_hint = Instant::now() + Duration::from_secs(2);
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         live_status.poll(&mut ui, terminal.0.is_some(), &executable, width)?;
         let wait = keys
             .escape_started
