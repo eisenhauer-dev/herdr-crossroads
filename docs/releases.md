@@ -75,8 +75,11 @@ The Windows workflow/helper currently prepare evidence, not releasable or
 certified assets. The first two native Windows CI attempts reached the 30-minute
 job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
 console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
-is **no native Windows GREEN**. The subsequent standard-handle startup correction
-and redirected-parent regression still await native execution. Versioned output
+is **no native Windows GREEN**. The fourth (`bcbd93e`, run `39605428457`) passed
+the standard-handle/redirected-parent and exact console-restoration checks, then
+failed a raw styled-label assertion in 3m 38s with clean teardown and no artifacts.
+The test-matcher correction awaits native execution; theme-save and installed-binary
+acceptance were not reached. Versioned output
 names still use **0.2.0**;
 do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).

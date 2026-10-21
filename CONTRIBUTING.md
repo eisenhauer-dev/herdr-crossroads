@@ -30,10 +30,13 @@ a required-check branch-protection rule there.
 Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
 force pushes and branch deletion are disabled. No independent approval is
-required solely to let the owner merge their own pull request. The `Linux gates`
-and `PR source policy` checks from the GitHub Actions app (ID `15368`) are mandatory
-for all pull requests targeting `main`, including the owner's own branches.
-The latter enforces the source-repository metadata policy above. Branches must
+required solely to let the owner merge their own pull request. The `Linux gates`,
+`PR source policy`, `macOS preparation (aarch64-apple-darwin)`,
+`macOS preparation (x86_64-apple-darwin)`, and
+`Windows x86_64 preparation (not certification)` checks from the GitHub Actions
+app (ID `15368`) are mandatory for all pull requests targeting `main`, including
+the owner's own branches. `PR source policy` enforces the source-repository
+metadata policy above. Branches must
 be up to date with `main` before merging. Pending, missing or failed required
 checks block merging, including for administrators. GitHub also treats `skipped`
 and `neutral` check conclusions as passing; do not weaken the public CI job with
@@ -90,12 +93,13 @@ documentation verification.
 
 Native Windows 10/11 x86_64 is intended for **0.3.0**, currently **PREPARATION
 only**; the package remains **0.2.0**. The Linux/macOS 0.2.0 release is completed.
-Native Windows CI has **not run** and no Windows support certification or release
+Native Windows CI has run but has **not completed successfully**; no Windows support certification or release
 approval is claimed. `.github/workflows/windows.yml` uses the standard free
 public `windows-2025` runner, public-only/read-only, not a paid larger runner.
 It configures Rust/Cargo 1.99.0, Python 3.11+, formatting, native library/binary
 Clippy and `python -B scripts/build-windows.py`, then uploads preparation-only
-artifacts. It does not change required branch checks or publish a release.
+artifacts. Its Windows check is required for merging into `main`; the workflow
+itself does not configure branch protection or publish a release.
 
 Use [Windows build prerequisites and gates](docs/builds.md#windows-preparation-not-certification)
 and [native verification scope](docs/keymaps.md#windows-preparation-verification),
@@ -105,7 +109,7 @@ temporary checkout; **no actual Herdr managed-install/live-popup integration**
 runs. MSVC/SDK attribution review remains open. A physical Windows PC is
 available, OS version unknown; final popup acceptance must wait until the pipeline
 stands. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
-Native commands in these docs remain unexecuted on Windows.
+The full native preparation command has not yet completed successfully on Windows.
 
 ### macOS release preparation
 

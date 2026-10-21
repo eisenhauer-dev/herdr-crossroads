@@ -4,6 +4,7 @@ from ctypes import wintypes as W
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -121,6 +122,18 @@ class NamedServer:
         close(self.handle)
 
 
+def marker_text(output):
+    """Emitted label runs, not a screen: only complete SGR may join text.
+
+    Cursor/erase commands and control strings are barriers, not removed gaps.
+    Reparse accumulated bytes so a split escape never exposes its payload.
+    """
+    return re.sub(
+        rb"\x1b\].*?(?:\x07|\x1b\\|$)|\x1b[PX^_].*?(?:\x1b\\|$)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b.",
+        lambda match: b"" if re.fullmatch(rb"\x1b\[[0-9;:]*m", match[0]) else b"\x00",
+        output, flags=re.S)
+
+
 class Console:
     def __init__(self, command, env, cwd):
         assert (C.sizeof(Coord), C.sizeof(Startup), C.sizeof(StartupEx), C.sizeof(ProcessInfo)) == (4, 104, 112, 24), "unexpected Windows x64 ctypes ABI"
@@ -185,9 +198,10 @@ class Console:
     def send(self, data):
         send(self.input, data)
 
-    def until(self, text, timeout=5):
+    def until(self, text, timeout=5, *, raw=False):
+        # Labels tolerate styling; protocol assertions must opt into raw bytes.
         deadline = time.monotonic() + timeout
-        while text not in self.output:
+        while text not in (self.output if raw else marker_text(self.output)):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AssertionError(f"missing {text!r}: {bytes(self.output)[-4000:]!r}")

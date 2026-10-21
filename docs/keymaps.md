@@ -414,6 +414,17 @@ An additional native regression explicitly redirects the Python parent's three
 standard streams and requires the unchanged mode/restoration test to pass through
 ConPTY. No `CONIN$` fallback or plain-input substitution is used.
 
+`Console.until` checks emitted label runs, ignoring only complete SGR styling
+sequences, including those fragmented across reads. Cursor/erase commands,
+newlines and other controls remain boundaries; control-string payloads are not
+labels. OSC ends at BEL or ST (`ESC \`); DCS/SOS/PM/APC remain hidden through
+BEL and end only at ST. This is not current-screen reconstruction and does not
+join labels across cursor movements or redraws. Protocol-byte checks use `raw=True`.
+Returned output and timeout/EOF diagnostics retain the original bytes; output
+resets and the five-second default deadline are unchanged. Portable regressions
+in `tests/test_windows_support.py` exercise the actual wait loop without invoking
+native APIs.
+
 **Native Windows CI has been attempted, but is not green.** The first two runs
 reached the 30-minute job timeout. The supplied evidence for
 [run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
@@ -421,9 +432,18 @@ at `343144f` shows failure in 2m 50s: all nine watchdog checks, native Clippy,
 compilation and selected Rust suites passed, but initial `GetConsoleMode` still
 failed before terminal entry. Rust output bypassed ConPTY; cleanup completed
 immediately after the five-second capture timeout, and no artifact was uploaded.
-This verifies bounded teardown/fail-fast, not console restoration or native
-pipeline success. The standard-handle startup correction and redirected-parent
-regression above still require a native rerun.
+This verified bounded teardown/fail-fast, not console restoration. The supplied
+[run 39605428457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39605428457)
+at `bcbd93e` subsequently passed redirected-parent stdio, exact console-mode
+restoration, filtered stable-ID focus, live status disconnect/reconnect/resnapshot/
+quit, and noninteractive startup/EOF/missing CLI. It failed in 3m 38s at the
+search/help/themes/navigation test's `codex` assertion: ConPTY emitted `cod`, SGR
+color/underline changes, then `ex`, so the visible label was correct but the raw
+substring was absent. Teardown was clean and no preparation artifacts were
+uploaded. The SGR-aware matcher above awaits native execution; theme-save
+acceptance and the installed-binary second pass were not reached. These passes
+prove the handle fix on that runner, not Windows 10/11 certification or overall
+pipeline success.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
 certification. Windows is
 preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,

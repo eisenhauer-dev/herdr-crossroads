@@ -16,8 +16,9 @@ Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 ## Windows preparation (not certification)
 
 The WIP target is `x86_64-pc-windows-msvc`. The first two native Windows CI attempts
-reached the 30-minute job timeout. The third failed in 2m 50s at the initial
-console-handle check, with bounded cleanup and no preparation artifact upload.
+reached the 30-minute job timeout. The third failed at the initial console-handle
+check; the fourth passed console restoration but failed a styled-label assertion
+in 3m 38s, with clean teardown and no preparation artifact upload.
 There is **no native Windows GREEN**.
 The public-only `.github/workflows/windows.yml` selects the standard free public
 `windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
@@ -39,9 +40,15 @@ hung; the unchanged second attempt also timed out. Supplied evidence from
 [run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
 at `343144f` confirms nine watchdog checks, native Clippy, compilation and selected
 Rust suites passed; the console test still failed before terminal entry, but
-teardown and fail-fast completed without a hang. The subsequent explicit null
-standard-handle startup correction and redirected-parent regression have **not
-yet run on Windows**; see [the cause and native evidence](keymaps.md#windows-preparation-verification).
+teardown and fail-fast completed without a hang. Supplied evidence from
+[run 39605428457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39605428457)
+at `bcbd93e` confirms the standard-handle correction: redirected-parent and exact
+console-restoration checks passed, along with filtered stable-ID focus, live
+status reconnect/resnapshot/quit, and noninteractive startup/EOF/missing CLI.
+Search then failed because styling split the visible `codex` label in raw bytes.
+The SGR-aware test matcher has portable regression coverage but awaits native
+execution; theme-save and installed-binary acceptance were not reached. See
+[the matcher contract and native evidence](keymaps.md#windows-preparation-verification).
 The helper installs no tooling. It checks versions and target notices, forces a
 fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the
 binary/map SHA256 in preparation-only provenance. It runs selected Windows,

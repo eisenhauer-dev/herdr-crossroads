@@ -44,8 +44,11 @@ The Windows preparation helper binds a fresh final link/map to the binary tested
 with fake CLI/named pipes and ConPTY, then compares installed bytes and repeats
 fake-host acceptance. After two native CI job timeouts, the third run verified
 bounded cleanup/fail-fast but still failed before terminal entry, with output
-bypassing ConPTY. The explicit null standard-handle startup correction awaits
-native verification (see [native test scope](keymaps.md#windows-preparation-verification)).
+bypassing ConPTY. The fourth run (`bcbd93e`) passed the null standard-handle
+startup/redirected-parent and exact console-restoration checks, then failed a
+test-only raw substring assertion on an SGR-styled search label. The emitted-label
+matcher correction awaits native execution; theme-save and installed-binary
+acceptance were not reached (see [native test scope](keymaps.md#windows-preparation-verification)).
 This is neither actual Herdr integration nor Windows certification. MSVC/SDK
 attribution review remains open. A physical Windows PC is available, OS version unknown; final live-popup
 acceptance waits **until the pipeline stands**. See [gates and limitations](builds.md#windows-preparation-not-certification).
