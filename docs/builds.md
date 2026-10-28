@@ -172,6 +172,16 @@ diagnostics retain captured output. The helper flushes each gate's start marker,
 captured output on success, and passed/failed elapsed time (monotonic seconds)
 before proceeding. Output within a running gate remains captured until it exits;
 these measurements attribute native gate cost, not a CI performance improvement.
+The subsequent [keymap post-exit drain optimization](keymaps.md#local-verification)
+removed 80 redundant 200-ms quiet waits per complete keymap run. On local Linux
+on 2026-10-28, two unprofiled runs took 51.144/51.290 seconds before and
+34.975/34.924 seconds after, against the unchanged release executable (SHA256
+`0c93bab560a765502000f351e8ae52ee6d9532b289efb075f6efffa6ecedcc2e`).
+Separate bounded operation counts measured 16.032 seconds in post-exit drains
+before and 0.002 seconds after, with all 80 popups and four interactive drains
+retained. These are local harness measurements, not native macOS timings or a
+claim that CI is under ten minutes. Native final-linked and byte-identical
+installed-binary verification remains pending for this change.
 CI relies on these final-binary gates instead
 of a duplicate ordinary release build/PTY pass, then retains the separate
 installed-package real-Herdr acceptance before upload. The job limit remains

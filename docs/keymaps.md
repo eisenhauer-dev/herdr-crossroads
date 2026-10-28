@@ -586,6 +586,24 @@ exit wait and then by the post-exit readiness drain, not EOF, while the parent
 slave remains open. These regressions run on Linux too; the native macOS
 verification below passed on both architectures, including the exit-output checks.
 
+After the keymap popup child has exited, its final drain now checks readiness
+with zero timeout until all queued chunks have been read, rather than waiting
+for another 200-ms output gap. The exit wait still reads under its original
+three-second deadline; interactive `drain()` calls still require 200 ms of quiet.
+The terminal destructor flushes restore bytes and waits for `stty` before exit.
+Darwin's [write path](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty.c#L2540-L2643)
+queues output synchronously; its [master read/readiness paths](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty_dev.c#L622-L711)
+consume/test that same queue (`ptcselect`, lines 807–866). Linux delivery uses queued
+work, but [N_TTY readiness](https://codebrowser.dev/linux/linux/drivers/tty/n_tty.c.html#2433)
+flushes pending delivery work before reporting no input (reference revision
+`v6.19-rc8-185-g2687c848e578`, not an exact local-kernel source match).
+Reader regressions force exit before collection, split queued output into small
+reads, retain trailing diagnostics and the open parent slave, and reject missing
+cursor/Kitty restoration or incorrect exit status. Delayed pre-exit output,
+oversized repaints, stopped-child timeout/reaping and EOF/error handling remain
+covered. This optimization still needs native macOS execution; earlier native
+results above do not validate the new zero-timeout drain.
+
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks
 stable default/custom footers, grouping, and sanitized notices separately. For

@@ -2,6 +2,7 @@
 import errno
 import os
 import pty
+import signal
 import socket
 import struct
 import subprocess
@@ -287,6 +288,27 @@ finally:
     def test_drain_empty_eof(self):
         self.check_reader("drain(reader)", expected=b"")
 
+    def test_ready_drain_preserves_eof_tail_and_pty_errors(self):
+        self.check_reader("drain(reader, timeout=0)", b"tail\x1b[?25h", b"tail\x1b[?25h")
+        self.check_reader("drain(reader, timeout=0)", expected=b"")
+        for number in (errno.EIO, errno.EBADF):
+            with self.subTest(errno=number), \
+                 patch.object(pty_keymaps.select, "select", return_value=([123], [], [])), \
+                 patch.object(pty_keymaps.os, "read", side_effect=[b"tail", OSError(number, "read failure")]):
+                if number == errno.EIO:
+                    self.assertEqual(pty_keymaps.drain(123, timeout=0), b"tail")
+                else:
+                    with self.assertRaises(OSError) as failure:
+                        pty_keymaps.drain(123, timeout=0)
+                    self.assertEqual(failure.exception.errno, number)
+
+    def test_live_drain_keeps_waiting_for_a_full_quiet_window(self):
+        chunks = iter((b"first", b"late"))
+        with patch.object(pty_keymaps.select, "select", side_effect=[([123], [], []), ([123], [], []), ([], [], [])]) as ready, \
+             patch.object(pty_keymaps.os, "read", side_effect=lambda fd, size: next(chunks)):
+            self.assertEqual(pty_keymaps.drain(123), b"firstlate")
+        self.assertEqual([call.args[-1] for call in ready.call_args_list], [0.2] * 3)
+
 
 class EscapeObservationTests(unittest.TestCase):
     @staticmethod
@@ -542,11 +564,13 @@ class PopupLifecycleTests(unittest.TestCase):
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
-    def child(self, kitty=False, status=0, restore=True, initial=True, linger=False, repaint=False):
+    def child(self, kitty=False, status=0, restore=True, initial=True, linger=False, repaint=False, tail=None, delay=0):
         first_frame = ((b"\x1b[>1u" if kitty else b"") + b"frame\x1b[?25l") if initial else b"bad frame\x1b[?25l"
-        tail = (b"\x1b[<u" if kitty else b"") + (b"\x1b[?25h" if restore else b"")
+        if tail is None:
+            tail = (b"\x1b[<u" if kitty else b"") + (b"\x1b[?25h" if restore else b"")
         self.binary.write_text(f"""#!{sys.executable}
 import os
+import time
 import tty
 tty.setraw(0)
 os.write(1, b'\\x1b[?u')
@@ -563,6 +587,7 @@ if {repaint!r}:
     pending = b'x' * 262144
     while pending:
         pending = pending[os.write(1, pending):]
+time.sleep({delay!r})
 os.write(1, {tail!r})
 raise SystemExit({status})
 """)
@@ -598,14 +623,14 @@ raise SystemExit({status})
                         output.extend(chunk)
                     return chunk
 
-                def check_drain(fd):
+                def check_drain(fd, **kwargs):
                     self.assertIsNotNone(popup.child.returncode)
                     try:
                         os.fstat(slave)
                     except OSError:
                         self.fail("parent slave closed before post-exit tail drain")
                     self.assertEqual(fd, master)
-                    tail = drain(fd)
+                    tail = drain(fd, **kwargs)
                     self.assertEqual(output, (b"\x1b[<u" if kitty else b"") + b"\x1b[?25h")
                     return tail
 
@@ -631,6 +656,68 @@ raise SystemExit({status})
             finally:
                 os.close(reader)
                 os.close(writer)
+
+    def test_completed_child_drains_all_queued_chunks_without_a_quiet_wait(self):
+        for kitty in (False, True):
+            with self.subTest(kitty=kitty):
+                tail = b"queued" * 100 + (b"\x1b[<u" if kitty else b"") + b"trailing diagnostic"
+                self.child(kitty=kitty, tail=tail)
+                popup = self.popup(kitty=kitty)
+                popup.output.pending.extend(b"read ahead\x1b[?25h")
+                write, read, select = os.write, os.read, pty_keymaps.select.select
+                received = bytearray()
+
+                def exit_before_poll(fd, key):
+                    result = write(fd, key)
+                    popup.child.wait(timeout=3)
+                    return result
+
+                def ready(readers, writers, errors, timeout):
+                    self.assertIsNotNone(popup.child.returncode)
+                    self.assertEqual(timeout, 0, "completed writer must not incur a quiet wait")
+                    os.fstat(popup.slave)
+                    return select(readers, writers, errors, timeout)
+
+                def small_read(fd, size):
+                    chunk = read(fd, min(size, 7))
+                    received.extend(chunk)
+                    return chunk
+
+                with patch.object(pty_keymaps.os, "write", side_effect=exit_before_poll), \
+                     patch.object(pty_keymaps.os, "read", side_effect=small_read), \
+                     patch.object(pty_keymaps.select, "select", side_effect=ready):
+                    popup.finish(b"q")
+                self.assertEqual(received, tail)
+                self.assertEqual(popup.output.pending, b"")
+                self.assert_closed()
+
+    def test_late_output_before_exit_is_collected_without_shortening_live_wait(self):
+        self.child(kitty=True, delay=0.25)
+        popup = self.popup(kitty=True)
+        popup.finish(b"q")
+        self.assertEqual(popup.child.returncode, 0)
+        self.assert_closed()
+
+    def test_finish_rejects_missing_or_duplicate_kitty_pop_with_complete_tail(self):
+        for count in (0, 2):
+            with self.subTest(pop_count=count):
+                tail = b"\x1b[<u" * count + b"\x1b[?25htrailing diagnostic"
+                self.child(kitty=True, tail=tail)
+                popup = self.popup(kitty=True)
+                with self.assertRaises(AssertionError) as failure:
+                    popup.finish(b"q")
+                self.assertEqual(failure.exception.args, (bytearray(tail),))
+                self.assertIsNotNone(popup.child.returncode)
+                self.assert_closed()
+
+    def test_stopped_live_child_times_out_and_is_reaped(self):
+        self.child()
+        popup = self.popup()
+        os.kill(popup.child.pid, signal.SIGSTOP)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            popup.finish(b"q")
+        self.assertIsNotNone(popup.child.returncode)
+        self.assert_closed()
 
     def test_finish_drains_repaint_larger_than_pty_queue_before_exit(self):
         for kitty in (False, True):

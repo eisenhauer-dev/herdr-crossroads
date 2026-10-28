@@ -83,9 +83,9 @@ def read_frame(reader, expected=None):
     return data.decode("utf-8", "replace")
 
 
-def drain(fd):
+def drain(fd, timeout=0.2):
     data = bytearray()
-    while select.select([fd], [], [], 0.2)[0]:
+    while select.select([fd], [], [], timeout)[0]:
         try:
             chunk = os.read(fd, 65536)
             if not chunk:
@@ -205,7 +205,8 @@ class Popup:
             assert (self.child.returncode == 0) == success
             # Keep the parent slave open until buffered exit output is consumed:
             # Darwin's last slave close flushes the terminal output queue.
-            tail.extend(drain(self.master))
+            # The writer has exited: collect the queued bytes, not a quiet window.
+            tail.extend(drain(self.master, timeout=0))
             assert tail.count(b"\x1b[<u") == int(self.kitty), tail
             assert b"\x1b[?25h" in tail, tail
         finally:
