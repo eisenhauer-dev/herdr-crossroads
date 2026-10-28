@@ -19,7 +19,8 @@ The WIP target is `x86_64-pc-windows-msvc`. The first two native Windows CI atte
 reached the 30-minute job timeout. The third failed at the initial console-handle
 check; the fourth passed console restoration but failed a styled-label assertion
 in 3m 38s, with clean teardown and no preparation artifact upload.
-There is **no native Windows GREEN**.
+Those attempts are historical; native Windows CI subsequently passed on
+2026-10-21 in [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130).
 The public-only `.github/workflows/windows.yml` selects the standard free public
 `windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
 read-only contents permission, pinned checkout/upload actions, no persisted Git
@@ -34,7 +35,8 @@ dependencies, the repository-root command is:
 python -B scripts/build-windows.py
 ```
 
-The command has run on Windows, but has not completed successfully. The first
+The command completed successfully in that run. Earlier attempts are retained
+below as failure history, not the current gate status. The first
 attempt failed the initial `GetConsoleMode` check before terminal entry, then
 hung; the unchanged second attempt also timed out. Supplied evidence from
 [run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
@@ -57,8 +59,9 @@ at `b536649`: all seven native acceptance tests passed, including resize/close a
 theme save/replace/reopen/Auto removal. The job failed in 3m 00s during distribution
 checks: seven of eight passed, but the pinned-directory rename test did not raise
 `OSError`. The installer now requests directory-read as well as attribute access;
-this correction and expanded rename/swap regressions await native execution.
-Installed-binary acceptance was not reached. See
+that run did not reach installed-binary acceptance. The later successful run
+passed the correction and expanded rename/swap regressions, plus both acceptance
+passes. See
 [the matcher contract and native evidence](keymaps.md#windows-preparation-verification).
 The helper installs no tooling. It checks versions and target notices, forces a
 fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the
@@ -84,15 +87,72 @@ version, not the intended 0.3.0 release. CI uploads exactly these four files as 
 release assets. Handled failures after output selection remove the selected
 sidecars/archive; stale files never establish a successful invocation.
 
-**Open gates:** successful native pipeline execution and exact artifact verification;
-MSVC/SDK linked-input attribution review (a map/diagnostic capture is not license
-clearance); Windows 10/11 runtime certification; actual Herdr popup acceptance;
-independent review and separate release approval. A physical Windows PC **is
-available**, but its OS version is not yet known. Final popup acceptance on that
-PC is scheduled **only after the pipeline stands**, not waived or already passed.
-Neither the runner label nor synthetic PE tests establish Windows 10/11 support.
+### Successful Windows preparation evidence
+
+On 2026-10-21, run `39619790130`, job `119289869684`, completed successfully in
+3m 14s for head `6c464a799e826d246e83357c01ab4298f406c79d`. The actual PR checkout
+was synthetic merge `5d5b8c4f9d98e81c0d29f8862a1508e64a2b6826`, with head and base
+parents, not a claim that CI directly built the head SHA. All seven native
+acceptance checks passed twice: on the exact final-linked binary, then the
+byte-identical installed binary. All ten distribution checks passed, including
+pinned-parent rename, junction swap and rejection of an existing DELETE handle.
+The watchdog suite's one POSIX-only skip was not a bypassed acceptance test.
+The runner reported Windows Server 2025 build `10.0.26100`, not Windows 10/11.
+
+Artifact `12353319857`,
+`windows-preparation-herdr-crossroads-0.2.0-x86_64-pc-windows-msvc`, contained the
+four expected outer assets. Read-only in-memory verification matched the ZIP
+digest, archive/checksum, binary/map bindings, exact four inner archive members
+and canonical notice bytes. The 890,237-byte ZIP had SHA256
+`b33d82b2bf188ac18b1cfcc1cb355c6da030dcccefde248eb7764d812da7df95`.
+
+| Windows preparation evidence | SHA256 |
+| --- | --- |
+| Binary | `60c87612c6bf7717abff11b702b3e0c34b25be6b057958b0581cd8b9d0e104b9` |
+| Normalized link map | `6ac6c964d314a9c7b1709b803571a5a92df548f093f7dfc5b8523a5499c66089` |
+
+The artifact's seven-day retention expires at `2026-10-28T14:49:38Z`; this is a
+historical receipt, not a persistent download route. Its provenance remains
+`preparation_only: true`, `distribution_approved: false`, with the original
+MSVC/SDK, Windows 10 and real-Herdr open gates. Later manual evidence does not
+rewrite that historical artifact.
+
+On 2026-10-28, the user separately reported successful basic real-Herdr 0.9.5
+source-build/link/live-popup use on a physical Windows 11 PC at the same local
+`develop` head. The OS was described as the latest Windows 11, without an exact
+build or per-function checklist. This is user-reported basic manual acceptance,
+not automated hardware testing, full-feature certification, Windows 10 coverage
+or Herdr managed-install acceptance. See [launch details](installation.md#windows-preparation-limitations).
+
+**Open gates:** MSVC/SDK linked-input attribution review; Windows 10/11 runtime
+certification beyond that basic Windows 11 report; independent combined review,
+primary acceptance and separate release approval. No approved Windows release or
+managed-install route exists. Neither the runner label nor synthetic PE tests
+establish Windows 10/11 support.
 See [installer and launch limitations](installation.md#windows-preparation-limitations)
 and [native test scope](keymaps.md#windows-preparation-verification).
+
+### MSVC and SDK attribution gate
+
+Research checked on 2026-10-28 did **not** establish license clearance. The exact
+artifact's link diagnostics identify Visual Studio 18 Enterprise / MSVC
+`14.51.36231`, but do not establish the exact Windows SDK version, resolved
+library paths or applicable license provenance. The current `/VERBOSE:LIB`
+capture is not a complete linked-input attribution inventory.
+
+Microsoft's [Visual Studio 2026 redistribution list](https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution)
+conditionally permits licensed Visual Studio users to redistribute listed files
+unmodified. The [Windows SDK license](https://learn.microsoft.com/en-us/legal/windows-sdk/license)
+and [SDK redistribution list](https://learn.microsoft.com/en-us/legal/windows-sdk/redist)
+also require matching applicable terms; the runner's entitlement and applicable
+version-specific terms have not been proven. This uncertainty is **not evidence
+that MSVC linking is prohibited**, nor automatic redistribution approval.
+
+The next evidence needed is the exact SDK version, resolved libraries and complete
+matching map/link capture, plus applicable Visual Studio/SDK license and
+redistribution provenance. Collecting new executable evidence or running new CI
+requires separate scope/approval. No Microsoft notice is added and no existing
+notice is declared sufficient on this incomplete evidence; the gate stays open.
 
 ## macOS 0.2.0 preparation
 

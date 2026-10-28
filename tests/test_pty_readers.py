@@ -25,10 +25,13 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
         self.addCleanup(os.close, slave)
         saved = termios.tcgetattr(slave)
         with patch.object(pty_render.termios, "tcgetattr", return_value=saved) as attributes, \
-             patch.object(pty_render.select, "select") as ready:
-            pty_render.assert_terminal_restored(master, slave, saved, saved, b"q", "cursor")
+             patch.object(pty_render.select, "select") as ready, \
+             patch("platform.mac_ver") as version:
+            pty_render.assert_terminal_restored(master, slave, saved, saved, b"q", "cursor",
+                                                pre_close=[0], cursor_marker_observed=[0])
         attributes.assert_called_once_with(slave)
         ready.assert_not_called()
+        version.assert_not_called()
 
     def test_every_attribute_mismatch_retains_exact_equality_and_diagnostics(self):
         saved = [1, 2, 3, 4, 9600, 9600, [b"\x03", b"\x1c"]]
@@ -42,14 +45,54 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
                          patch.object(pty_render.select, "select", return_value=([123], [], [])) as ready, \
                          patch.object(pty_render.os, "read", side_effect=[b"stty: restore error\r\n", ending]), \
                          self.assertRaises(AssertionError) as failure:
-                        pty_render.assert_terminal_restored(123, 456, saved, active, b"\x1b", "notice\x1b[?25h")
+                        pty_render.assert_terminal_restored(123, 456, saved, active, b"\x1b", "notice\x1b[?25h",
+                                                            pre_close=active, cursor_marker_observed=saved)
                     attributes.assert_called_once_with(456)
                     self.assertTrue(all(call.args[-1] == 0 for call in ready.call_args_list))
                     message = str(failure.exception)
                     for expected in ("key=b'\\x1b'", f"'{name}':", f"saved={saved!r}",
                                      f"active={active!r}", f"actual={actual!r}", "platform=", "python=",
-                                     "notice\\x1b[?25h", "stty: restore error\\r\\n"):
+                                     "notice\\x1b[?25h", "stty: restore error\\r\\n", f"pre_close={active!r}",
+                                     f"cursor_marker_observed={saved!r}", f"post_exit={actual!r}"):
                         self.assertIn(expected, message)
+
+    def test_darwin_failure_reports_observation_stages_and_versions(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+        actual = saved.copy()
+        actual[3] = 536872395
+        with patch.object(pty_render.sys, "platform", "darwin"), \
+             patch("platform.mac_ver", return_value=("15.0", ("", "", ""), "arm64")), \
+             patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
+             patch.object(pty_render.select, "select", return_value=([], [], [])), \
+             self.assertRaises(AssertionError) as failure:
+            pty_render.assert_terminal_restored(123, 456, saved, saved, b"q", "cursor")
+        attributes.assert_called_once_with(456)
+        for expected in ("pre_close=None", "cursor_marker_observed=None", f"post_exit={actual!r}",
+                         "macos='15.0'", "darwin_kernel=", "python=", "sdk=unknown"):
+            self.assertIn(expected, str(failure.exception))
+
+    def test_darwin_pendin_only_mismatch_retains_all_observed_stages(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+        active = [0, 0, 3, 0, 9600, 9600, [b"\x00"]]
+        actual = saved.copy()
+        actual[3] = 536872395
+        for machine in ("arm64", "x86_64"):
+            for key in (b"\r", b"\x1b", b"q"):
+                for marker in (active, actual):
+                    with self.subTest(machine=machine, key=key, marker=marker), \
+                         patch.object(pty_render.sys, "platform", "darwin"), \
+                         patch("platform.mac_ver", return_value=("15.0", ("", "", ""), machine)), \
+                         patch.object(pty_render.os, "uname", return_value=os.uname_result(("Darwin", "host", "24.0.0", "version", machine))), \
+                         patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
+                         patch.object(pty_render.select, "select", return_value=([], [], [])), \
+                         self.assertRaises(AssertionError) as failure:
+                        pty_render.assert_terminal_restored(123, 456, saved, active, key, "cursor",
+                                                            pre_close=active, cursor_marker_observed=marker)
+                    attributes.assert_called_once_with(456)
+                    for expected in (f"key={key!r}", f"platform=darwin/{machine}", "darwin_kernel='24.0.0'",
+                                     "'lflag': (1483, 536872395)", f"pre_close={active!r}",
+                                     f"cursor_marker_observed={marker!r}", f"post_exit={actual!r}"):
+                        self.assertIn(expected, str(failure.exception))
 
 
 class SearchCursorFrameTests(unittest.TestCase):

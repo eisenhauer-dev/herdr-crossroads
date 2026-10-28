@@ -54,9 +54,17 @@ The source-declared Windows launch command is:
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
 ```
 
-This is an **unexecuted preparation example**, not live Herdr acceptance or a
-recommendation to install the WIP. Windows host keybinding setup remains manual
-and unverified; no native host-config path or shortcut sequence is certified here.
+On 2026-10-28 the user reported successful basic source-build/link/live-popup use
+on a physical Windows 11 PC ("latest version", exact build unrecorded), using
+Herdr 0.9.5 and local `develop` head `6c464a799e826d246e83357c01ab4298f406c79d`.
+The initial `platform_unsupported` error came from opening the Unix `crossroads`
+entrypoint; the user confirmed success after switching to `crossroads-windows`.
+This is user-reported manual evidence, not an automated hardware test, a recorded
+per-function checklist, Windows 10 coverage or managed-install acceptance.
+Source builds need Git, Rust/Cargo, an MSVC linker and Windows SDK; this does not
+establish a supported Windows installation route. Windows host keybinding setup
+remains manual and unverified; no native host-config path or shortcut sequence is
+certified here.
 
 The installer selects `x86_64-pc-windows-msvc` for an AMD64/x86_64 host reporting
 Windows version 10 or newer; old/unknown versions and other architectures fail.
@@ -74,15 +82,17 @@ individual replacements in `target/release/`. This is not a three-file transacti
 The pin requests `FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES` and shares read/write
 but not delete access; installation fails closed if those directory permissions or
 sharing requirements cannot be met. Attribute-only handles did not block rename
-in native run `39617733551`; the corrected access mask and expanded native
-rename/swap regressions await Windows execution. See Microsoft's
+in native run `39617733551`; the corrected access mask and all ten distribution
+checks passed in [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130),
+including pinned-parent rename, junction swap and existing DELETE-handle rejection.
+See Microsoft's
 [CreateFileW sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
 (updated 2025-07-01) and
 [directory access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants)
 (updated 2021-01-07), checked 2026-10-21.
 Close the popup before replacing the executable: Windows can reject replacement
 of a running binary. Nothing here proves an actual Herdr managed installation.
-See [preparation gates and physical-PC sequencing](builds.md#windows-preparation-not-certification).
+See [preparation evidence and remaining gates](builds.md#windows-preparation-not-certification).
 
 The remaining setup and Unix permission details below apply to Linux/macOS;
 dated installation receipts retain their original platform/version scope.
