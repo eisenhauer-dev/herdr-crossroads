@@ -168,7 +168,11 @@ The helper validates versions/notices, forces a fresh final link, verifies the
 binary/evidence hash binding, then runs all four full PTYs against that exact
 explicit-target executable, in latency/render/keymaps/hints order. Each gate has
 a 300-second timeout; timeout or interruption kills its process group, and timeout
-diagnostics retain captured output. CI relies on these final-binary gates instead
+diagnostics retain captured output. The helper flushes each gate's start marker,
+captured output on success, and passed/failed elapsed time (monotonic seconds)
+before proceeding. Output within a running gate remains captured until it exits;
+these measurements attribute native gate cost, not a CI performance improvement.
+CI relies on these final-binary gates instead
 of a duplicate ordinary release build/PTY pass, then retains the separate
 installed-package real-Herdr acceptance before upload. The job limit remains
 30 minutes. Link-time ad-hoc signing occurs **before** testing;

@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tarfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,11 +86,18 @@ def build():
         if digest(data) != evidence["binary"]["sha256"]:
             raise RuntimeError("binary changed since link evidence")
         for gate in ["latency", "render", "keymaps", "hints"]:
-            result = run(["python3", f"tests/pty_{gate}.py", str(binary)], timeout=300)
-            print(result.stdout, end="")
-            print(result.stderr, end="", file=sys.stderr)
-            if regular(binary) != data:
-                raise RuntimeError("binary changed during PTY gates")
+            print(f"PTY package {gate}: start (timeout=300s)", flush=True)
+            started = time.monotonic()
+            status = "failed"
+            try:
+                result = run(["python3", f"tests/pty_{gate}.py", str(binary)], timeout=300)
+                print(result.stdout, end="", flush=True)
+                print(result.stderr, end="", file=sys.stderr, flush=True)
+                if regular(binary) != data:
+                    raise RuntimeError("binary changed during PTY gates")
+                status = "passed"
+            finally:
+                print(f"PTY package {gate}: {status} in {time.monotonic() - started:.2f}s", flush=True)
         files = [("herdr-crossroads", data),
                  ("herdr-crossroads.sha256", (digest(data) + "  herdr-crossroads\n").encode()),
                  ("LICENSE", regular(ROOT / "LICENSE")),

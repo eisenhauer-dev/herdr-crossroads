@@ -113,6 +113,53 @@ class BuildMacosTests(unittest.TestCase):
                 self.build(effect=fail)
             self.assertEqual([p.name for p in output.iterdir()], ["unrelated"])
 
+    def test_gate_timings_and_captured_output_are_flushed_before_next_gate(self):
+        events = []
+        def emit(*args, **kwargs):
+            events.append((args, kwargs))
+        def command(argv, **kwargs):
+            if argv[1].startswith("tests/pty_"):
+                gate = Path(argv[1]).stem.removeprefix("pty_")
+                self.assertTrue(events, "gate start must be flushed before launching the child")
+                self.assertEqual(events[-1], ((f"PTY package {gate}: start (timeout=300s)",),
+                                              {"flush": True}))
+                if gate != "latency":
+                    self.assertIn("passed in 1.25s", events[-2][0][0])
+                self.command(argv, **kwargs)
+                return subprocess.CompletedProcess(argv, 0, f"{gate} output\n", f"{gate} error\n")
+            return self.command(argv, **kwargs)
+        with patch("builtins.print", side_effect=emit), patch.object(
+                self.module, "time") as clock:
+            clock.monotonic.side_effect = [value for start in range(4) for value in (start * 10, start * 10 + 1.25)]
+            self.build(effect=command)
+        for gate in ["latency", "render", "keymaps", "hints"]:
+            self.assertIn(((f"PTY package {gate}: passed in 1.25s",), {"flush": True}), events)
+            self.assertIn(((f"{gate} output\n",), {"end": "", "flush": True}), events)
+            self.assertIn(((f"{gate} error\n",), {"end": "", "file": sys.stderr, "flush": True}), events)
+
+    def test_failed_interrupted_and_timed_out_gates_flush_elapsed_and_stop(self):
+        for error in [subprocess.CalledProcessError(23, ["gate"]),
+                      RuntimeError("PTY command timed out after 300s"), KeyboardInterrupt()]:
+            with self.subTest(error=type(error).__name__):
+                self.calls.clear()
+                def fail(argv, **kwargs):
+                    result = self.command(argv, **kwargs)
+                    if argv[1] == "tests/pty_latency.py":
+                        raise error
+                    return result
+                with patch("builtins.print") as output, patch.object(
+                        self.module, "time") as clock:
+                    clock.monotonic.side_effect = [10.0, 12.5]
+                    with self.assertRaises(type(error)) as failure:
+                        self.build(effect=fail)
+                    self.assertIs(failure.exception, error)
+                    output.assert_any_call("PTY package latency: start (timeout=300s)", flush=True)
+                    output.assert_any_call("PTY package latency: failed in 2.50s", flush=True)
+                    self.assertFalse(any("passed" in str(call) for call in output.call_args_list))
+                self.assertEqual([c[1] for c in self.calls if c[1].startswith("tests/pty_")],
+                                 ["tests/pty_latency.py"])
+                self.assertEqual(list((self.root / "target/builds").iterdir()), [])
+
     def test_each_timed_out_gate_stops_and_removes_current_artifacts(self):
         run = self.module.run
         gates = ["latency", "render", "keymaps", "hints"]
