@@ -52,13 +52,17 @@ stale resize-message expectation despite the correct `80x15` minimum / `60x12`
 actual-size notice. Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
 at `b536649` passed all seven native acceptance tests, including resize/close and
 theme save/replace/reopen/Auto removal, then failed the distribution suite's
-pinned-directory rename assertion. The installer access-mask correction awaits
-native execution; installed-binary acceptance, full pipeline success and exact
-artifact verification remain open
-(see [native test scope](keymaps.md#windows-preparation-verification)).
-This is neither actual Herdr integration nor Windows certification. MSVC/SDK
-attribution review remains open. A physical Windows PC is available, OS version unknown; final live-popup
-acceptance waits **until the pipeline stands**. See [gates and limitations](builds.md#windows-preparation-not-certification).
+pinned-directory rename assertion. The later
+[run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+at head `6c464a7` completed successfully: all seven native acceptance checks passed
+against both final-linked and installed bytes, and all ten distribution checks
+passed, including the corrected pin and rename/swap regressions. Exact artifact
+verification also passed; see [build evidence](builds.md#windows-preparation-not-certification).
+CI remains fake-host evidence, not actual Herdr integration or Windows certification.
+Separately, the user reported successful basic source-build/link/popup use with
+Herdr 0.9.5 on a physical Windows 11 PC on 2026-10-28; the exact OS build and
+per-function checklist were not recorded. [MSVC/SDK attribution review](builds.md#msvc-and-sdk-attribution-gate)
+and release gates remain open.
 
 ## Module responsibilities
 

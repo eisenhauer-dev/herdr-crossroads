@@ -75,7 +75,7 @@ The Windows workflow/helper currently prepare evidence, not releasable or
 certified assets. The first two native Windows CI attempts reached the 30-minute
 job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
 console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
-is **no native Windows GREEN**. The fourth (`bcbd93e`, run `39605428457`) passed
+was no native Windows GREEN at that checkpoint. The fourth (`bcbd93e`, run `39605428457`) passed
 the standard-handle/redirected-parent and exact console-restoration checks, then
 failed a raw styled-label assertion in 3m 38s with clean teardown and no artifacts.
 Run `39614583553` (`6623013`) passed the styled-label assertion and earlier console,
@@ -84,20 +84,29 @@ resize-message expectation despite the correct minimum/actual-size notice.
 Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
 at `b536649` passed all seven native acceptance tests, including resize/close and
 theme save/replace/reopen/Auto removal, then failed the distribution suite's
-pinned-directory rename assertion. The installer access-mask correction awaits
-native execution; installed-binary acceptance was not reached. Full pipeline and
-artifact verification remain open alongside the release gates below. Versioned output
+pinned-directory rename assertion; that failed run did not reach installed-binary
+acceptance. The later [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+at head `6c464a7` completed successfully on 2026-10-21: all seven acceptance checks
+passed against both final-linked and installed bytes, and all ten distribution
+checks passed. Exact artifact verification also passed; the
+[historical artifact receipt](builds.md#successful-windows-preparation-evidence)
+retains preparation-only provenance and limited retention, not release approval.
+Versioned output
 names still use **0.2.0**;
 do not relabel those files as 0.3.0 or infer a version bump
 from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
 
-Before a Windows release, require native pipeline success and exact artifact
-verification, MSVC/SDK linked-input attribution review, Windows 10/11 runtime
-certification, independent combined review and primary acceptance. The helper's
+Native pipeline success and exact artifact verification are recorded above.
+Before a Windows release, the remaining gates include
+[MSVC/SDK linked-input attribution review](builds.md#msvc-and-sdk-attribution-gate),
+Windows 10/11 runtime certification, independent combined review and primary
+acceptance. The helper's
 fake-host ConPTY/named-pipe and installer-byte checks are **not** actual Herdr
-managed-install/live-popup integration. A physical Windows PC is available;
-record its still-unknown OS version and perform final popup acceptance **only
-after the pipeline stands**. This gate is pending, not waived. Host keybinding
+managed-install/live-popup integration. Separately, the user reported successful
+basic source-build/link/live-popup use with Herdr 0.9.5 on a physical Windows 11
+PC on 2026-10-28; the exact OS build and per-function checklist were not recorded.
+That report does not certify all features, Windows 10 or managed installation,
+and does not close the attribution gate or approve a release. Host keybinding
 setup is Unix-only and Windows uses `crossroads-windows`; reconcile those
 [launch limits](installation.md#windows-preparation-limitations) before acceptance.
 Version changes, remote actions and release/publication approval remain separate.

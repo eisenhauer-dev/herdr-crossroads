@@ -425,7 +425,18 @@ resets and the five-second default deadline are unchanged. Portable regressions
 in `tests/test_windows_support.py` exercise the actual wait loop without invoking
 native APIs.
 
-**Native Windows CI has been attempted, but is not green.** The first two runs
+**Native Windows CI passed on 2026-10-21** in
+[run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+for head `6c464a7` (actual PR merge checkout recorded in
+[build evidence](builds.md#successful-windows-preparation-evidence)). All seven
+acceptance checks passed on both final-linked and byte-identical installed
+executables, including theme save/replace/reopen/Auto removal. All ten distribution
+checks passed, including pin rename, junction swap and existing DELETE-handle
+rejection. The watchdog suite's POSIX-only skip did not skip a native acceptance
+check. This is Windows Server 2025 build `10.0.26100` fake-host evidence, not a
+Windows 10/11 or actual-Herdr certification.
+
+Earlier failure history remains useful for the fixture contracts: the first two runs
 reached the 30-minute job timeout. The supplied evidence for
 [run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
 at `343144f` shows failure in 2m 50s: all nine watchdog checks, native Clippy,
@@ -453,15 +464,18 @@ supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/ac
 at `b536649` passed all seven native acceptance tests, including resize/close and
 theme save/replace/reopen/Auto removal. It failed in 3m 00s at the distribution
 suite's pinned-directory rename assertion (seven of eight distribution tests
-passed). The installer access-mask correction and expanded native regressions
-await Windows execution; the installed-binary second pass was not reached.
-These passes prove the console and UI checks on that runner, not Windows 10/11
-certification or overall pipeline success.
+passed). That failed run did not reach the installed-binary second pass; the
+subsequent successful run above passed the access-mask correction, expanded
+regressions and both acceptance passes.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
 certification. Windows is
-preparation for intended 0.3.0, package still 0.2.0. A physical PC is available,
-OS version unknown; final actual Herdr popup acceptance is pending **only after
-the pipeline stands**, not waived. See [installer/entrypoint limitations](installation.md#windows-preparation-limitations).
+preparation for intended 0.3.0, package still 0.2.0. Separately, on 2026-10-28 the
+user reported successful basic source-build/link/popup use with real Herdr 0.9.5
+on a physical Windows 11 PC. The exact OS build and per-function checklist were
+not recorded, so this does not establish every key/theme/resize behavior on that
+PC, Windows 10 coverage or managed installation. See
+[installer/entrypoint limitations](installation.md#windows-preparation-limitations)
+and [remaining gates](builds.md#windows-preparation-not-certification).
 
 ## Local verification
 
@@ -542,10 +556,25 @@ exactly once after successful child exit. On mismatch they report the changed
 fields, full saved/active/post-exit attributes, platform and Python version, and
 captured output including any immediately ready post-exit `stty` diagnostics.
 The active snapshot is taken before sending the close key. Failure-output
-collection neither waits nor retries restoration. These diagnostics do not
+collection neither waits nor retries restoration. On Darwin, the test reuses that
+snapshot as `pre_close`, additionally samples attributes after the cursor-marker
+frame reader returns, and reports the existing post-exit sample alongside macOS,
+Darwin kernel and Python versions. SDK provenance is explicitly unknown. The
+marker observation is receive-time evidence, not the instant the marker was
+emitted or proof that `stty` restoration has completed; the reader also drains
+output before returning. No input-queue query, input flush, retry or attribute
+mask is added, and a `PENDIN`-only difference still fails exact equality.
+These diagnostics do not
 establish the cause of the Intel installed-binary restoration failure in
 [macOS run 39318351418](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39318351418);
 native failure output with these details is still needed.
+
+The trickling-focus-reply startup test accepts only `BrokenPipe` or `NotConnected`
+when its server writes after the peer disconnects: Darwin can report either
+condition. Its original 800-ms process-exit bound, unsuccessful-exit and timeout
+message checks, request identity and no-retry assertions remain unchanged. The
+expectation correction and new Darwin restoration observations still need native
+macOS execution; Linux tests and simulated Darwin diagnostics are not that proof.
 
 The popup helper and standalone render cases retain the parent's slave descriptor
 until final output has been read, then close both descriptors. This avoids a last
@@ -556,6 +585,24 @@ which flushes the input and output queues. Output is collected during the bounde
 exit wait and then by the post-exit readiness drain, not EOF, while the parent
 slave remains open. These regressions run on Linux too; the native macOS
 verification below passed on both architectures, including the exit-output checks.
+
+After the keymap popup child has exited, its final drain now checks readiness
+with zero timeout until all queued chunks have been read, rather than waiting
+for another 200-ms output gap. The exit wait still reads under its original
+three-second deadline; interactive `drain()` calls still require 200 ms of quiet.
+The terminal destructor flushes restore bytes and waits for `stty` before exit.
+Darwin's [write path](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty.c#L2540-L2643)
+queues output synchronously; its [master read/readiness paths](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty_dev.c#L622-L711)
+consume/test that same queue (`ptcselect`, lines 807–866). Linux delivery uses queued
+work, but [N_TTY readiness](https://codebrowser.dev/linux/linux/drivers/tty/n_tty.c.html#2433)
+flushes pending delivery work before reporting no input (reference revision
+`v6.19-rc8-185-g2687c848e578`, not an exact local-kernel source match).
+Reader regressions force exit before collection, split queued output into small
+reads, retain trailing diagnostics and the open parent slave, and reject missing
+cursor/Kitty restoration or incorrect exit status. Delayed pre-exit output,
+oversized repaints, stopped-child timeout/reaping and EOF/error handling remain
+covered. This optimization still needs native macOS execution; earlier native
+results above do not validate the new zero-timeout drain.
 
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks

@@ -1279,12 +1279,19 @@ fn trickling_focus_reply_expires_at_overall_deadline() {
             break;
         }
         if let Err(error) = stream.write_all(b" ") {
-            assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+            // Darwin may report ENOTCONN instead of EPIPE after the peer closes.
+            assert!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::NotConnected
+                ),
+                "unexpected trickle write error: {error}"
+            );
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    // BrokenPipe observes socket closure, not completion of the process's error
+    // Socket closure does not imply completion of the process's error
     // reporting and exit. Wait for exit within the same original 800ms bound.
     let exit_deadline = started + Duration::from_millis(800);
     let finished = loop {

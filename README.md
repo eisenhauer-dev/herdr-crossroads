@@ -60,7 +60,10 @@ Historical native previews (not current release verification):
   `MACOSX_DEPLOYMENT_TARGET=15.0`. Published 0.1.0 remains Linux-only.
 - Native **Windows 10/11 x86_64** is intended for **0.3.0**, currently
   **PREPARATION only**, not supported or certified. The package version is still
-  **0.2.0**; native Windows CI has not run. See [Windows gates and limits](docs/builds.md#windows-preparation-not-certification).
+  **0.2.0**. Native Windows CI passed on 2026-10-21; a user-reported basic
+  Windows 11 source-build/link/live-popup test with Herdr 0.9.5 succeeded on
+  2026-10-28. Neither establishes Windows 10/11 certification or release approval.
+  See [Windows evidence and remaining gates](docs/builds.md#windows-preparation-not-certification).
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
 
 ### Managed installation
@@ -73,6 +76,8 @@ Historical native previews (not current release verification):
 ### Source builds
 
 - Git, Rust/Cargo, and a system linker, in addition to the runtime requirements.
+- Windows source preparation needs an MSVC linker and Windows SDK; the native
+  preparation helper has [additional prerequisites](docs/builds.md#windows-preparation-not-certification).
 
 ### Compatibility status
 
@@ -212,13 +217,26 @@ herdr plugin link "$PWD"
 ```
 
 - Linking does not run build hooks. Keep the checkout and `target/release/herdr-crossroads`
-  in place; Cargo may download dependencies on a fresh machine.
-- Use the launch binding above, or open Crossroads from a shell in your running
-  Herdr session:
+  (`target/release/herdr-crossroads.exe` on Windows) in place; Cargo may download
+  dependencies on a fresh machine.
+- Use the launch binding above on Linux/macOS, or open Crossroads from a shell in
+  your running Herdr session using the platform-specific entrypoint:
+
+**Linux/macOS:**
 
 ```sh
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
+
+**Windows (preparation on `develop`, not a released Windows installation):**
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
+```
+
+The `crossroads` entrypoint supports Linux/macOS only; opening it on Windows fails
+with `platform_unsupported`. Windows must use `crossroads-windows`, and the Unix
+`setup-keybind` action does not apply. See [Windows preparation limitations](docs/installation.md#windows-preparation-limitations).
 
 - Without manifest dimensions or CLI overrides, the popup defaults to half-size.
   For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's

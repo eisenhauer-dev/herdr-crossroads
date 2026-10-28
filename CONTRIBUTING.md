@@ -93,8 +93,9 @@ documentation verification.
 
 Native Windows 10/11 x86_64 is intended for **0.3.0**, currently **PREPARATION
 only**; the package remains **0.2.0**. The Linux/macOS 0.2.0 release is completed.
-Native Windows CI has run but has **not completed successfully**; no Windows support certification or release
-approval is claimed. `.github/workflows/windows.yml` uses the standard free
+Native Windows CI [completed successfully on 2026-10-21](docs/builds.md#windows-preparation-not-certification);
+no Windows support certification or release approval is claimed.
+`.github/workflows/windows.yml` uses the standard free
 public `windows-2025` runner, public-only/read-only, not a paid larger runner.
 It configures Rust/Cargo 1.99.0, Python 3.11+, formatting, native library/binary
 Clippy and `python -B scripts/build-windows.py`, then uploads preparation-only
@@ -106,10 +107,11 @@ and [native verification scope](docs/keymaps.md#windows-preparation-verification
 not the Unix shell/PTY commands below, for Windows preparation. The helper tests
 fake Herdr CLI/named pipes and ConPTY, plus exact installed executable bytes in a
 temporary checkout; **no actual Herdr managed-install/live-popup integration**
-runs. MSVC/SDK attribution review remains open. A physical Windows PC is
-available, OS version unknown; final popup acceptance must wait until the pipeline
-stands. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
-The full native preparation command has not yet completed successfully on Windows.
+runs in CI. Separately, the user reported successful basic source-build/link/popup
+use on a physical Windows 11 PC with Herdr 0.9.5 on 2026-10-28; the exact OS build
+and per-function checklist were not recorded. This is not managed-install or
+Windows 10/11 certification evidence. [MSVC/SDK attribution review](docs/builds.md#msvc-and-sdk-attribution-gate)
+remains open. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
 
 ### macOS release preparation
 

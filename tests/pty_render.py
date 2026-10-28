@@ -3,6 +3,7 @@ import errno
 import fcntl
 import json
 import os
+import platform
 import pty
 import select
 import struct
@@ -169,7 +170,8 @@ def assert_help_frame(raw, width=80, height=15, searching=False):
 NOTICE_END = b"  Press Enter/Esc/q to close."
 
 
-def assert_terminal_restored(master, slave, saved, active, key, output):
+def assert_terminal_restored(master, slave, saved, active, key, output,
+                             pre_close=None, cursor_marker_observed=None):
     actual = termios.tcgetattr(slave)
     if actual == saved:
         return
@@ -188,9 +190,13 @@ def assert_terminal_restored(master, slave, saved, active, key, output):
         tail.extend(chunk)
     names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
     changed = {name: (before, after) for name, before, after in zip(names, saved, actual) if before != after}
+    darwin = (f"macos={platform.mac_ver()[0]!r} darwin_kernel={os.uname().release!r} "
+              "sdk=unknown (not queried) " if sys.platform == "darwin" else "")
     assert actual == saved, (f"terminal restoration failed: key={key!r} "
                              f"platform={sys.platform}/{os.uname().machine} python={sys.version} "
+                             f"{darwin}"
                              f"changed={changed!r} saved={saved!r} active={active!r} actual={actual!r} "
+                             f"pre_close={pre_close!r} cursor_marker_observed={cursor_marker_observed!r} post_exit={actual!r} "
                              f"output={output!r} post_exit_output={bytes(tail)!r}")
 
 
@@ -585,8 +591,13 @@ def main(binary):
                 os.write(master, key)
                 restored = frame(master, b"\x1b[?25h")
                 assert "\x1b[?25h" in restored, restored[-100:]
+                # Observation after frame() returns, not stty completion or the
+                # instant the marker was emitted; frame() also drains output.
+                cursor_marker_observed = termios.tcgetattr(slave) if sys.platform == "darwin" else None
                 assert child.wait(timeout=3) == 0, key
-                assert_terminal_restored(master, slave, saved, active, key, initial + restored)
+                assert_terminal_restored(master, slave, saved, active, key, initial + restored,
+                                         pre_close=active if sys.platform == "darwin" else None,
+                                         cursor_marker_observed=cursor_marker_observed)
             finally:
                 if child is not None and child.poll() is None:
                     child.kill()
