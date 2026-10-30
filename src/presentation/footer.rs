@@ -2,7 +2,7 @@ use ratatui::buffer::CellWidth;
 
 use super::{clipped, columns, wrapped};
 use crate::keymap::Context;
-use crate::selection::{Mode, Ui};
+use crate::selection::{Hit, Mode, Ui};
 
 impl Ui {
     pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
@@ -58,6 +58,7 @@ impl Ui {
             Context::Help => &[
                 ("next_category", "↓move"),
                 ("previous_category", "↑move"),
+                ("activate", "run"),
                 ("close", "close keys"),
             ],
             Context::Themes => &[
@@ -77,7 +78,14 @@ impl Ui {
         };
         let mut lines: Vec<String> = Vec::new();
         for &(action, meaning) in actions {
-            let unit = format!("{}: {meaning}", self.keymap.footer_labels(context, action));
+            let unit = format!(
+                "{}: {meaning}",
+                if action == "activate" {
+                    "Enter".to_owned()
+                } else {
+                    self.keymap.footer_labels(context, action)
+                }
+            );
             if let Some(line) = lines.last_mut().filter(|line| {
                 columns(line) + columns(" · ") + columns(&unit) <= width.saturating_sub(4)
             }) {
@@ -114,12 +122,24 @@ impl Ui {
             )
     }
 
+    #[cfg(test)]
     pub(crate) fn hints(
         &self,
         context: Context,
         width: usize,
         budget: usize,
         ansi: bool,
+    ) -> Vec<String> {
+        self.hints_at(context, width, budget, ansi, 0)
+    }
+
+    pub(crate) fn hints_at(
+        &self,
+        context: Context,
+        width: usize,
+        budget: usize,
+        ansi: bool,
+        y: usize,
     ) -> Vec<String> {
         let lines = self.hint_lines(context, width);
         let budget = budget.max(1);
@@ -141,6 +161,53 @@ impl Ui {
         if ansi {
             result.resize(budget, String::new());
         }
+        for (row, line) in result.iter().enumerate() {
+            let mut x = 2;
+            for unit in line.trim_start().split(" · ") {
+                if context == Context::Help && unit == "Enter: run" {
+                    self.hit(
+                        x,
+                        y + row,
+                        unit.cell_width() as usize,
+                        Hit::Key(crate::input::Key::Enter),
+                    );
+                }
+                if let Some(binding) = self.keymap.bindings.iter().find(|b| {
+                    b.context == context
+                        && unit.starts_with(&format!(
+                            "{}:",
+                            self.keymap.footer_labels(context, b.action.name())
+                        ))
+                }) {
+                    self.hit(
+                        x,
+                        y + row,
+                        unit.cell_width() as usize,
+                        Hit::Action(binding.action),
+                    );
+                }
+                x += unit.cell_width() as usize + " · ".cell_width() as usize;
+            }
+        }
         result
+    }
+
+    pub(super) fn search_edit_hits(&self, y: usize, text: &str) {
+        use crate::input::Key;
+        let erase = text.find("Backspace").unwrap();
+        let return_label = text[..erase].trim_end_matches([' ', '·']);
+        self.hit(
+            2,
+            y,
+            return_label.cell_width() as usize,
+            Hit::Key(Key::Enter),
+        );
+        let x = 2 + text[..erase].cell_width() as usize;
+        self.hit(
+            x,
+            y,
+            "Backspace: erase".cell_width() as usize,
+            Hit::Key(Key::Backspace),
+        );
     }
 }

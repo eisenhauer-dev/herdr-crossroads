@@ -19,6 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DistributionHelpers(unittest.TestCase):
+    def test_current_screen_applies_native_erase_character_runs(self):
+        screen = Screen(rows=2, cols=12)
+        screen.feed(b"abcdef\x1b[1;3H\x1b[2X")
+        self.assertEqual(screen.text().splitlines()[0].rstrip(), "ab  ef")
+        screen.feed(b"\x1b[1;12HZ\x1b[X")
+        self.assertEqual(screen.text().splitlines()[0].rstrip(), "ab  ef")
+
     def test_notice_expectations_distinguish_pinned_html_from_current_markdown(self):
         with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-notice-helper-") as temporary:
             base = Path(temporary)
@@ -455,7 +462,7 @@ class DistributionHelpers(unittest.TestCase):
 
     def test_current_cells_replace_old_query_and_rows(self):
         screen = Screen(rows=20, cols=80)
-        screen.feed(b"\x1b[2J\x1b[2;5HSearch: / to search       Select\x1b[4;5HOrigin\x1b[5;5HArrival")
+        screen.feed(b"\x1b[2J\x1b[2;5HSearch: f to search       Select\x1b[4;5HOrigin\x1b[5;5HArrival")
         self.assertIn("Origin", screen.popup_view())
         # Feed an incomplete CSI: no historical row can survive the erase.
         screen.feed(b"\x1b[2")

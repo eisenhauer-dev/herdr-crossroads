@@ -29,10 +29,10 @@ fn footers_omit_opening_actions_but_preserve_full_keys_and_search_controls() {
             )
         } else {
             (
-                Key::Char('/'),
+                Key::Char('f'),
                 Key::Char('r'),
                 Key::Char('t'),
-                ["/", "r", "t"],
+                ["f", "r", "t"],
             )
         };
         for context in [Context::Select, Context::Help] {
@@ -81,7 +81,8 @@ fn footers_omit_opening_actions_but_preserve_full_keys_and_search_controls() {
         for (keys, meaning) in [
             ("h/←", "previous tab"),
             ("l/→", "next tab"),
-            ("→ Tab | ← Shift+Tab", "next/previous workspace"),
+            ("Tab", "next workspace"),
+            ("Shift+Tab", "previous workspace"),
         ] {
             assert!(state
                 .help
@@ -147,10 +148,10 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     for width in [76, 120] {
         assert_eq!(
             state.terminal_frame(width, 8).split("\r\n").next(),
-            Some(format!("  Search: / to search{}Select", " ".repeat(width - 29)).as_str())
+            Some(format!("  Search: f to search{}Select", " ".repeat(width - 29)).as_str())
         );
     }
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
         Some(format!("  Search: {}Search", " ".repeat(102)).as_str())
@@ -170,14 +171,14 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     state.key(Key::Char('r'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: / to search{}Select", " ".repeat(91)).as_str())
+        Some(format!("  Search: f to search{}Select", " ".repeat(91)).as_str())
     );
     state.key(Key::Char('?'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: / to search{}Help", " ".repeat(93)).as_str())
+        Some(format!("  Search: f to search{}Help", " ".repeat(93)).as_str())
     );
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
         Some(format!("  Search: {}Help", " ".repeat(104)).as_str())
@@ -221,7 +222,9 @@ fn hint_actions_and_literal_slash_are_unambiguous_without_identity_changes() {
     state.key(Key::Char('?'));
     let help = state.frame_width(240);
     assert!(
-        help.contains("'/'/J") && help.contains("→ Tab | ← Shift+Tab"),
+        help.contains("'/'/J")
+            && help.contains("next workspace")
+            && help.contains("previous workspace"),
         "{help}"
     );
 }
@@ -723,7 +726,7 @@ fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state()
     let mut state = ui();
     state.theme_index = 3; // Terminal theme retains its default background.
     state.key(Key::Down);
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for c in "codex".chars() {
         state.key(Key::Char(c));
     }
@@ -751,7 +754,7 @@ fn undersized_popup_displays_only_notice_and_ignores_keys_without_losing_state()
             "{frame}"
         );
         for key in [
-            Key::Char('/'),
+            Key::Char('f'),
             Key::Down,
             Key::Up,
             Key::Char('j'),
@@ -815,7 +818,7 @@ fn titleless_layout_preserves_selection_filters_and_short_viewport() {
                 lines[0].starts_with(if search || help {
                     "  Search: "
                 } else {
-                    "  Search: / to search"
+                    "  Search: f to search"
                 }),
                 "{frame}"
             );

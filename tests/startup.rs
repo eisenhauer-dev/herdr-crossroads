@@ -1187,7 +1187,7 @@ fn select_enter_focuses_visible_filtered_fallback_by_id() {
         let reply = format!(
             "{{\"id\":\"crossroads-focus\",\"result\":{{\"type\":\"pane_info\",\"pane\":{{\"pane_id\":\"p-other\",\"focused\":true}}}}}}{ending}"
         );
-        let (output, request) = focus_case(b"/codex\r\r", &reply);
+        let (output, request) = focus_case(b"fcodex\r\r", &reply);
         assert!(
             output.status.success(),
             "{}",
@@ -1396,7 +1396,7 @@ fn silent_focus_server_times_out_without_retrying_another_target() {
 #[cfg(unix)]
 #[test]
 fn non_select_keys_and_no_matches_never_focus() {
-    for input in [b"/codex\rq".as_slice(), b"/nomatch\r\r", b"q", b"\x1b"] {
+    for input in [b"fcodex\rq".as_slice(), b"fnomatch\r\r", b"q", b"\x1b"] {
         let (output, request) = no_focus_case(input);
         assert!(output.status.success());
         assert!(request.is_none(), "unexpected request: {request:?}");
@@ -1406,7 +1406,7 @@ fn non_select_keys_and_no_matches_never_focus() {
 #[cfg(unix)]
 #[test]
 fn alt_q_in_search_is_ignored_until_piped_input_eof_without_focus() {
-    let (output, request) = no_focus_case(b"/codex\x1bq");
+    let (output, request) = no_focus_case(b"fcodex\x1bq");
     assert!(output.status.success());
     assert!(request.is_none(), "unexpected request: {request:?}");
     let text = String::from_utf8_lossy(&output.stdout);
@@ -1645,7 +1645,7 @@ exit 9
         .stderr(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin.take().unwrap().write_all(b"/codexq\x1bq")?;
+            child.stdin.take().unwrap().write_all(b"fcodexq\x1bq")?;
             child.wait_with_output()
         })
         .unwrap();
@@ -1765,7 +1765,7 @@ fn search_updates_on_each_character_and_returns_to_selection() {
         .stdout(Stdio::piped())
         .spawn()
         .and_then(|mut child| {
-            child.stdin.take().unwrap().write_all(b"/codexq\rq")?;
+            child.stdin.take().unwrap().write_all(b"fcodexq\rq")?;
             child.wait_with_output()
         })
         .unwrap();

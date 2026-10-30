@@ -218,14 +218,25 @@ impl Ui {
     }
 
     pub(super) fn layout(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
+        self.begin_mouse_layout();
+        let lines = self.layout_contents(width, height, ansi);
+        self.finish_mouse_layout();
+        lines
+    }
+
+    fn layout_contents(&self, width: usize, height: usize, ansi: bool) -> Vec<String> {
         self.hint_more.set(false);
         if self.configuration_failed() {
-            return self.error_layout(width, height, ansi);
+            let lines = self.error_layout(width, height, ansi);
+            self.fixed_mouse_controls(&lines);
+            return lines;
         }
         if let Some((_, popup_height)) = self.popup_size {
             let height = if ansi { height } else { popup_height };
             if width < 80 || height < 15 {
-                return self.too_small_layout(width, height, ansi);
+                let lines = self.too_small_layout(width, height, ansi);
+                self.fixed_mouse_controls(&lines);
+                return lines;
             }
         }
         if self.mode == Mode::Help {
@@ -235,6 +246,37 @@ impl Ui {
             return self.theme_layout(width, height, ansi);
         }
         self.table_layout(width, height, ansi)
+    }
+
+    fn fixed_mouse_controls(&self, lines: &[String]) {
+        use crate::{input::Key, selection::Hit};
+        for (y, line) in lines.iter().enumerate() {
+            let mut text = String::new();
+            let mut sgr = false;
+            for c in line.chars() {
+                if c == '\x1b' {
+                    sgr = true;
+                } else if sgr {
+                    sgr = c != 'm';
+                } else {
+                    text.push(c);
+                }
+            }
+            for (label, key) in [
+                ("Enter/Esc/q: close", Key::Enter),
+                ("↑/k: scroll up", Key::Char('k')),
+                ("↓/j: scroll down", Key::Char('j')),
+            ] {
+                if let Some(at) = text.find(label) {
+                    self.hit(
+                        text[..at].cell_width() as usize,
+                        y,
+                        label.cell_width() as usize,
+                        Hit::Key(key),
+                    );
+                }
+            }
+        }
     }
 }
 

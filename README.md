@@ -1,6 +1,6 @@
 # Herdr Crossroads
 
-A keyboard-driven pane navigator for [Herdr](https://herdr.dev): search panes,
+A keyboard-and-mouse pane navigator for [Herdr](https://herdr.dev): search panes,
 tabs, workspaces, or agent names and focus the pane you need without reorganizing
 your session.
 
@@ -41,6 +41,9 @@ Historical native previews (not current release verification):
 [navigation and themes provenance](docs/media/recordings/native-loops.md).
 
 ![Native navigation and live search](docs/media/native-navigation.gif)
+
+Recordings predate mouse support and the current `f` search / Help Enter controls;
+use the [current controls](#controls) below rather than the recorded key labels.
 ![Native linked-worktree selection](docs/media/linked-worktrees.gif)
 ![Native theme preview and save](docs/media/native-themes.gif)
 
@@ -256,7 +259,7 @@ with `platform_unsupported`. Windows must use `crossroads-windows`, and the Unix
 | Next / previous pane | `j` / `k`, or Down / Up |
 | Next / previous tab | `l` / `h`, or Right / Left |
 | Next / previous workspace | Tab / Shift+Tab |
-| Search / reset filter | `/` / `r` |
+| Search / reset filter | `f` / `r` |
 | Keys help / themes | `?` / `t` |
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
@@ -266,6 +269,11 @@ with `platform_unsupported`. Windows must use `crossroads-windows`, and the Unix
   the filter. Press Enter again to focus; no matches means no focus.
 - Themes: `j`/`k` or arrows to preview, Space for list/table view, Enter to save,
   Esc/`q` to cancel. `?` shows the current view's effective keys.
+- Help: Enter executes the marked action after returning to its calling view.
+  Mouse first-click selects an action; clicking it again executes it, without a time limit.
+- Mouse is enabled by default: click to select, double-click a pane to focus or a
+  theme to save, click the search bar to edit, and use the wheel for standard `j`/`k`.
+  See [mouse controls and opt-out](docs/keymaps.md#mouse-controls).
 - See [complete controls, customization and input limits](docs/keymaps.md#actions-and-defaults).
 
 ## Configuration
@@ -288,6 +296,8 @@ Crossroads after editing.
   `.jsonc` is absent, never when it is invalid or unreadable.
 - Keymaps and status colors are read-only. Saving a theme writes only plugin-owned
   theme files; explicitly saving Auto removes both theme files. See the references for failure behavior.
+- In `keymaps.jsonc`, `"mouse_enabled": false` disables mouse capture. Enter is
+  reserved: assigning it in any custom binding is a configuration error.
 
 ## Update and uninstall
 

@@ -10,7 +10,7 @@ fn alt_text_is_ignored_in_both_searches() {
         if help {
             state.key(Key::Char('?'));
         }
-        state.key(Key::Char('/'));
+        state.key(Key::Char('f'));
         let mut keys = Keys::new();
         for byte in b"\x1bx" {
             if let Some(key) = keys.feed(*byte) {
@@ -35,7 +35,7 @@ fn ctrl_j_and_h_are_not_search_enter_or_backspace() {
         if help {
             state.key(Key::Char('?'));
         }
-        state.key(Key::Char('/'));
+        state.key(Key::Char('f'));
         state.key(Key::Char('x'));
         let mut keys = Keys::new();
         for byte in [10, 8] {
@@ -57,7 +57,7 @@ fn ctrl_j_and_h_are_not_search_enter_or_backspace() {
 fn search_retains_text_and_selection_and_reset_restores_id() {
     let mut state = ui();
     state.key(Key::Char('j'));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for c in "codex".chars() {
         state.key(Key::Char(c));
     }
@@ -70,7 +70,7 @@ fn search_retains_text_and_selection_and_reset_restores_id() {
     assert_eq!(state.mode, Mode::Select);
     assert_eq!(state.query, "codex");
     assert_eq!(state.selected.as_deref(), Some("p-a"));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     assert_eq!(state.query, "codex");
     state.key(Key::Esc);
     state.key(Key::Char('r'));
@@ -79,7 +79,7 @@ fn search_retains_text_and_selection_and_reset_restores_id() {
         .frame()
         .lines()
         .any(|line| line.contains("  > ") && line.contains("Same")));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for c in "rq".chars() {
         state.key(Key::Char(c));
     }

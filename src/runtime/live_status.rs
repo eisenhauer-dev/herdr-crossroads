@@ -161,6 +161,7 @@ impl LiveStatus {
             } else {
                 let (receiver, staged) = self.pending.take().unwrap();
                 ui.rows = staged;
+                ui.mouse.borrow_mut().click = None;
                 self.status = Some(receiver);
                 draw(ui, terminal)?;
             }

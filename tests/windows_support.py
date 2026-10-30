@@ -8,6 +8,7 @@ import re
 import subprocess
 import threading
 import time
+from terminal_screen import Screen, table_state
 
 
 K = C.WinDLL("kernel32", use_last_error=True)
@@ -141,6 +142,7 @@ class Console:
         self.process = None
         self.reader = None
         self.output = bytearray()
+        self.screen = None
         self.queue = queue.Queue()
         input_read, self.input = HANDLE(), HANDLE()
         self.read_handle, output_write = HANDLE(), HANDLE()
@@ -198,6 +200,15 @@ class Console:
     def send(self, data):
         send(self.input, data)
 
+    def track_screen(self):
+        self.screen = Screen(rows=30, cols=120)
+        self.screen.feed(self.output)
+
+    def _record(self, data):
+        self.output.extend(data)
+        if getattr(self, "screen", None) is not None:
+            self.screen.feed(data)
+
     def until(self, text, timeout=5, *, raw=False):
         # Labels tolerate styling; protocol assertions must opt into raw bytes.
         deadline = time.monotonic() + timeout
@@ -213,15 +224,42 @@ class Console:
                 raise data
             if not data:
                 raise AssertionError(f"ConPTY output closed before {text!r}: {bytes(self.output)[-4000:]!r}")
-            self.output.extend(data)
+            self._record(data)
         return bytes(self.output)
+
+    def until_table(self, *, mode, query, selected, panes, capture=None, timeout=5):
+        expected = {"mode": mode, "query": query, "selected": selected, "panes": panes}
+        if capture is not None:
+            expected["capture"] = capture
+        if mode == "Search":
+            # Padding alone cannot distinguish an extra trailing query space.
+            expected.update(cursor=(0, len("  Search: ") + len(query)), cursor_visible=True)
+        deadline = time.monotonic() + timeout
+        while True:
+            actual = table_state(self.screen)
+            if actual is not None and mode == "Search":
+                actual.update(cursor=(self.screen.y, self.screen.x), cursor_visible=self.screen.modes.get(25, True))
+            if actual is not None and all(actual[key] == value for key, value in expected.items()):
+                return actual
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(f"missing current table {expected!r}; actual={actual!r}: {bytes(self.output)[-4000:]!r}")
+            try:
+                data = self.queue.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"missing current table {expected!r}; actual={actual!r}: {bytes(self.output)[-4000:]!r}") from None
+            if isinstance(data, Exception):
+                raise data
+            if not data:
+                raise AssertionError(f"ConPTY output closed before current table {expected!r}; actual={actual!r}: {bytes(self.output)[-4000:]!r}")
+            self._record(data)
 
     def reset_output(self):
         while not self.queue.empty():
             data = self.queue.get_nowait()
             if isinstance(data, Exception):
                 raise data
-            self.output.extend(data)
+            self._record(data)
         self.output.clear()
 
     def exited(self, timeout=5):
