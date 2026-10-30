@@ -77,7 +77,7 @@ class WindowsAcceptanceTests(unittest.TestCase):
         for key, expected in [(b"?", b"Help"), (b"q", b"Claude"),
                               (b"t", b"Themes"), (b"j", b"preview"),
                               (b" ", b"Themes"), (b"q", b"Claude"),
-                              (b"/cod", b"Search"), (b"\r", b"codex"),
+                              (b"fcod", b"Search"), (b"\r", b"codex"),
                               (b"r\x1b[B\x1b[C\t\x1b[Z", b"Claude")]:
             console.reset_output()
             console.send(key)
@@ -95,6 +95,12 @@ class WindowsAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.log.read_text().count("api snapshot"), 1)
 
     def test_filtered_enter_focuses_stable_id_not_same_label(self):
+        self.filtered_focus(mouse=False)
+
+    def test_mouse_filtered_double_click_focuses_stable_id(self):
+        self.filtered_focus(mouse=True)
+
+    def filtered_focus(self, mouse):
         marker = f"crossroads-native-focus-{os.getpid()}"
         status = self.NamedServer(marker)
         focus = self.NamedServer(marker, first=False)
@@ -118,13 +124,90 @@ class WindowsAcceptanceTests(unittest.TestCase):
         focus_worker = self.worker(focused)
         console = self.console()
         console.until(b"Claude")
-        console.send(b"/codex\r")
+        console.send(b"\x1b[<0;5;1M" if mouse else b"f")
+        console.until(b"Backspace: erase")
+        console.send(b"codex" if mouse else b"codex\r")
         console.until(b"codex")
-        console.send(b"\r")
+        console.send(b"\x1b[<0;5;5M\x1b[<0;5;5m\x1b[<0;5;5M" if mouse else b"\r")
         self.assertEqual(console.exited(timeout=2), 0)
         self.joined(focus_worker)
         stop.set()
         self.joined(subscription_worker)
+
+    def test_mouse_search_help_origin_theme_save_wheel_optout_and_cleanup(self):
+        console = self.console()
+        console.track_screen()
+        console.until(b"Claude")
+        # ConPTY translates native mouse delivery to its outer tracking mode.
+        console.until(b"\x1b[?1003;1006h", raw=True)
+        def mouse(x, y, button=0):
+            return f"\x1b[<{button};{x + 1};{y + 1}M".encode()
+        def step(data, expected):
+            console.reset_output()
+            console.send(data)
+            console.until(expected)
+        step(mouse(4, 0), b"Backspace: erase")
+        step(b"codex\r", b"codex")
+        # Fixed 120x30 fixture: second Select footer row is "Esc: exit · ?: keys".
+        step(mouse(14, 29), "Keys — Select".encode())
+        step(mouse(4, 15), b"choose theme")  # first click only selects
+        console.until("Keys — Select".encode())
+        time.sleep(0.45)
+        step(mouse(4, 15), b"Themes")
+        heading = "  Themes · selected: Auto (Herdr) · preview: Auto (Herdr) · keys"
+        step(mouse(heading.index("keys"), 0), "Keys — Themes".encode())
+        step(mouse(4, 4), b"next theme")
+        step(b"\r", b"preview: catppuccin")
+        footer = "  j/↓: ↓theme · k/↑: ↑theme · Space: table · Enter: save · Esc: cancel"
+        step(mouse(footer.index("Space:"), 28), b"Agent/Pane Name")
+        step(mouse(4, 1), b"Enter/Esc: preview")
+        step(b"\r", b"Agent/Pane Name")
+        step(mouse(footer.index("Space:"), 28), b"Auto (Herdr)")
+        step(mouse(4, 4) + mouse(4, 4), b"codex")
+        directory = Path(self.env["HERDR_PLUGIN_CONFIG_DIR"])
+        self.assertEqual(json.loads((directory / "theme.jsonc").read_text())["theme"], "terminal")
+        # Reset pane filter by executing its marked Help action with Enter.
+        step(mouse(14, 29), "Keys — Select".encode())
+        step(mouse(4, 14), b"reset search")
+        step(b"\r", b"Claude")
+        panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
+        console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=panes)
+        console.reset_output()
+        console.send(mouse(5, 5, button=65))
+        console.until_table(mode="Select", query="f to search", selected=(1, "Same"), panes=panes)
+        console.reset_output()
+        console.send(mouse(2, 29))
+        self.assertEqual(console.exited(timeout=2), 0)
+        console.until(b"\x1b[?25h", raw=True)
+        (directory / "keymaps.jsonc").write_text('{"mouse_enabled":false}')
+        console = self.console()
+        console.track_screen()
+        console.until(b"Claude")
+        console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=panes, capture=False)
+        for report in (mouse(4, 0), mouse(5, 5, button=65)):
+            console.reset_output()
+            console.send(report)
+            # A mode-changing keyboard barrier proves the preceding report has
+            # been processed even if an unchanged paint emits no ConPTY diff.
+            console.send(b"f")
+            console.until_table(mode="Search", query="", selected=(0, "Claude"), panes=panes, capture=False)
+            console.send(b"\r")
+            console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=panes, capture=False)
+        console.reset_output()
+        console.send(b"fcodex")
+        console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",), capture=False)
+        console.send(b"\r")
+        console.until_table(mode="Select", query="codex", selected=(0, "codex"), panes=("codex",), capture=False)
+        console.send(b"q")
+        self.assertEqual(console.exited(timeout=2), 0)
+        console.until(b"\x1b[?25h", raw=True)
+        (directory / "keymaps.jsonc").write_text('{"help":{"close":["Ent\\u0065r"]}}')
+        console = self.console()
+        console.until(b"ERROR: Unsupported keymap keys - help mode")
+        console.until(b"keymaps.jsonc")
+        console.until(b"close: Enter is reserved; custom Enter bindings are not allowed")
+        console.send(b"q")
+        self.assertEqual(console.exited(timeout=2), 0)
 
     def test_live_status_disconnect_reconnect_resnapshot_and_responsive_quit(self):
         marker = f"crossroads-native-status-{os.getpid()}"
@@ -177,6 +260,9 @@ class WindowsAcceptanceTests(unittest.TestCase):
         output = subprocess.run([self.binary], input=b"q", env=self.env, capture_output=True, timeout=5)
         self.assertNotEqual(output.returncode, 0)
         self.assertNotIn(b"Claude", output.stdout)
+        console = self.console()
+        self.assertNotEqual(console.exited(timeout=3), 0)
+        console.until(b"\x1b[?25h", raw=True)
 
     def test_theme_save_replace_reopen_and_auto_removal(self):
         directory = Path(self.env["HERDR_PLUGIN_CONFIG_DIR"])

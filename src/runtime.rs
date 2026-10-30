@@ -83,6 +83,9 @@ pub(crate) fn run() -> io::Result<()> {
     if keys.kitty_response {
         terminal.enable_kitty()?;
     }
+    if keymap.mouse_enabled {
+        terminal.enable_mouse()?;
+    }
     keys = Keys::new();
     #[cfg(any(unix, windows))]
     let live_status_enabled =
@@ -206,6 +209,15 @@ pub(crate) fn run() -> io::Result<()> {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
         };
         if let Some(key) = keys.feed(byte) {
+            if matches!(key, crate::input::Key::Mouse(_)) && terminal.0.is_some() {
+                let (height, width) = terminal_size();
+                if ui.popup_size != Some((width, height)) {
+                    ui.popup_size = Some((width, height));
+                    ui.mouse.borrow_mut().click = None;
+                    draw(&ui, true)?;
+                    continue;
+                }
+            }
             handle_key(&mut ui, key, terminal.0.is_some())?;
             if ui.closed {
                 break;

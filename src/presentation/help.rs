@@ -6,7 +6,7 @@ use ratatui::{
 use super::{clipped, columns, marked_color, sgr_bg, sgr_fg, wrapped};
 use crate::keymap::Context;
 use crate::search::match_positions;
-use crate::selection::Ui;
+use crate::selection::{Hit, Ui};
 use crate::theme::Theme;
 
 impl Ui {
@@ -120,8 +120,10 @@ impl Ui {
             aligned(&format!("Keys — {}", self.help.context.name())),
             rule.clone(),
         ];
+        self.hit(2, 0, self.search_prompt_geometry(width).1, Hit::Search);
         for &(i, heading) in contents.iter().skip(start).take(available) {
             if let Some(i) = i {
+                self.hit(2, lines.len(), table_width, Hit::Help(i));
                 let entry = &entries[i];
                 let active = selected == Some(i);
                 let text = format!(
@@ -157,8 +159,12 @@ impl Ui {
         lines.push(rule);
         if self.help.searching {
             lines.push(aligned("Enter/Esc: return to keys · Backspace: erase"));
+            self.search_edit_hits(
+                lines.len() - 1,
+                "Enter/Esc: return to keys · Backspace: erase",
+            );
         } else {
-            lines.extend(self.hints(Context::Help, width, footer_rows, ansi));
+            lines.extend(self.hints_at(Context::Help, width, footer_rows, ansi, lines.len()));
         }
         if ansi {
             lines.truncate(height);
@@ -183,6 +189,7 @@ impl Ui {
         let visible = self.help.visible();
         let selected = self.help.selected_index(&visible);
         let mut contents = Vec::new();
+        let mut content_hits = Vec::new();
         let mut selected_start = 0;
         let mut selected_len = 0;
         let mut category = None;
@@ -190,6 +197,7 @@ impl Ui {
             let entry = &entries[i];
             if category != Some(entry.category) {
                 contents.push(format!("  {}", entry.category));
+                content_hits.push(None);
                 category = Some(entry.category);
             }
             let text = format!("{}: {}", entry.keys, entry.meaning);
@@ -206,6 +214,7 @@ impl Ui {
             }
             let mut byte_offset = 0;
             for (at, row) in rows.into_iter().enumerate() {
+                content_hits.push(Some(i));
                 let start = byte_offset + text[byte_offset..].find(&row).unwrap();
                 let char_offset = text[..start].chars().count();
                 byte_offset = start + row.len();
@@ -256,6 +265,7 @@ impl Ui {
         }
         if contents.is_empty() {
             contents.push("  No matching keys".into());
+            content_hits.push(None);
         }
         let budget = height.saturating_sub(4 + footer_rows).max(1);
         let start = if ansi {
@@ -280,6 +290,17 @@ impl Ui {
             format!("  Keys — {}", self.help.context.name()),
             rule.clone(),
         ];
+        self.hit(2, 0, self.search_prompt_geometry(width).1, Hit::Search);
+        for (row, index) in content_hits
+            .into_iter()
+            .skip(start)
+            .take(if ansi { budget } else { usize::MAX })
+            .enumerate()
+        {
+            if let Some(index) = index {
+                self.hit(2, 3 + row, width.saturating_sub(4), Hit::Help(index));
+            }
+        }
         lines.extend(
             contents
                 .into_iter()
@@ -292,8 +313,12 @@ impl Ui {
         lines.push(rule);
         if self.help.searching {
             lines.push("  Enter/Esc: return to keys · Backspace: erase".into());
+            self.search_edit_hits(
+                lines.len() - 1,
+                "Enter/Esc: return to keys · Backspace: erase",
+            );
         } else {
-            lines.extend(self.hints(Context::Help, width, footer_rows, ansi));
+            lines.extend(self.hints_at(Context::Help, width, footer_rows, ansi, lines.len()));
         }
         if ansi {
             lines.truncate(height);

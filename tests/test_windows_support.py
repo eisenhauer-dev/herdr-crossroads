@@ -1,5 +1,6 @@
-"""Portable marker-matching checks; native ConPTY APIs are not invoked."""
+"""Portable marker/current-screen checks; native ConPTY APIs are not invoked."""
 import queue
+import ast
 from pathlib import Path
 import runpy
 import unittest
@@ -11,6 +12,22 @@ with patch("ctypes.WinDLL", create=True, return_value=Mock()):
 
 
 class ConsoleMarkerTests(unittest.TestCase):
+    def test_native_mouse_flow_observes_selection_and_opt_out_separately(self):
+        tree = ast.parse(Path(__file__).with_name("test_windows_acceptance.py").read_text())
+        method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                      and node.name == "test_mouse_search_help_origin_theme_save_wheel_optout_and_cleanup")
+        tables = [node for node in ast.walk(method) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Attribute) and node.func.attr == "until_table"]
+        self.assertGreaterEqual(len(tables), 6, "mouse acceptance needs specific before/after table states, not transcript substrings")
+        selections = [ast.literal_eval(keyword.value) for call in tables for keyword in call.keywords
+                      if keyword.arg == "selected"]
+        self.assertIn((0, "Claude"), selections)
+        self.assertIn((1, "Same"), selections)
+        self.assertIn((0, "codex"), selections)
+        self.assertGreaterEqual(sum(keyword.arg == "capture" and isinstance(keyword.value, ast.Constant)
+                                    and keyword.value.value is False
+                                    for call in tables for keyword in call.keywords), 3)
+
     def console(self, *chunks):
         console = Console.__new__(Console)
         console.output = bytearray()
@@ -115,6 +132,100 @@ class ConsoleMarkerTests(unittest.TestCase):
         with self.assertRaises(OSError) as caught:
             console.until(b"codex")
         self.assertIs(caught.exception, error)
+
+
+class ConsoleTableTests(unittest.TestCase):
+    panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
+
+    def paint(self, *, mode="Select", query="f to search", panes=None, selected=0, capture=False):
+        panes = self.panes if panes is None else panes
+        left = f"  Search: {query}"
+        lines = [left + " " * (118 - len(left) - len(mode)) + mode,
+                 "  " + "─" * 116,
+                 f"    {'Workspace':12} {'Tab':8} {'Agent/Pane Name':24} Status",
+                 "  " + "─" * 116]
+        lines.extend(f"  {'>' if index == selected else ' '} {'Same':12} {'Same':8} {name:24} working"
+                     for index, name in enumerate(panes))
+        lines.append("  " + "─" * 116)
+        cursor = f"\x1b[1;{11 + len(query)}H\x1b[?25h" if mode == "Search" else "\x1b[?25l"
+        return (f"\x1b[?1003;1006{'h' if capture else 'l'}\x1b[H\x1b[2J" + "\r\n".join(lines) + cursor).encode()
+
+    def console(self, *chunks):
+        console = Console.__new__(Console)
+        console.output = bytearray()
+        console.queue = queue.Queue()
+        console.track_screen()
+        for chunk in (*chunks, b""):
+            console.queue.put(chunk)
+        return console
+
+    def selected(self, console, selected):
+        return console.until_table(mode="Select", query="f to search", selected=selected, panes=self.panes)
+
+    def test_ignored_wheel_passes_old_marker_but_fails_specific_next_pane(self):
+        console = self.console(self.paint(selected=0))
+        console.until(b"> ")  # The old assertion accepts an ignored-wheel repaint.
+        with self.assertRaisesRegex(AssertionError, "closed before current table"):
+            self.selected(console, (1, "Same"))
+
+    def test_selected_pane_follows_cursor_only_native_diffs_across_output_resets(self):
+        console = self.console(self.paint(selected=0), b"\x1b[5;3H  \x1b[6;3H> ")
+        self.selected(console, (0, "Claude"))
+        console.reset_output()
+        self.assertEqual(self.selected(console, (1, "Same"))["selected"], (1, "Same"))
+
+    def test_broken_opt_out_wheel_is_detected_before_filter_hides_navigation(self):
+        barrier = self.paint(mode="Search", query="", selected=1)
+        filtered = self.paint(mode="Search", query="codex", panes=("codex",), selected=0)
+        self.console(barrier, filtered).until(b"codex")  # The old compound check passes.
+        console = self.console(barrier, filtered)
+        with self.assertRaisesRegex(AssertionError, "closed before current table"):
+            console.until_table(mode="Search", query="", selected=(0, "Claude"), panes=self.panes, capture=False)
+
+    def test_opt_out_rejects_active_capture_even_with_correct_query_and_result(self):
+        raw = self.paint(mode="Search", query="codex", panes=("codex",), capture=True)
+        console = self.console(raw)
+        console.until(b"codex")
+        with self.assertRaisesRegex(AssertionError, "closed before current table"):
+            console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",), capture=False)
+
+    def test_exact_keyboard_query_and_filtered_rows_reject_substring_and_stale_panes(self):
+        for query, panes, selected in [("fcodex", (), None), ("codexq", (), None),
+                                       ("codex ", ("codex",), 0),
+                                       ("codex", ("codex", "Claude"), 0)]:
+            with self.subTest(query=query, panes=panes):
+                raw = self.paint(mode="Search", query=query, panes=panes, selected=selected)
+                console = self.console(raw)
+                console.until(b"codex")
+                with self.assertRaisesRegex(AssertionError, "closed before current table"):
+                    console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",), capture=False)
+
+    def test_exact_keyboard_query_and_single_filtered_result_accept_fragmented_native_output(self):
+        raw = self.paint(mode="Search", query="codex", panes=("codex",))
+        raw = raw.replace(b"codex", b"cod\x1b[31mex\x1b[m")
+        console = self.console(*(bytes([byte]) for byte in raw))
+        actual = console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",), capture=False)
+        self.assertEqual(actual["query"], "codex")
+        self.assertEqual(actual["panes"], ("codex",))
+
+    def test_opt_out_checks_current_delivery_state_not_historical_outer_enable_bytes(self):
+        raw = b"\x1b[?1003;1006h" + self.paint(capture=False)
+        console = self.console(raw)
+        actual = console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=self.panes, capture=False)
+        self.assertFalse(actual["capture"])
+        self.assertIn(b"\x1b[?1003;1006h", console.output)
+
+    def test_table_wait_keeps_transport_errors_and_five_second_deadline(self):
+        console = self.console(OSError("fixture read failed"))
+        with self.assertRaisesRegex(OSError, "fixture read failed"):
+            self.selected(console, (0, "Claude"))
+        console = self.console()
+        console.queue = Mock()
+        console.queue.get.side_effect = queue.Empty
+        with patch.dict(Console.until_table.__globals__, time=Mock(monotonic=Mock(side_effect=[0, 0]))):
+            with self.assertRaisesRegex(AssertionError, "missing current table"):
+                self.selected(console, (0, "Claude"))
+        console.queue.get.assert_called_once_with(timeout=5)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,9 @@ mod test_input;
 #[path = "../tests/unit/keymap.rs"]
 mod test_keymap;
 #[cfg(test)]
+#[path = "../tests/unit/mouse.rs"]
+mod test_mouse;
+#[cfg(test)]
 #[path = "../tests/unit/presentation.rs"]
 mod test_presentation;
 #[cfg(test)]

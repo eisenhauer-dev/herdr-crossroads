@@ -144,3 +144,20 @@ fn every_existing_action_dispatches_its_replacement_without_changing_pane_state(
     assert_eq!(state.key(Key::Char('Q')), None);
     assert!(state.closed);
 }
+#[test]
+fn help_enter_restores_origin_and_executes_the_marked_action() {
+    use crate::{input::Key, selection::Mode, test_support::ui};
+    let mut state = ui();
+    state.key(Key::Char('?'));
+    let before = state.selected.clone();
+    state.key(Key::Enter);
+    assert_eq!(state.mode, Mode::Select);
+    assert_ne!(state.selected, before);
+    state.key(Key::Char('t'));
+    state.key(Key::Char(' '));
+    state.key(Key::Char('?'));
+    state.key(Key::Enter);
+    assert_eq!(state.mode, Mode::Themes);
+    assert!(state.theme_table_preview);
+    assert_eq!(state.theme_cursor, 1);
+}

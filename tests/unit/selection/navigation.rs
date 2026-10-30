@@ -229,7 +229,7 @@ fn tab_bytes_navigate_visible_workspaces_without_focusing() {
     state.key(tab);
     state.key(back);
     assert_eq!(state.selected.as_deref(), Some("p-other"));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(tab);
     state.key(back);
     assert_eq!(state.mode, Mode::Search);
@@ -290,7 +290,10 @@ fn workspace_jumps_skip_hidden_blocks_and_wrap_at_both_ends() {
     assert_eq!(state.selected.as_deref(), Some("p-third"));
     let help = state.terminal_frame(60, 15);
     assert!(
-        help.contains("→ Tab | ← Shift+Tab") && help.contains("next/previous workspace"),
+        help.contains("Tab")
+            && help.contains("Shift+Tab")
+            && help.contains("next workspace")
+            && help.contains("previous workspace"),
         "{help}"
     );
     state.key(Key::Esc);
@@ -305,7 +308,7 @@ fn workspace_jumps_skip_hidden_blocks_and_wrap_at_both_ends() {
 #[test]
 fn query_above_list_and_help_describes_actual_keys() {
     let mut state = ui();
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(Key::Char('x'));
     let frame = state.terminal_frame(120, 20);
     assert!(

@@ -13,6 +13,7 @@ pub(crate) enum HelpContext {
 }
 
 pub(crate) struct HelpEntry {
+    pub(crate) action: Action,
     pub(crate) category: &'static str,
     pub(crate) keys: String,
     pub(crate) meaning: &'static str,
@@ -26,17 +27,15 @@ impl HelpContext {
         };
         keys.iter()
             .map(|&(category, action, meaning)| HelpEntry {
+                action: map
+                    .bindings
+                    .iter()
+                    .find(|b| b.context == context && b.action.name() == action)
+                    .unwrap()
+                    .action,
                 category,
                 meaning,
-                keys: if action == "workspaces" {
-                    format!(
-                        "→ {} | ← {}",
-                        map.display_labels(Context::Select, "next_workspace"),
-                        map.display_labels(Context::Select, "previous_workspace")
-                    )
-                } else {
-                    map.display_labels(context, action)
-                },
+                keys: map.display_labels(context, action),
             })
             .collect()
     }
@@ -58,12 +57,13 @@ const THEMES_KEYS: [(&str, &str, &str); 6] = [
     ("Actions", "open_help", "show keys"),
 ];
 
-const SELECT_KEYS: [(&str, &str, &str); 11] = [
+const SELECT_KEYS: [(&str, &str, &str); 12] = [
     ("Navigation", "next_row", "next pane"),
     ("Navigation", "previous_row", "previous pane"),
     ("Navigation", "previous_tab", "previous tab"),
     ("Navigation", "next_tab", "next tab"),
-    ("Navigation", "workspaces", "next/previous workspace"),
+    ("Navigation", "next_workspace", "next workspace"),
+    ("Navigation", "previous_workspace", "previous workspace"),
     ("Actions", "focus_pane", "focus selected pane"),
     ("Actions", "open_search", "search"),
     ("Actions", "reset_search", "reset search"),
@@ -123,36 +123,58 @@ impl Ui {
                 _ => {}
             }
         } else {
-            let action = self.keymap.action(Context::Help, key)?;
-            let visible = self.help.visible();
-            match action {
-                Action::Close => {
-                    self.mode = match self.help.context {
-                        HelpContext::Select => Mode::Select,
-                        HelpContext::Themes => Mode::Themes,
-                    };
-                }
-                Action::OpenSearch => self.help.searching = true,
-                Action::ResetSearch => {
-                    self.help.selected = self.help.selected_index(&visible).or(self.help.selected);
-                    self.help.query.clear();
-                }
-                Action::NextCategory | Action::PreviousCategory => {
-                    if let Some(at) = self
-                        .help
-                        .selected_index(&visible)
-                        .and_then(|i| visible.iter().position(|v| *v == i))
-                    {
-                        let next = if action == Action::NextCategory {
-                            (at + 1) % visible.len()
-                        } else {
-                            at.checked_sub(1).unwrap_or(visible.len() - 1)
-                        };
-                        self.help.selected = Some(visible[next]);
-                    }
-                }
-                _ => {}
+            if key == Key::Enter {
+                return self.activate_help();
             }
+            let action = self.keymap.action(Context::Help, key)?;
+            return self.help_action(action);
+        }
+        None
+    }
+
+    pub(super) fn activate_help(&mut self) -> Option<String> {
+        let visible = self.help.visible();
+        let action = self
+            .help
+            .entries
+            .get(self.help.selected_index(&visible)?)?
+            .action;
+        self.mode = match self.help.context {
+            HelpContext::Select => Mode::Select,
+            HelpContext::Themes => Mode::Themes,
+        };
+        self.action(action)
+    }
+
+    pub(super) fn help_action(&mut self, action: Action) -> Option<String> {
+        let visible = self.help.visible();
+        match action {
+            Action::Close => {
+                self.mode = match self.help.context {
+                    HelpContext::Select => Mode::Select,
+                    HelpContext::Themes => Mode::Themes,
+                };
+            }
+            Action::OpenSearch => self.help.searching = true,
+            Action::ResetSearch => {
+                self.help.selected = self.help.selected_index(&visible).or(self.help.selected);
+                self.help.query.clear();
+            }
+            Action::NextCategory | Action::PreviousCategory => {
+                if let Some(at) = self
+                    .help
+                    .selected_index(&visible)
+                    .and_then(|i| visible.iter().position(|v| *v == i))
+                {
+                    let next = if action == Action::NextCategory {
+                        (at + 1) % visible.len()
+                    } else {
+                        at.checked_sub(1).unwrap_or(visible.len() - 1)
+                    };
+                    self.help.selected = Some(visible[next]);
+                }
+            }
+            _ => {}
         }
         None
     }

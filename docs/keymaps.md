@@ -11,13 +11,21 @@ Crossroads never writes, migrates, or deletes keymaps.
 
 ## Schema and replacement
 
-The root is an object with optional `select`, `help`, and `themes` objects. Each
+The root is an object with optional `select`, `help`, and `themes` objects and an
+optional `mouse_enabled` boolean (default `true`). Each
 action takes an array of **one or two defined key strings**. The limit is checked
 before deduplication: even `["q", "q", "q"]` is invalid. An action replaces its entire
 default list; omitted actions retain their defaults. There is no disabling an
 action, macro, sequence, or configurable search context. Repeated identical keys
 within one action are deduplicated, preserving their order. Duplicate field names
 at any level are errors, including escaped spellings of the same field name.
+Enter is reserved: **any custom assignment to `Enter` is a configuration error**,
+including explicitly restating a default binding. JSON-escaped spellings that
+decode to `Enter` (such as `"Ent\u0065r"`) are rejected identically. There is no
+additional accepted `Return`/lowercase alias. Built-in defaults still use Enter
+for pane focus and theme save; Help has fixed Enter activation. Other action
+replacement rules remain unchanged, including replacement of focus/save with
+other keys. Omit those actions to keep their built-in Enter bindings.
 
 JSONC accepts `//` and `/* … */` comments and trailing commas in objects and
 arrays, but otherwise requires JSON: double quotes, commas between entries, JSON
@@ -66,7 +74,7 @@ and reconnect snapshots do not reset the highlight to the launch pane.
 | `previous_tab` | `h`, `Left` | Previous visible tab block |
 | `next_workspace` | `Tab` | Next visible workspace block |
 | `previous_workspace` | `Shift+Tab` | Previous visible workspace block |
-| `open_search` | `/` | Edit the pane search |
+| `open_search` | `f` | Edit the pane search |
 | `reset_search` | `r` | Clear the pane filter |
 | `open_help` | `?` | Open Keys help |
 | `open_themes` | `t` | Open theme selection |
@@ -86,12 +94,22 @@ movement. Navigation never focuses a pane.
 | --- | --- | --- |
 | `next_category` | `j`, `Down` | Move forward through visible help entries |
 | `previous_category` | `k`, `Up` | Move backward through visible help entries |
-| `open_search` | `/` | Edit the independent help search |
+| `open_search` | `f` | Edit the independent help search |
 | `reset_search` | `r` | Clear the help filter |
 | `close` | `Esc`, `q` | Return to the calling Select or Themes view |
 
 `?` opens help from Select or Themes (list or table preview); it does not close Help by default. All close/cancel
 lists remain replaceable with one or two custom keys.
+
+In Help navigation, fixed **Enter executes the marked visible action**. First
+leave Help and restore the actual caller (Select or the same Themes list/table
+preview, pending theme, pane selection, filter and viewport), then dispatch that
+entry's action identity in the caller. No remapped physical key is synthesized.
+For example, next-theme changes the pending Themes choice; focus-pane focuses
+the selected pane; close exits; show-keys reopens the caller's Help. Empty help
+matches have nothing to execute. Enter during Help search only ends editing;
+press Enter again to execute. Workspace directions have separate entries so
+each entry has exactly one action. The Help footer shows `Enter: run`.
 
 ### `themes` — list and pane-table preview
 
@@ -107,9 +125,9 @@ lists remain replaceable with one or two custom keys.
 Keys help shows only the calling context's actions and effective bindings, not
 hard-coded defaults. Its header is `Keys — Select` or `Keys — Themes`; navigation
 and search within help use the configured `help` bindings in either case.
-Closing help restores the caller, including the exact pane query, selection and
+Closing help without activation restores the caller, including the exact pane query, selection and
 viewport and the theme cursor, list/table preview and saved choice. Opening or
-closing help neither focuses a pane nor saves or cancels a pending theme.
+closing help without activation neither focuses a pane nor saves or cancels a pending theme.
 
 Existing search rows show a right-aligned current-mode label: `Select`, `Search`,
 `Help` or `Themes`. Query text clips to reserve space for the complete label.
@@ -156,16 +174,20 @@ omit `open_search` and `reset_search`, even with custom bindings. These actions
 remain available, and the full Keys help entries, fixed search-editing hints,
 and theme picker controls are unchanged.
 Keys help retains all effective keys (one or two) for its displayed actions.
-A single slash binding is displayed as `/` in Keys help and search prompts,
-including the default `Search: / to search`. In multiple-key lists it stays
+A single custom slash binding is displayed as `/` in Keys help and search prompts,
+for example `Search: / to search`; the default is now `Search: f to search` in
+Select and Help. `/` no longer opens search unless explicitly configured.
+If a custom action already uses `f`, also replace `open_search` in that context;
+otherwise the usual effective-binding collision ERROR applies.
+In multiple-key lists it stays
 quoted, for example `'/'/s` or `s/'/'`, to distinguish the key from the separator.
 Literal pipe remains displayed as `'|'`. These quotes are display notation only;
 footer separator protection is unchanged. In the configuration the key strings
 remain `"/"` and `"|"`; key identities, conflicts, and bindings are unchanged.
 
 Keys help filters and highlights the displayed key labels and meanings with the
-same case-insensitive subsequence search. Direction markers (`→`, `←`), the `|`
-group separator, and quotes around literal separator keys are searchable too,
+same case-insensitive subsequence search. Arrow labels (`→`, `←`) and quotes
+around custom literal separator keys are searchable too,
 including in wrapped custom-binding entries. Entries retain their original order.
 Help navigation wraps from the first matching entry to the last and vice versa,
 with the viewport following selection. No matches leaves selection remembered
@@ -190,8 +212,11 @@ Configured navigation keys have the same wrapping behavior as the defaults.
   visibility guarantee: fonts and terminals can render allowed scalars differently,
   and some allowed letters/symbols may look blank. It validates custom bindings
   only; terminal decoding and search-text handling are unchanged.
-- Exact special names: `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`,
+- Special identities include `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`,
   `Right`, `Tab`, `Shift+Tab`, `Space`.
+- `Enter` is a built-in input identity, **not an allowed custom binding** in any
+  context or action. Such assignments produce `Unsupported keymap keys` ERROR
+  blocks with the mode, action and selected configuration source path.
 - **No Ctrl or Alt binding is allowed in any context or keyboard protocol**:
   letters, arrows, and modified special keys are all configuration errors.
 - Shift-generated printable symbols are stored as characters, for example `!`,
@@ -205,6 +230,86 @@ an entire Alt-letter input. `Ctrl+j` (LF) does not end search and `Ctrl+h` (BS)
 does not erase; neither is an artificial alias of Enter (CR) or Backspace (DEL).
 In help search, the first Esc ends editing; a subsequent default Esc closes help
 and returns to its caller. Help search never changes the pane filter.
+
+## Mouse controls
+
+Mouse capture is enabled by default on Linux, macOS ARM64/Intel and native Windows
+10/11 x86_64. It requires the terminal/Herdr popup to deliver SGR mouse reports;
+native verification limits below still apply. To opt out, add this root setting
+to the plugin-owned `keymaps.jsonc` (or the legacy file when `.jsonc` is absent):
+
+```jsonc
+{
+  "mouse_enabled": false,
+}
+```
+
+Reopen the popup after editing. Only booleans are accepted; malformed settings
+and duplicate fields are configuration errors. Disabled capture does not enable
+or disable the application's `1000`/`1006` modes and ignores delivered mouse reports; keyboard controls
+and custom bindings remain available. Crossroads does not write this setting.
+
+- A left click selects the clicked pane or theme without focusing/saving it.
+  Double-click focuses that pane (including a filtered pane in pane Search) or
+  explicitly saves that theme. The double-click interval is fixed at **400 ms**,
+  measured with a monotonic clock, for two left presses on the same item, view and
+  exact cell location. Releases do not activate. Keyboard input, intervening
+  misses/selection or view changes, resize, changed hit locations and refreshed
+  rows reset pending activation. Theme-table preview panes are not focus targets.
+- Clicking a search bar activates editing and shows the query cursor. Pane and
+  Help filters remain independent. Clicking the Themes table-preview bar edits
+  the pane filter with the pending palette; Enter/Esc returns to the same Themes
+  preview without saving or discarding that choice.
+- In Help, the first click selects an action, even if initially marked. Clicking
+  that same selected action again executes it using the Enter origin/dispatch
+  contract above. **There is no time limit** for this repeat-click; it is not the
+  pane/theme double-click gesture. Changing selection/view cancels the pending click.
+- Visible footer controls and the theme-list heading's `keys` control activate
+  on one click, using their existing action identities, not configured key synthesis.
+  Search return/erase and configuration-error scroll/close controls are clickable.
+  Actions absent from a footer (including theme opening and filter reset) remain
+  reachable through executable Help entries.
+- Wheel down/up performs the **standard `j`/`k` behavior of the active mode**,
+  independently of remapped bindings: pane, Help-entry or theme navigation wraps
+  normally; diagnostics scroll. During pane/Help text editing, standard `j`/`k`
+  inserts those letters; the wheel is not an independent viewport scroller.
+  Undersized ordinary views retain their inert-navigation behavior.
+- Header rules, group separators, noninteractive blank space and out-of-bounds
+  coordinates do not select or activate anything. Hit regions are recorded by the
+  actual rendered layout, including filtered/scrolled rows and terminal-cell widths
+  for controls. Right/middle/modified buttons, motion and drag/drop are not actions;
+  no clipboard or context-menu behavior is added.
+
+The terminal owns button tracking (`1000`) and SGR coordinates (`1006`), without
+motion tracking. Both owned modes are disabled on normal close, startup/action
+failure and unwinding through the existing terminal guard, alongside cursor/Kitty
+cleanup and exact saved Unix termios or Windows console-mode restoration. These
+are best-effort writes; forced process termination cannot run destructors.
+
+Windows keeps `ENABLE_VIRTUAL_TERMINAL_INPUT` and VT output enabled. Mouse capture
+also sets `ENABLE_MOUSE_INPUT` to request ConPTY mouse delivery, **always together
+with VT byte input**, not the legacy-only `ReadConsoleInput` record path. Quick
+Edit stays off; opt-out does not request mouse delivery. ConPTY translates its
+outer tracking protocol (for example `1003;1006`) independently of the application's
+inner `1000`/`1006` modes, including when restoring the original console flags.
+Native tests query actual inner mode state (`DECRQM`) before capture, while active,
+after drop and after panic, rather than assuming application escape bytes survive
+ConPTY translation unchanged. They also require exact saved console-mode restoration.
+Source evidence is Microsoft Terminal `v1.23.13503.0`:
+[`SetConsoleInputModeImpl`](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/host/getset.cpp),
+[`VtIo::Writer::WriteSGR1006`](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/host/VtIo.cpp),
+and [`InputStateMachineEngine::ActionCsiDispatch`'s VT passthrough](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/terminal/parser/InputStateMachineEngine.cpp),
+alongside Microsoft's [VT input contract](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#input-sequences),
+consulted 2026-10-28. This is mechanism evidence, not execution on every Windows build.
+
+Mouse coverage is part of the **complete** keymap PTY gate, so existing Linux/macOS
+build and installed-byte four-PTY gates include it. The native ConPTY acceptance
+suite also exercises mouse search, origin-aware Help execution, theme preview/save,
+wheel, filtered stable-ID focus, opt-out, reserved-Enter errors and cleanup, including
+console-mode restoration during unwinding. **New native macOS ARM64/Intel and
+Windows 10/11 mouse execution remains pending**; earlier native results in this
+document predate these changes and do not validate them. Fake-host gates do not
+establish live Herdr mouse routing.
 
 ## Conflicts and error page
 
@@ -370,7 +475,10 @@ root with [native builder prerequisites](builds.md#windows-preparation-not-certi
 It runs selected Rust suites and `tests/test_windows_acceptance.py` with the
 final-linked release executable, compiled fake Herdr CLI, and native ConPTY test
 executable selected by the helper. The acceptance harness covers console-mode
-restoration, search/help/themes/navigation, resize/close, filtered stable-ID focus,
+restoration (including queried inner mouse modes), and the selected Rust groups
+include mouse/layout/action, reserved-Enter and default-search policy regressions.
+The acceptance harness also covers
+search/help/themes/navigation, resize/close, filtered stable-ID focus,
 status disconnect/reconnect/resnapshot, noninteractive EOF/missing CLI and theme
 save/reopen/Auto removal. Pipes and CLI are fake-host fixtures, not a real Herdr
 server/client. After packaging, the helper also installs in a temporary checkout,

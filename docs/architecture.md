@@ -74,13 +74,14 @@ and release gates remain open.
 | `src/runtime/live_status.rs` | Validated row-status updates, bootstrap draining, bounded batches/redraws, retry eligibility and staged reconnect installation; owns active subscription, retry worker and pending rows |
 | `src/config.rs` | Shared JSONC/legacy selection, strict JSON-plus-comments/trailing-commas parsing, duplicate-field locations, grouped diagnostics |
 | `src/keymap.rs` | Typed actions and default bindings, schema/replacement validation, shared collision ownership for errors/diagnostics, effective action resolution and labels |
-| `src/input.rs` | Classical/Kitty byte decoding and key identity/display only |
+| `src/input.rs` | Classical/Kitty keyboard and bounded SGR mouse byte decoding, key identity/display |
 | `src/actions.rs` | Execute a UI key result: focus the emitted pane ID, then redraw only while open |
 | `src/focus.rs` | Exact-ID socket focus, bounded reply reading and reply validation |
 | `src/topology.rs` | Snapshot validation and pane rows, workspace/tab ordering, own-pane exclusion, sanitized labels, best-effort linked-worktree annotation/grouping |
 | `src/transport.rs` | CLI/socket transport, status-subscription ownership and readers, bounded reconnect execution and connection deadlines, reconnect cancellation |
 | `src/selection.rs` | Shared UI state, mode/keymap dispatch, pane filtering/navigation and selected pane identity |
 | `src/selection/help.rs` | Help entries/state, independent filter and search/navigation input |
+| `src/selection/mouse.rs` | Render-recorded hit regions, mouse state/gesture validation and existing-action dispatch |
 | `src/selection/themes.rs` | Theme-picker input, preview toggle, save/cancel transitions and Auto-transition notice |
 | `src/search.rs` | Case-insensitive per-field subsequence matching and greedy source-character match positions |
 | `src/theme.rs` | Internal theme facade preserving caller access to palettes, discovery and persistence |
@@ -94,8 +95,9 @@ and release gates remain open.
 | `src/presentation/footer.rs` | Effective-binding hint groups, footer row budgets, hint paging and shared search prompts |
 | `src/presentation/help.rs` | Help layout, category spacing, selected-entry viewport, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
 | `src/presentation/themes.rs` | Theme-list picker layout, visible choices and preview highlight; theme state/persistence remain in `selection`/`theme` |
-| `src/terminal.rs` | Terminal sizing, raw-mode and Kitty ownership/restoration, stdout drawing and cursor placement |
+| `src/terminal.rs` | Terminal sizing, raw-mode, Kitty and mouse ownership/restoration, stdout drawing and cursor placement |
 | `src/terminal/windows.rs` | Windows console-mode/VT ownership and restoration, native terminal sizing, no Kitty negotiation |
+| `src/terminal/windows_input.rs` | Console input flag policy, shared with portable flag tests and native ConPTY mode tests |
 | `src/windows_pipe.rs` | Windows byte-mode named-pipe transport for focus/status, bounded polling and cancellation |
 
 Dependencies are the existing pinned JSONC parser, `serde_json`, `ratatui`, and
@@ -128,6 +130,7 @@ fixtures and fake hosts.
 plugin config files ──> config/keymap/theme/status_colors validation ──> Ui
 Herdr CLI snapshot + worktree list ──> topology rows ──────────> Ui
 stdin bytes ──> Keys decoder ──> context action / search ──────> Ui
+rendered hit regions + mouse event ──> selection/action ──────> Ui
 local socket status events ──> validated row status ─────────> Ui
 Ui + theme + status_colors + terminal dimensions ──> presentation ──> terminal ──> stdout
 Select confirmation ──> chosen stable pane ID ──> local pane.focus request
@@ -179,6 +182,25 @@ No CLI call or socket request is caused by a search keystroke. Selection falls
 back to the first visible pane when its remembered ID is hidden; empty matches
 produce no focus candidate. Navigation is bounded and skips hidden blocks.
 
+Default search is lowercase `f` in Select and Help; custom bindings still replace
+it. Any custom assignment to logical Enter is a structured configuration error;
+the built-in defaults and fixed Help Enter activation remain available. Help entries
+carry their origin action identity. Activation first restores Select or the actual
+Themes list/table state, then dispatches that action, including focus/save/close or
+reopening Help. Ordinary Help closing remains side-effect-free.
+
+Each renderer records mouse hit regions while laying out the actual frame: table
+rows reuse the chosen filtered viewport and Ratatui row offsets; Help/theme rows
+reuse their visible entries; footer positions use rendered terminal-cell widths.
+The UI validates the rendered state before using coordinates, and the event loop
+rechecks terminal size before mouse dispatch to discard stale resize input.
+Mouse defaults on, with a read-only root `mouse_enabled` setting in keymaps.
+The wheel dispatches standard `j`/`k` behavior independent of custom bindings;
+clicks dispatch existing actions. Monotonic 400-ms same-item/location double-clicks
+focus/save panes/themes; Help uses untimed selected-entry repeat-clicks instead.
+See [the input and cleanup contract](keymaps.md#mouse-controls), including
+theme-preview search return and outstanding native verification.
+
 The presentation facade resets hint paging, then dispatches configuration errors
 before the popup-size guard, Help, the theme list, and finally the pane table
 (also used for theme table preview). Each view uses the existing `Ui` state;
@@ -194,18 +216,21 @@ oversized custom hints every two seconds when needed. Below
 
 ### Focus and close
 
-Only confirmation in Select with a visible candidate emits a pane ID. `actions`
+Only pane-focus action dispatch with a visible candidate emits a pane ID. `actions`
 executes that result through `focus`, which
 sends `pane.focus` over `HERDR_SOCKET_PATH` and validates reply ID, result type,
 exact pane ID, and `focused: true`. After the request and newline are written,
 nonblocking reply reading has a 500-ms overall deadline and a 16-KiB limit.
 When no bytes are ready, it sleeps for at most 1 ms before checking the deadline
 again; this is not a general socket-connect/write timeout promise.
-Stale/error replies fail without choosing another target. Help, search, themes,
-empty results, and error-page close do not focus panes. Terminal ownership restores
+Stale/error replies fail without choosing another target. Ordinary Help/search
+editing, themes, empty results and error-page close do not focus panes; executing
+Help's focus action or double-clicking a pane explicitly does. Terminal ownership restores
 the saved `stty` state on Unix (native console modes on Windows), shows the cursor,
-and pops an owned Unix Kitty mode on normal
-return or error unwinding.
+and pops an owned Unix Kitty mode and disables owned mouse modes on normal
+return or error/panic unwinding. Windows enables mouse delivery only together with
+VT byte input, not a legacy-only mouse-record reader, and restores the exact saved
+console modes. ConPTY's outer tracking sequences are distinct from owned inner modes.
 
 ### Live status and reconnection
 

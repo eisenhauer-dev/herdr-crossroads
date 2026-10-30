@@ -64,7 +64,7 @@ fn row_updates_validate_events_without_ui_state_or_metadata_changes() {
 #[test]
 fn live_status_only_changes_matching_agent_row_not_navigation() {
     let mut state = ui();
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for c in "codex".chars() {
         state.key(Key::Char(c));
     }

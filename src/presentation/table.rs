@@ -9,7 +9,7 @@ use ratatui::{
 use super::{clipped, columns, marked_color, sgr_bg, sgr_fg};
 use crate::keymap::Context;
 use crate::search::{match_positions, matches_field};
-use crate::selection::{Mode, Ui};
+use crate::selection::{Hit, Mode, Ui};
 use crate::theme::Theme;
 
 impl Ui {
@@ -55,6 +55,12 @@ impl Ui {
             )));
         }
         lines.push(format!("  {search}"));
+        self.hit(
+            2,
+            lines.len() - 1,
+            self.search_prompt_geometry(width).1,
+            Hit::Search,
+        );
         {
             let table_limit = limit.saturating_sub(3);
             let inner = table_limit.saturating_sub(4);
@@ -179,6 +185,7 @@ impl Ui {
             };
             let mut table_rows = Vec::new();
             let mut separator_rows = Vec::new();
+            let mut pane_hits = Vec::new();
             if header_rule {
                 separator_rows.push((2, false));
                 table_rows.push(TableRow::new(vec![""; 4]));
@@ -292,6 +299,7 @@ impl Ui {
                         Style::default().fg(self.status_colors.themed(&row.status, theme)),
                     )));
                 }
+                pane_hits.push((table_rows.len() + if short { 1 } else { 2 }, row.id.clone()));
                 table_rows.push(TableRow::new(cells));
             }
             if shown.is_empty() {
@@ -361,6 +369,13 @@ impl Ui {
                 });
                 let mut state = TableState::default().with_selected(selected_row);
                 StatefulWidget::render(table, area, &mut buffer, &mut state);
+                if !preview && !(self.mode == Mode::Search && self.search_return == Mode::Themes) {
+                    for (y, id) in pane_hits {
+                        if y < area.height as usize - usize::from(!short) {
+                            self.hit(2, lines.len() + y, table_limit, Hit::Pane(id));
+                        }
+                    }
+                }
                 for y in 0..area.height {
                     let selected_line = ansi
                         && selected_row
@@ -455,10 +470,14 @@ impl Ui {
             if let Some(notice) = self.notice_line(width, ansi) {
                 lines.push(notice);
             }
-            lines.extend(self.hints(Context::Themes, width, hint_rows, ansi));
+            lines.extend(self.hints_at(Context::Themes, width, hint_rows, ansi, lines.len()));
             return lines;
         }
-        let footer = "Enter/Esc: select  Backspace: erase";
+        let footer = if self.search_return == Mode::Themes {
+            "Enter/Esc: preview  Backspace: erase"
+        } else {
+            "Enter/Esc: select  Backspace: erase"
+        };
         if ansi {
             let body_height =
                 height.saturating_sub(hint_rows + usize::from(self.theme_notice().is_some()));
@@ -470,12 +489,13 @@ impl Ui {
                 if let Some(notice) = self.notice_line(width, ansi) {
                     lines.push(notice);
                 }
-                lines.extend(self.hints(Context::Select, width, hint_rows, ansi));
+                lines.extend(self.hints_at(Context::Select, width, hint_rows, ansi, lines.len()));
             } else {
                 if let Some(notice) = self.notice_line(width, ansi) {
                     lines.push(notice);
                 }
                 lines.push(aligned(footer));
+                self.search_edit_hits(lines.len() - 1, footer);
             }
         }
         lines

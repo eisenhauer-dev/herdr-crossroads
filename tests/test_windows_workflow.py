@@ -1,5 +1,6 @@
 """Textual Windows preparation contract checks, not a YAML/Actions schema validator."""
 from pathlib import Path
+import ast
 import re
 import tomllib
 import unittest
@@ -53,6 +54,29 @@ on:
         self.assertEqual(panes["crossroads-windows"]["command"], ["./target/release/herdr-crossroads.exe"])
         self.assertEqual(manifest["build"][1], {"platforms": ["windows"], "command": ["python", "scripts/install-binary.py"]})
         self.assertEqual(manifest["actions"][0]["platforms"], ["linux", "macos"])
+
+    def test_native_helper_runs_mouse_and_input_policy_groups_and_both_acceptance_passes(self):
+        tree = ast.parse((ROOT / "scripts/build-windows.py").read_text())
+        loop = next(node for node in ast.walk(tree) if isinstance(node, ast.For)
+                    and isinstance(node.target, ast.Name) and node.target.id == "group")
+        groups = ast.literal_eval(loop.iter)
+        for group in ("test_input", "test_search", "test_selection::navigation", "test_mouse",
+                      "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
+                      "test_keymap::enter_is_reserved", "test_keymap::lowercase_f"):
+            self.assertIn(group, groups)
+        command = loop.body[0].value
+        self.assertEqual([value.value if isinstance(value, ast.Constant) else value.id
+                          for value in command.args[0].elts],
+                         ["cargo", "test", "--locked", "--lib", "group"])
+        self.assertEqual(next(k.value.value for k in command.keywords if k.arg == "timeout"), 60)
+        acceptance = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                      and isinstance(node.func, ast.Name) and node.func.id == "run"
+                      and node.args and isinstance(node.args[0], ast.List)
+                      and any(isinstance(value, ast.Constant) and value.value == "tests/test_windows_acceptance.py"
+                              for value in node.args[0].elts)]
+        self.assertEqual(len(acceptance), 2, "final-linked and installed bytes both need native mouse acceptance")
+        for command in acceptance:
+            self.assertEqual(next(k.value.value for k in command.keywords if k.arg == "timeout"), 240)
 
 
 if __name__ == "__main__":
