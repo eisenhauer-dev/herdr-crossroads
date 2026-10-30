@@ -1,4 +1,6 @@
 """Closed-pipe EOF and real-PTY lifecycle regressions."""
+import contextlib
+import copy
 import errno
 import os
 import pty
@@ -13,13 +15,20 @@ import threading
 import tty
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pty_keymaps
 import pty_render
 
+DARWIN_PENDIN = 0x20000000
+
 
 class TerminalRestorationDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        pendin = patch.object(termios, "PENDIN", DARWIN_PENDIN, create=True)
+        pendin.start()
+        self.addCleanup(pendin.stop)
+
     def test_equal_attributes_are_checked_once_without_reading_output(self):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
@@ -61,6 +70,7 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
         saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
         actual = saved.copy()
         actual[3] = 536872395
+        actual[1] ^= 1
         with patch.object(pty_render.sys, "platform", "darwin"), \
              patch("platform.mac_ver", return_value=("15.0", ("", "", ""), "arm64")), \
              patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
@@ -72,7 +82,7 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
                          "macos='15.0'", "darwin_kernel=", "python=", "sdk=unknown"):
             self.assertIn(expected, str(failure.exception))
 
-    def test_darwin_pendin_only_mismatch_retains_all_observed_stages(self):
+    def test_darwin_canonical_added_pendin_is_accepted_without_reading_or_mutation(self):
         saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
         active = [0, 0, 3, 0, 9600, 9600, [b"\x00"]]
         actual = saved.copy()
@@ -80,20 +90,83 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
         for machine in ("arm64", "x86_64"):
             for key in (b"\r", b"\x1b", b"q"):
                 for marker in (active, actual):
+                    observations = copy.deepcopy((saved, actual, active, marker))
                     with self.subTest(machine=machine, key=key, marker=marker), \
                          patch.object(pty_render.sys, "platform", "darwin"), \
                          patch("platform.mac_ver", return_value=("15.0", ("", "", ""), machine)), \
                          patch.object(pty_render.os, "uname", return_value=os.uname_result(("Darwin", "host", "24.0.0", "version", machine))), \
                          patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
-                         patch.object(pty_render.select, "select", return_value=([], [], [])), \
-                         self.assertRaises(AssertionError) as failure:
+                         patch.object(pty_render.select, "select", return_value=([], [], [])) as ready, \
+                         patch.object(pty_render.os, "read") as read:
                         pty_render.assert_terminal_restored(123, 456, saved, active, key, "cursor",
                                                             pre_close=active, cursor_marker_observed=marker)
                     attributes.assert_called_once_with(456)
-                    for expected in (f"key={key!r}", f"platform=darwin/{machine}", "darwin_kernel='24.0.0'",
-                                     "'lflag': (1483, 536872395)", f"pre_close={active!r}",
-                                     f"cursor_marker_observed={marker!r}", f"post_exit={actual!r}"):
-                        self.assertIn(expected, str(failure.exception))
+                    ready.assert_not_called()
+                    read.assert_not_called()
+                    self.assertEqual((saved, actual, active, marker), observations)
+
+    def test_restoration_rejects_every_change_outside_the_narrow_darwin_exception(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03", b"\x1c"]]
+        cases = []
+        for index in range(7):
+            actual = saved.copy()
+            actual[3] |= DARWIN_PENDIN
+            actual[index] = [b"\x04", b"\x1c"] if index == 6 else actual[index] ^ 1
+            cases.append(("darwin", saved, actual))
+        pending = saved.copy()
+        pending[3] |= DARWIN_PENDIN
+        noncanonical = saved.copy()
+        noncanonical[3] &= ~termios.ICANON
+        noncanonical_pending = noncanonical.copy()
+        noncanonical_pending[3] |= DARWIN_PENDIN
+        cases.extend([(platform, saved, pending) for platform in ("linux", "freebsd", "win32")])
+        cases.extend([("darwin", pending, saved), ("darwin", noncanonical, noncanonical_pending)])
+        for platform, expected, actual in cases:
+            with self.subTest(platform=platform, expected=expected, actual=actual), \
+                 patch.object(pty_render.sys, "platform", platform), \
+                 patch.object(pty_render.termios, "tcgetattr", return_value=actual), \
+                 patch.object(pty_render.select, "select", return_value=([], [], [])), \
+                 self.assertRaises(AssertionError):
+                pty_render.assert_terminal_restored(123, 456, expected, [0] * 7, b"q", "cursor")
+
+    def test_exact_equality_including_original_pendin_is_accepted_on_every_platform(self):
+        for platform in ("darwin", "linux", "freebsd", "win32"):
+            for lflag in (1483, 1483 | DARWIN_PENDIN, 0, DARWIN_PENDIN):
+                saved = [1, 2, 3, lflag, 9600, 9600, [b"\x03"]]
+                with self.subTest(platform=platform, lflag=lflag), \
+                     patch.object(pty_render.sys, "platform", platform), \
+                     patch.object(pty_render.termios, "tcgetattr", return_value=saved), \
+                     patch.object(pty_render.select, "select") as ready:
+                    pty_render.assert_terminal_restored(123, 456, saved, [0] * 7, b"q", "cursor")
+                ready.assert_not_called()
+
+    def test_popup_finish_uses_the_same_restoration_contract_and_keeps_cleanup_modes(self):
+        for kitty in (False, True):
+            for changed in (False, True):
+                saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+                actual = saved.copy()
+                actual[3] |= DARWIN_PENDIN
+                if changed:
+                    actual[2] ^= 1
+                popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
+                popup.master, popup.slave = pty.openpty()
+                fds = (popup.master, popup.slave)
+                popup.kitty = kitty
+                popup.saved_termios = saved
+                popup.child = Mock(returncode=0)
+                popup.child.poll.return_value = 0
+                popup.output = pty_keymaps.DrawReader(popup.master)
+                popup.output.pending = bytearray(b"\x1b[?1000l\x1b[?1006l\x1b[?25h" + (b"\x1b[<u" if kitty else b""))
+                with self.subTest(kitty=kitty, additional_change=changed), \
+                     patch.object(pty_keymaps.sys, "platform", "darwin"), \
+                     patch.object(pty_keymaps.termios, "tcgetattr", return_value=actual) as attributes, \
+                     patch.object(pty_keymaps, "drain", return_value=b""), \
+                     (self.assertRaisesRegex(AssertionError, "terminal restoration failed") if changed else contextlib.nullcontext()):
+                    popup.finish(b"q", expect_mouse=True)
+                attributes.assert_called_once_with(fds[1])
+                for fd in fds:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
 
 
 class SearchCursorFrameTests(unittest.TestCase):

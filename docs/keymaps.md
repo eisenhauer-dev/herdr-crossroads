@@ -283,7 +283,8 @@ and custom bindings remain available. Crossroads does not write this setting.
 The terminal owns button tracking (`1000`) and SGR coordinates (`1006`), without
 motion tracking. Both owned modes are disabled on normal close, startup/action
 failure and unwinding through the existing terminal guard, alongside cursor/Kitty
-cleanup and exact saved Unix termios or Windows console-mode restoration. These
+cleanup and saved Unix termios or exact Windows console-mode restoration. Unix
+acceptance uses the narrow Darwin semantic-restoration rule below. These
 are best-effort writes; forced process termination cannot run destructors.
 
 Windows keeps `ENABLE_VIRTUAL_TERMINAL_INPUT` and VT output enabled. Mouse capture
@@ -659,8 +660,17 @@ check still requires 150 ms without output: no repaint is expected there.
 These are receive-time observations,
 not internal-state timing or proof of the cause of any particular native macOS failure.
 
-The undersized-popup Enter/Esc/q render cases compare every `termios` attribute
-exactly once after successful child exit. On mismatch they report the changed
+The undersized-popup Enter/Esc/q render cases sample `termios` once after
+successful child exit. The shared `tests/terminal_restoration.py` rule also
+applies to the keymap popup and missing-CLI raw-restoration checks: exact equality
+passes on every platform. Only on Darwin, after a known raw-mode restoration to
+a saved **canonical** state with `PENDIN` originally absent, an actual state
+identical in every field except `actual.lflag == saved.lflag | termios.PENDIN`
+also passes. This is semantic restoration, not bit-exact equality. Losing an
+originally saved `PENDIN`, adding it to a saved noncanonical state or on another
+platform, or changing any other flag, speed or control character still fails.
+No observation is mutated and no input is read/discarded to make this rule pass.
+On rejected differences the render cases report the changed
 fields, full saved/active/post-exit attributes, platform and Python version, and
 captured output including any immediately ready post-exit `stty` diagnostics.
 The active snapshot is taken before sending the close key. Failure-output
@@ -670,19 +680,63 @@ frame reader returns, and reports the existing post-exit sample alongside macOS,
 Darwin kernel and Python versions. SDK provenance is explicitly unknown. The
 marker observation is receive-time evidence, not the instant the marker was
 emitted or proof that `stty` restoration has completed; the reader also drains
-output before returning. No input-queue query, input flush, retry or attribute
-mask is added, and a `PENDIN`-only difference still fails exact equality.
-These diagnostics do not
-establish the cause of the Intel installed-binary restoration failure in
+output before returning. No input-queue query, input flush, retry or blanket
+attribute mask is added. These observations do not reconstruct the scheduling
+of the Intel installed-binary restoration failure in
 [macOS run 39318351418](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39318351418);
-native failure output with these details is still needed.
+the controlled native evidence below addresses the kernel-generated flag instead.
+
+For the separately reported Intel missing-CLI restoration failure in
+[run 41124150532](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41124150532)
+at `c0ecbfe`, the macOS workflow now runs
+`python3 tests/diagnose_darwin_terminal.py` before acceptance gates on both
+architectures. It logs selected uname fields (excluding hostname), kernel
+release/build/version, `sw_vers`, Python, and PATH-selected plus `/bin/stty`
+paths, resolved paths, SHA256, optional Mach-O identity from `file` and embedded
+build/version markers from `what` when available.
+Hashes and binary identity do not establish an exact Apple source version.
+Required command failures fail the diagnostic; optional `file`/`what` failures are
+labelled unavailable. Commands have two-second deadlines, within a one-minute
+workflow step. Non-Darwin execution explicitly skips only this diagnostic.
+
+One fresh disposable PTY records saved attributes/`stty -g`, raw attributes and
+attributes immediately after synchronous saved-state restoration using the
+application's raw flags. There is no slave reader, input write, input flush,
+retry or normalization; attribute differences are observations, not acceptance
+results. The missing-CLI acceptance fixture separately logs Darwin attributes
+before launch, after child exit and after its existing output drain to stderr,
+before its unchanged mode assertions and shared restoration check. Raw state is
+explicitly unobserved: no new wait/probe is inserted into that fixture. Its success message
+now follows this check too. These diagnostics neither modify application
+restoration nor replace any full or installed-byte PTY gate.
+
+Native diagnostic evidence, documented 2026-11-02 from supplied
+[run 41127939663](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41127939663):
+
+| Runner | macOS build | Darwin / reported XNU build |
+| --- | --- | --- |
+| ARM64, job `124311170243` | 15.8.2 / `24H232` | 24.6.0 / `11417.140.69.713.47` |
+| Intel, job `124311170487` | 15.7.9 / `24G830` | 24.6.0 / `11417.140.69.711.44` |
+
+Both selected `/bin/stty`, with `what` identifying `adv_cmds-235`. On each
+no-reader/no-input disposable PTY, lflag was `1483` before raw mode, `65` in raw
+mode, and `536872395` after saved-state restoration: only `PENDIN` (`0x20000000`)
+was added to the saved state. These are observed kernel/binary build identities,
+not independently established exact Apple source provenance. All four package
+and all four installed-binary PTYs passed on each architecture in that run under
+the earlier exact assertions; Intel subsequently failed artifact upload with
+`ENOTFOUND`, so its overall job did not pass. Those intermittent acceptance
+successes do not prove a fix. The approved change corrects the test contract,
+not application restoration; native confirmation of the new comparison remains
+pending. It does not establish live Herdr or physical-hardware certification.
 
 The trickling-focus-reply startup test accepts only `BrokenPipe` or `NotConnected`
 when its server writes after the peer disconnects: Darwin can report either
 condition. Its original 800-ms process-exit bound, unsuccessful-exit and timeout
-message checks, request identity and no-retry assertions remain unchanged. The
-expectation correction and new Darwin restoration observations still need native
-macOS execution; Linux tests and simulated Darwin diagnostics are not that proof.
+message checks, request identity and no-retry assertions remain unchanged. Native
+verification of this startup expectation is separate from the completed restoration
+observations above. Native execution of the corrected restoration comparison
+remains pending; Linux tests and simulated Darwin diagnostics are not that proof.
 
 The popup helper and standalone render cases retain the parent's slave descriptor
 until final output has been read, then close both descriptors. This avoids a last

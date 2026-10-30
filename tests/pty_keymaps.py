@@ -19,6 +19,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 from pty_render import expected_search_row, screen
 from terminal_screen import Screen, table_state
+from terminal_restoration import raw_terminal_restored
 
 
 def read_until(fd, marker, timeout=3):
@@ -214,7 +215,8 @@ class Popup:
             if expect_mouse is not None:
                 for mode in (1000, 1006):
                     assert tail.count(f"\x1b[?{mode}l".encode()) == int(expect_mouse), tail
-                assert termios.tcgetattr(self.slave) == self.saved_termios, (self.saved_termios, termios.tcgetattr(self.slave), tail)
+                actual = termios.tcgetattr(self.slave)
+                assert raw_terminal_restored(self.saved_termios, actual), ("terminal restoration failed (only Darwin canonical added PENDIN is permitted)", self.saved_termios, actual, tail)
         finally:
             self.abort()
 
@@ -344,7 +346,11 @@ def mouse_cases(binary, directory):
             popup.abort()
         listener.close()
         worker.join(timeout=3)
-    print("Mouse PTY: classic/Kitty search/help/actions/themes/wheel/focus/opt-out/exact restoration passed")
+    startup_failure_case(binary, directory)
+    print("Mouse PTY: classic/Kitty search/help/actions/themes/wheel/focus/opt-out/terminal restoration passed")
+
+
+def startup_failure_case(binary, directory):
     master, slave = pty.openpty()
     child = None
     try:
@@ -353,10 +359,19 @@ def mouse_cases(binary, directory):
         env.pop("HERDR_SOCKET_PATH", None)
         child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
         assert child.wait(timeout=3) != 0, "missing CLI must fail startup"
+        after_wait = termios.tcgetattr(slave) if sys.platform == "darwin" else None
         raw = drain(master, timeout=0)
+        if sys.platform == "darwin":
+            after_drain = termios.tcgetattr(slave)
+            # Read-only observations after exit; do not wait for a raw sample or
+            # touch the input queue to normalize the kernel's pending state.
+            print(f"Darwin missing-CLI terminal: before_app={saved!r} raw_state=unobserved "
+                  f"after_wait={after_wait!r} after_drain={after_drain!r}",
+                  file=sys.stderr, flush=True)
         for mode in (1000, 1006):
             assert raw.count(f"\x1b[?{mode}h".encode()) == 1 and raw.count(f"\x1b[?{mode}l".encode()) == 1, raw
-        assert termios.tcgetattr(slave) == saved, (saved, termios.tcgetattr(slave), raw)
+        actual = termios.tcgetattr(slave)
+        assert raw_terminal_restored(saved, actual), ("terminal restoration failed (only Darwin canonical added PENDIN is permitted)", saved, actual, raw)
     finally:
         if child is not None and child.poll() is None:
             child.kill()

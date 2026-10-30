@@ -14,6 +14,8 @@ import termios
 import unicodedata
 from pathlib import Path
 
+from terminal_restoration import raw_terminal_restored
+
 
 def frame(master, marker):
     data = bytearray()
@@ -174,7 +176,7 @@ NOTICE_END = b"  Press Enter/Esc/q to close."
 def assert_terminal_restored(master, slave, saved, active, key, output,
                              pre_close=None, cursor_marker_observed=None):
     actual = termios.tcgetattr(slave)
-    if actual == saved:
+    if raw_terminal_restored(saved, actual):
         return
     # The cursor marker precedes stty restoration. Collect any later error output
     # only after child.wait(), without waiting or retrying the attribute check.
@@ -193,7 +195,7 @@ def assert_terminal_restored(master, slave, saved, active, key, output,
     changed = {name: (before, after) for name, before, after in zip(names, saved, actual) if before != after}
     darwin = (f"macos={platform.mac_ver()[0]!r} darwin_kernel={os.uname().release!r} "
               "sdk=unknown (not queried) " if sys.platform == "darwin" else "")
-    assert actual == saved, (f"terminal restoration failed: key={key!r} "
+    assert raw_terminal_restored(saved, actual), (f"terminal restoration failed (only Darwin canonical added PENDIN is permitted): key={key!r} "
                              f"platform={sys.platform}/{os.uname().machine} python={sys.version} "
                              f"{darwin}"
                              f"changed={changed!r} saved={saved!r} active={active!r} actual={actual!r} "

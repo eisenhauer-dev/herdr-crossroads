@@ -87,6 +87,7 @@ jobs:
 
     def test_full_release_gates_in_order(self):
         commands = [
+            "python3 tests/diagnose_darwin_terminal.py",
             "python3 tests/test_macos_workflow.py",
             "cargo fmt --check",
             "cargo clippy --locked --all-targets -- -D warnings",
@@ -103,6 +104,14 @@ jobs:
             'python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"'])
         self.assertNotIn("cargo build --release", self.workflow)
         self.assertNotIn("target/release/herdr-crossroads", self.workflow)
+
+    def test_bounded_diagnostic_and_its_regressions_precede_native_gates(self):
+        diagnostic = "python3 tests/diagnose_darwin_terminal.py"
+        self.assertIn("timeout-minutes: 1\n        run: " + diagnostic, self.workflow)
+        regression = "python3 -B -m unittest discover -s tests -p test_darwin_terminal_diagnostics.py"
+        self.assertIn(regression, self.workflow)
+        self.assertLess(self.workflow.index(diagnostic), self.workflow.index("cargo test --locked"))
+        self.assertLess(self.workflow.index(regression), self.workflow.index("sh scripts/build-macos.sh"))
 
     def test_native_packaging_then_real_installation_then_exact_upload(self):
         reader = "python3 -B -m unittest discover -s tests -p test_pty_readers.py"
