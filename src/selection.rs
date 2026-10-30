@@ -9,11 +9,13 @@ use super::theme::{self, Theme, NAMES};
 use super::topology::Row;
 
 mod help;
+mod mouse;
 mod themes;
+pub(crate) use mouse::{Hit, MouseState};
 
 use help::{Help, HelpContext};
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Mode {
     Select,
     Search,
@@ -22,6 +24,7 @@ pub(super) enum Mode {
 }
 
 pub(super) struct Ui {
+    pub(crate) mouse: std::cell::RefCell<MouseState>,
     pub(super) keymap: Keymap,
     pub(super) keymap_errors: Vec<String>,
     pub(super) status_errors: super::config::Diagnostics,
@@ -34,6 +37,7 @@ pub(super) struct Ui {
     pub(super) selected: Option<String>,
     pub(super) query: String,
     pub(super) mode: Mode,
+    pub(super) search_return: Mode,
     pub(super) help: Help,
     pub(super) closed: bool,
     pub(super) width: usize,
@@ -64,6 +68,7 @@ impl Ui {
     ) -> Self {
         let selected = rows.first().map(|row| row.id.clone());
         let mut ui = Self {
+            mouse: std::cell::RefCell::new(MouseState::default()),
             keymap: Keymap::default(),
             keymap_errors: Vec::new(),
             status_errors: super::config::Diagnostics::default(),
@@ -76,6 +81,7 @@ impl Ui {
             selected,
             query: String::new(),
             mode: Mode::Select,
+            search_return: Mode::Select,
             help: Help::new(HelpContext::Select, &Keymap::default()),
             closed: false,
             width: 160,
@@ -114,6 +120,7 @@ impl Ui {
 
     pub(super) fn theme(&self) -> Theme {
         let name = if self.mode == Mode::Themes
+            || (self.mode == Mode::Search && self.search_return == Mode::Themes)
             || (self.mode == Mode::Help && self.help.context == HelpContext::Themes)
         {
             NAMES[self.theme_cursor]
@@ -151,6 +158,14 @@ impl Ui {
     }
 
     pub(super) fn key(&mut self, key: Key) -> Option<String> {
+        if let Key::Mouse(mouse) = key {
+            return self.mouse_input(mouse, std::time::Instant::now());
+        }
+        self.mouse.borrow_mut().click = None;
+        self.keyboard(key)
+    }
+
+    fn keyboard(&mut self, key: Key) -> Option<String> {
         if self.configuration_failed() {
             match key {
                 Key::Up | Key::Char('k') => self
@@ -183,7 +198,7 @@ impl Ui {
         }
         if self.mode == Mode::Search {
             match key {
-                Key::Enter | Key::Esc => self.mode = Mode::Select,
+                Key::Enter | Key::Esc => self.mode = self.search_return,
                 Key::Backspace => {
                     self.query.pop();
                 }
@@ -194,6 +209,10 @@ impl Ui {
         }
         let visible = self.visible();
         let action = self.keymap.action(Context::Select, key)?;
+        self.select_action(action, &visible)
+    }
+
+    fn select_action(&mut self, action: Action, visible: &[usize]) -> Option<String> {
         match action {
             Action::OpenThemes => {
                 self.theme_cursor = self.theme_index;
@@ -206,21 +225,24 @@ impl Ui {
                         .map(|name| format!("Herdr theme {name} not yet supported; using Mocha"));
                 }
             }
-            Action::OpenSearch => self.mode = Mode::Search,
+            Action::OpenSearch => {
+                self.search_return = Mode::Select;
+                self.mode = Mode::Search;
+            }
             Action::OpenHelp => {
                 self.help = Help::new(HelpContext::Select, &self.keymap);
                 self.mode = Mode::Help;
             }
             Action::Close => self.closed = true,
             Action::FocusPane => {
-                if let Some(i) = self.selected_index(&visible) {
+                if let Some(i) = self.selected_index(visible) {
                     self.closed = true;
                     return Some(self.rows[i].id.clone());
                 }
             }
             Action::ResetSearch => self.query.clear(),
             Action::NextWorkspace | Action::PreviousWorkspace => {
-                if let Some(i) = self.selected_index(&visible) {
+                if let Some(i) = self.selected_index(visible) {
                     let blocks: Vec<usize> = visible
                         .iter()
                         .enumerate()
@@ -243,7 +265,7 @@ impl Ui {
             }
             Action::NextRow | Action::PreviousRow => {
                 if let Some(at) = self
-                    .selected_index(&visible)
+                    .selected_index(visible)
                     .and_then(|i| visible.iter().position(|v| *v == i))
                 {
                     let next = if action == Action::NextRow {
@@ -255,7 +277,7 @@ impl Ui {
                 }
             }
             Action::PreviousTab | Action::NextTab => {
-                if let Some(i) = self.selected_index(&visible) {
+                if let Some(i) = self.selected_index(visible) {
                     let current = &self.rows[i].tab_id;
                     let blocks: Vec<usize> = visible
                         .iter()

@@ -219,7 +219,7 @@ fn footer_keys_precede_actions_for_custom_bindings_in_every_context() {
     state.keymap = map;
     for (context, expected) in [
         (Context::Select, "J/↓: ↓pane K/↑: ↑pane H/←: ↑tab L/→: ↓tab N: ↓ws P: ↑ws Enter: focus Esc: exit ?: keys"),
-        (Context::Help, "J/↓: ↓move K/↑: ↑move Esc: close keys"),
+        (Context::Help, "J/↓: ↓move K/↑: ↑move Enter: run Esc: close keys"),
         (Context::Themes, "J/↓: ↓theme K/↑: ↑theme Space: table Enter: save Esc: cancel"),
     ] {
         let actual = state.hints(context, 80, 3, false).join(" ")
@@ -253,7 +253,7 @@ fn separator_characters_are_quoted_only_for_display() {
             state.theme_table_preview = preview;
             for (context, action, direction, separators) in [
                 (Context::Select, "next_row", "pane", 8),
-                (Context::Help, "next_category", "move", 2),
+                (Context::Help, "next_category", "move", 3),
                 (Context::Themes, "next_theme", "theme", 4),
             ] {
                 let hints = state
@@ -291,7 +291,7 @@ fn footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
     use crate::keymap::{Context, Keymap};
     let mut state = super::test_support::ui();
     let (map, errors) = Keymap::parse(
-        r#"{"select":{"next_row":["J","Left"],"previous_row":["Up","K"],"previous_tab":["H"],"next_tab":["L"],"next_workspace":["Tab","Right"],"focus_pane":["Enter","F"],"close":["Esc","X"]}}"#,
+        r#"{"select":{"next_row":["J","Left"],"previous_row":["Up","K"],"previous_tab":["H"],"next_tab":["L"],"next_workspace":["Tab","Right"],"focus_pane":["g","F"],"close":["Esc","X"]}}"#,
     );
     assert!(errors.is_empty(), "{errors:?}");
     state.keymap = map;
@@ -302,7 +302,7 @@ fn footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
         "{wide}"
     );
     assert!(
-        wide.contains("Enter: focus") && wide.contains("Esc: exit"),
+        wide.contains("g: focus") && wide.contains("Esc: exit"),
         "{wide}"
     );
     assert!(

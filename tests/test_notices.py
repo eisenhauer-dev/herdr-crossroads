@@ -5,11 +5,12 @@ import copy
 import json
 import hashlib
 from html.parser import HTMLParser
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import runpy
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -18,11 +19,105 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NoticeTests(unittest.TestCase):
+    def test_windows_relative_paths_preserve_reviewed_system_notice_suffix(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        system_notices = generator["system_notices"]
+        baseline = system_notices(validate_installed=False)
+
+        class WindowsRelativePath(type(ROOT)):
+            # Keep real filesystem reads native; serialize actual Windows paths.
+            def relative_to(self, *other):
+                return PureWindowsPath(super().relative_to(*other))
+
+        windows_root = WindowsRelativePath(ROOT)
+        relative = (windows_root / "LICENSES/ubuntu-24.04-system.json").relative_to(windows_root)
+        self.assertIsInstance(relative, PureWindowsPath)
+        self.assertIn("\\", str(relative))
+        with patch.dict(system_notices.__globals__, ROOT=windows_root):
+            output = system_notices(validate_installed=False)
+        self.assertEqual(output, baseline)
+        suffix = generator["markdown"]("\n".join(output))
+        self.assertTrue((ROOT / "THIRD-PARTY-NOTICES.md").read_bytes().decode().endswith(suffix))
+
+    def test_published_markdown_installs_with_windows_expanded_checkout(self):
+        from test_install_binary import InstallBinaryTests
+        fixture = InstallBinaryTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.check_published_markdown_with_windows_expanded_checkout()
+
+    def test_autocrlf_checkout_preserves_pinned_notice_evidence(self):
+        evidence = sorted((ROOT / "LICENSES").glob("*-system.json"))
+        evidence += sorted((ROOT / "LICENSES").glob("glibc-*-startup.txt"))
+        self.assertEqual(len(evidence), 4)
+        with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-notice-checkout-") as temporary:
+            repo = Path(temporary)
+
+            def git(*args):
+                return subprocess.run(["git", "-c", "core.autocrlf=true", *args], cwd=repo,
+                                      check=True, capture_output=True)
+
+            git("init")
+            (repo / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
+            (repo / "LICENSES").mkdir()
+            inputs = [ROOT / "THIRD-PARTY-NOTICES.md", *evidence]
+            for source in inputs:
+                (repo / source.relative_to(ROOT)).write_bytes(source.read_bytes())
+            (repo / "ordinary.txt").write_bytes(b"ordinary text\n")
+            git("add", ".")
+            # Materialize the real index through Git's Windows-style checkout
+            # conversion, without changing any settings or files in the real repo.
+            for source in inputs:
+                (repo / source.relative_to(ROOT)).unlink()
+            (repo / "ordinary.txt").unlink()
+            git("checkout-index", "--all", "--force")
+            self.assertEqual((repo / "ordinary.txt").read_bytes(), b"ordinary text\r\n")
+            generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+            system_notices = generator["system_notices"]
+            baseline = system_notices(validate_installed=False)
+            with patch.dict(system_notices.__globals__, ROOT=repo):
+                self.assertEqual(system_notices(validate_installed=False), baseline)
+                for source in inputs:
+                    path = repo / source.relative_to(ROOT)
+                    self.assertEqual(path.read_bytes(), source.read_bytes(), str(source))
+                for source in evidence:
+                    path = repo / source.relative_to(ROOT)
+                    original = path.read_bytes()
+                    path.write_bytes(original.replace(b"\n", b"\r\n"))
+                    with self.subTest(source=source):
+                        if source.suffix == ".json":
+                            self.assertNotEqual(system_notices(validate_installed=False), baseline)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "startup source evidence"):
+                                system_notices(validate_installed=False)
+                    path.write_bytes(original)
+
+    def test_windows_crates_have_explicit_verbatim_notices(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        generated = generator["generate"]()
+        for name, version in [("crossterm_winapi", "0.9.1"), ("winapi", "0.3.9"), ("windows-link", "0.2.1")]:
+            heading = generator["markdown"](f"<h2>{name} {version}</h2>").strip()
+            self.assertIn("\n" + heading + "\n", generated)
+        metadata = json.loads(generator["command"](
+            "cargo", "metadata", "--offline", "--locked", "--format-version", "1",
+            "--filter-platform", "x86_64-pc-windows-msvc"))
+        count = 0
+        for package in metadata["packages"]:
+            if package["name"] not in {"crossterm_winapi", "winapi", "windows-link"}:
+                continue
+            heading = generator["markdown"](f"<h2>{package['name']} {package['version']}</h2>").strip()
+            section = generated.split("\n" + heading + "\n", 1)[1].split("\n## ", 1)[0]
+            for path in Path(package["manifest_path"]).parent.rglob("*"):
+                if path.is_file() and re.search(r"licen[cs]e|notice|copyright|copying|attribution", path.name, re.I):
+                    self.assertIn("\n" + path.read_bytes().decode() + "\n", section, str(path))
+                    count += 1
+        self.assertEqual(count, 5)
+
     def test_darwin_graphs_are_covered_by_verbatim_checked_in_inventory(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         check = generator.get("check_darwin")
         self.assertIsNotNone(check, "Darwin requires an explicit licensing gate, not Linux gcc/dpkg")
-        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin"]:
+        for target in ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]:
             with patch.dict(check.__globals__, installed_system=lambda: self.fail("Darwin must not use Linux gcc/dpkg")):
                 check(target)
 
@@ -44,9 +139,10 @@ class NoticeTests(unittest.TestCase):
                             package["version"] = "0.0.0"
                     return json.dumps(data)
                 return result
-            with self.subTest(failure=failure), patch.dict(check.__globals__, command=command):
-                with self.assertRaises(ValueError):
-                    check("aarch64-apple-darwin")
+            for target in ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"]:
+                with self.subTest(failure=failure, target=target), patch.dict(check.__globals__, command=command):
+                    with self.assertRaises(ValueError):
+                        check(target)
         with self.assertRaisesRegex(ValueError, "unsupported"):
             check("unknown-apple-darwin")
 
@@ -85,7 +181,8 @@ class NoticeTests(unittest.TestCase):
 
     def test_output_is_markdown_with_every_original_verbatim_block(self):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
-        generated = generator["generate"]()
+        generated = generator["generate"](windows=False)
+        self.assertIn("78 unique registry package versions", generated)
         self.assertTrue(generated.startswith("# Crossroads third-party notices\n"),
                         "notices must be genuine Markdown, not renamed HTML")
         original = generator["generate_html"]()
@@ -286,7 +383,14 @@ class NoticeTests(unittest.TestCase):
         generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
         generated = generator["generate"]()
         self.assertEqual((ROOT / "THIRD-PARTY-NOTICES.md").read_bytes().decode(), generated)
-        self.assertIn("78 unique registry package versions", generated)
+        targets = [generator["TARGET"], "x86_64-pc-windows-msvc"]
+        active = set()
+        for target in targets:
+            tree = generator["command"]("cargo", "tree", "--offline", "--locked", "--target",
+                                        target, "-e", "normal,build", "--prefix", "none")
+            active.update(re.findall(r"^([\w-]+) v([^\s]+)", tree, re.M))
+        self.assertEqual(len(active) - 1, 81)
+        self.assertIn(f"{len(active) - 1} unique registry package versions", generated)
         for text in ["foldhash 0.2.0", "unicode-ident 1.0.26", "LICENSE-UNICODE",
                      "unicode-general-category 1.1.0", "### COPYING",
                      "Copyright notices for The Rust Standard Library"]:

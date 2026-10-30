@@ -1,20 +1,22 @@
+#[cfg(windows)]
+use crate::windows_pipe::Pipe as LocalStream;
 use std::io;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::os::unix::net::UnixStream;
-#[cfg(unix)]
+use std::os::unix::net::UnixStream as LocalStream;
+#[cfg(any(unix, windows))]
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use serde_json::Value;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(super) fn focus(pane_id: &str) -> io::Result<()> {
     let path = std::env::var_os("HERDR_SOCKET_PATH")
         .filter(|path| !path.is_empty())
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HERDR_SOCKET_PATH is missing"))?;
-    let mut stream = UnixStream::connect(path)?;
+    let mut stream = LocalStream::connect(path)?;
     serde_json::to_writer(
         &mut stream,
         &serde_json::json!({"id":"crossroads-focus","method":"pane.focus","params":{"pane_id":pane_id}}),
@@ -70,7 +72,7 @@ pub(super) fn focus(pane_id: &str) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(super) fn focus(_pane_id: &str) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

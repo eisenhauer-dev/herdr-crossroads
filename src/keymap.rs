@@ -83,6 +83,7 @@ pub(super) struct Binding {
     pub(super) keys: Vec<Key>,
 }
 pub(super) struct Keymap {
+    pub(super) mouse_enabled: bool,
     pub(super) bindings: Vec<Binding>,
     pub(super) oversized_actions: Vec<OversizedAction>,
     pub(super) diagnostics: config::Diagnostics,
@@ -109,7 +110,7 @@ impl Default for Keymap {
                     (Action::NextWorkspace, "Tab"),
                     (Action::PreviousWorkspace, "Shift+Tab"),
                     (Action::FocusPane, "Enter"),
-                    (Action::OpenSearch, "/"),
+                    (Action::OpenSearch, "f"),
                     (Action::ResetSearch, "r"),
                     (Action::OpenThemes, "t"),
                     (Action::OpenHelp, "?"),
@@ -121,7 +122,7 @@ impl Default for Keymap {
                 &[
                     (Action::NextCategory, "j/Down"),
                     (Action::PreviousCategory, "k/Up"),
-                    (Action::OpenSearch, "/"),
+                    (Action::OpenSearch, "f"),
                     (Action::ResetSearch, "r"),
                     (Action::Close, "Esc/q"),
                 ][..],
@@ -139,11 +140,7 @@ impl Default for Keymap {
             ),
         ] {
             for &(action, keys) in actions {
-                let keys = if action == Action::OpenSearch {
-                    vec![Key::Char('/')]
-                } else {
-                    keys.split('/').map(|s| Key::parse(s).unwrap()).collect()
-                };
+                let keys = keys.split('/').map(|s| Key::parse(s).unwrap()).collect();
                 bindings.push(Binding {
                     context,
                     action,
@@ -152,6 +149,7 @@ impl Default for Keymap {
             }
         }
         Self {
+            mouse_enabled: true,
             bindings,
             oversized_actions: Vec::new(),
             diagnostics: config::Diagnostics::default(),
@@ -226,6 +224,16 @@ impl Keymap {
         for context_entry in &contexts.properties {
             let context = context_entry.name.as_str();
             let actions = &context_entry.value;
+            if context == "mouse_enabled" {
+                if let Some(value) = actions.as_boolean_lit() {
+                    map.mouse_enabled = value.value;
+                } else {
+                    let error = "mouse_enabled: expected boolean".to_owned();
+                    map.diagnostics.push("Keymap structure", error.clone());
+                    errors.push(error);
+                }
+                continue;
+            }
             let known_context = Context::from_name(context).is_some();
             if !known_context {
                 let error = format!("unknown context {context}");
@@ -274,6 +282,15 @@ impl Keymap {
                 }
                 for key in &keys.elements {
                     match key.as_string_lit().and_then(|s| Key::parse(&s.value)) {
+                        Some(Key::Enter) => {
+                            let message = format!("{action}: Enter is reserved; custom Enter bindings are not allowed");
+                            map.push_mode_diagnostic(
+                                "Unsupported keymap keys",
+                                context,
+                                message.clone(),
+                            );
+                            errors.push(format!("{context}.{message}"));
+                        }
                         Some(key) => {
                             if !parsed.contains(&key) {
                                 parsed.push(key);

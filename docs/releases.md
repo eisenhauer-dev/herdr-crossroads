@@ -3,8 +3,10 @@
 This process prepares reviewable versioned Linux/macOS assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The checkout prepares **0.2.0, not released**; no tag, merge, push or publication
-is approved by this preparation. The latest published version is `0.1.0`, the first regular Linux release, for
+**0.2.0 is released** for Linux/macOS. Windows 10/11 x86_64 is intended for
+**0.3.0**, currently **PREPARATION only**, with the package version still **0.2.0**;
+no new tag, merge, push or publication is approved by this preparation.
+The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
 publication as the regular [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0),
@@ -66,6 +68,51 @@ passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d
 including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
 all four full PTYs, packaging and upload. These are test-version results, not the
 fresh gates or separate publication approval for the regular `0.1.0` release above.
+
+## Windows release boundary
+
+The Windows workflow/helper currently prepare evidence, not releasable or
+certified assets. The first two native Windows CI attempts reached the 30-minute
+job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
+console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
+was no native Windows GREEN at that checkpoint. The fourth (`bcbd93e`, run `39605428457`) passed
+the standard-handle/redirected-parent and exact console-restoration checks, then
+failed a raw styled-label assertion in 3m 38s with clean teardown and no artifacts.
+Run `39614583553` (`6623013`) passed the styled-label assertion and earlier console,
+focus, reconnect and noninteractive checks, then failed in 2m 56s on a stale
+resize-message expectation despite the correct minimum/actual-size notice.
+Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal, then failed the distribution suite's
+pinned-directory rename assertion; that failed run did not reach installed-binary
+acceptance. The later [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+at head `6c464a7` completed successfully on 2026-10-21: all seven acceptance checks
+passed against both final-linked and installed bytes, and all ten distribution
+checks passed. Exact artifact verification also passed; the
+[historical artifact receipt](builds.md#successful-windows-preparation-evidence)
+retains preparation-only provenance and limited retention, not release approval.
+Versioned output
+names still use **0.2.0**;
+do not relabel those files as 0.3.0 or infer a version bump
+from the intended next release. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
+
+Native pipeline success and exact artifact verification are recorded above.
+Before a Windows release, the remaining gates include
+[MSVC/SDK linked-input attribution review](builds.md#msvc-and-sdk-attribution-gate),
+Windows 10/11 runtime certification, independent combined review and primary
+acceptance. The helper's
+fake-host ConPTY/named-pipe and installer-byte checks are **not** actual Herdr
+managed-install/live-popup integration. Separately, the user reported successful
+basic source-build/link/live-popup use with Herdr 0.9.5 on a physical Windows 11
+PC on 2026-10-28; the exact OS build and per-function checklist were not recorded.
+That report does not certify all features, Windows 10 or managed installation,
+and does not close the attribution gate or approve a release. Host keybinding
+setup is Unix-only and Windows uses `crossroads-windows`; reconcile those
+[launch limits](installation.md#windows-preparation-limitations) before acceptance.
+Version changes, remote actions and release/publication approval remain separate.
+
+The 0.2.0 gate checklist and dated receipts below describe the earlier macOS
+release preparation, not remaining Windows acceptance or authority to release again.
 
 ## Version and asset contract
 
@@ -237,7 +284,12 @@ stripping or reflowing it; fences exceed any backtick run in the text. Cached
 crate files are read as UTF-8 bytes, preserving their original CRLF where present
 (the old HTML generator normalized those line endings). `.gitattributes` disables
 Git text normalization for this generated file so checkouts retain those bytes
-and the installer compatibility pin. The upstream Rust HTML
+and the installer compatibility pin. Targeted `-text` rules also preserve
+`LICENSES/*-system.json` and `LICENSES/glibc-*-startup.txt`: their exact bytes are
+part of the checked notice provenance, including on `core.autocrlf=true` Windows
+checkouts. Tests materialize a real Git index with that conversion enabled and
+verify both preserved evidence and rejection/detection of changed evidence.
+The upstream Rust HTML
 SHA256 still identifies the original source bytes, not the Markdown rendition.
 Tests compare all 458 preformatted blocks in order, all prose and external links,
 and all 140 active packaged license/notice files against the exact local sources.
@@ -471,9 +523,11 @@ the exact packaged archive before upload. This actual managed install/reinstall,
 negative/config-retention and installed-binary four-PTY gate uses local Git/assets
 and no server/popup. Its native execution passed on all three targets in the
 [current candidate runs](builds.md#current-020-three-platform-ci-evidence), separately
-from the historical public runs below. The macOS workflow preserves its individual existing
-five-minute PTY steps and adds native packaging/real installation before exact-asset
-upload. Both workflows remain public-only/read-only with manual publication separate.
+from the historical public runs below. The macOS workflow runs its four full PTY
+gates on the fresh final-linked binary inside packaging, each with a five-minute
+watchdog, rather than also testing a separate ordinary release build. Real
+installation acceptance still precedes exact-asset upload. Both workflows remain
+public-only/read-only with manual publication separate.
 
 The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
 passed the gates, explicit-target build, all four full isolated PTYs, packaging,

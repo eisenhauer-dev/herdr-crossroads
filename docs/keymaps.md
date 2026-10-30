@@ -11,13 +11,21 @@ Crossroads never writes, migrates, or deletes keymaps.
 
 ## Schema and replacement
 
-The root is an object with optional `select`, `help`, and `themes` objects. Each
+The root is an object with optional `select`, `help`, and `themes` objects and an
+optional `mouse_enabled` boolean (default `true`). Each
 action takes an array of **one or two defined key strings**. The limit is checked
 before deduplication: even `["q", "q", "q"]` is invalid. An action replaces its entire
 default list; omitted actions retain their defaults. There is no disabling an
 action, macro, sequence, or configurable search context. Repeated identical keys
 within one action are deduplicated, preserving their order. Duplicate field names
 at any level are errors, including escaped spellings of the same field name.
+Enter is reserved: **any custom assignment to `Enter` is a configuration error**,
+including explicitly restating a default binding. JSON-escaped spellings that
+decode to `Enter` (such as `"Ent\u0065r"`) are rejected identically. There is no
+additional accepted `Return`/lowercase alias. Built-in defaults still use Enter
+for pane focus and theme save; Help has fixed Enter activation. Other action
+replacement rules remain unchanged, including replacement of focus/save with
+other keys. Omit those actions to keep their built-in Enter bindings.
 
 JSONC accepts `//` and `/* … */` comments and trailing commas in objects and
 arrays, but otherwise requires JSON: double quotes, commas between entries, JSON
@@ -66,7 +74,7 @@ and reconnect snapshots do not reset the highlight to the launch pane.
 | `previous_tab` | `h`, `Left` | Previous visible tab block |
 | `next_workspace` | `Tab` | Next visible workspace block |
 | `previous_workspace` | `Shift+Tab` | Previous visible workspace block |
-| `open_search` | `/` | Edit the pane search |
+| `open_search` | `f` | Edit the pane search |
 | `reset_search` | `r` | Clear the pane filter |
 | `open_help` | `?` | Open Keys help |
 | `open_themes` | `t` | Open theme selection |
@@ -86,12 +94,22 @@ movement. Navigation never focuses a pane.
 | --- | --- | --- |
 | `next_category` | `j`, `Down` | Move forward through visible help entries |
 | `previous_category` | `k`, `Up` | Move backward through visible help entries |
-| `open_search` | `/` | Edit the independent help search |
+| `open_search` | `f` | Edit the independent help search |
 | `reset_search` | `r` | Clear the help filter |
 | `close` | `Esc`, `q` | Return to the calling Select or Themes view |
 
 `?` opens help from Select or Themes (list or table preview); it does not close Help by default. All close/cancel
 lists remain replaceable with one or two custom keys.
+
+In Help navigation, fixed **Enter executes the marked visible action**. First
+leave Help and restore the actual caller (Select or the same Themes list/table
+preview, pending theme, pane selection, filter and viewport), then dispatch that
+entry's action identity in the caller. No remapped physical key is synthesized.
+For example, next-theme changes the pending Themes choice; focus-pane focuses
+the selected pane; close exits; show-keys reopens the caller's Help. Empty help
+matches have nothing to execute. Enter during Help search only ends editing;
+press Enter again to execute. Workspace directions have separate entries so
+each entry has exactly one action. The Help footer shows `Enter: run`.
 
 ### `themes` — list and pane-table preview
 
@@ -107,9 +125,9 @@ lists remain replaceable with one or two custom keys.
 Keys help shows only the calling context's actions and effective bindings, not
 hard-coded defaults. Its header is `Keys — Select` or `Keys — Themes`; navigation
 and search within help use the configured `help` bindings in either case.
-Closing help restores the caller, including the exact pane query, selection and
+Closing help without activation restores the caller, including the exact pane query, selection and
 viewport and the theme cursor, list/table preview and saved choice. Opening or
-closing help neither focuses a pane nor saves or cancels a pending theme.
+closing help without activation neither focuses a pane nor saves or cancels a pending theme.
 
 Existing search rows show a right-aligned current-mode label: `Select`, `Search`,
 `Help` or `Themes`. Query text clips to reserve space for the complete label.
@@ -156,16 +174,20 @@ omit `open_search` and `reset_search`, even with custom bindings. These actions
 remain available, and the full Keys help entries, fixed search-editing hints,
 and theme picker controls are unchanged.
 Keys help retains all effective keys (one or two) for its displayed actions.
-A single slash binding is displayed as `/` in Keys help and search prompts,
-including the default `Search: / to search`. In multiple-key lists it stays
+A single custom slash binding is displayed as `/` in Keys help and search prompts,
+for example `Search: / to search`; the default is now `Search: f to search` in
+Select and Help. `/` no longer opens search unless explicitly configured.
+If a custom action already uses `f`, also replace `open_search` in that context;
+otherwise the usual effective-binding collision ERROR applies.
+In multiple-key lists it stays
 quoted, for example `'/'/s` or `s/'/'`, to distinguish the key from the separator.
 Literal pipe remains displayed as `'|'`. These quotes are display notation only;
 footer separator protection is unchanged. In the configuration the key strings
 remain `"/"` and `"|"`; key identities, conflicts, and bindings are unchanged.
 
 Keys help filters and highlights the displayed key labels and meanings with the
-same case-insensitive subsequence search. Direction markers (`→`, `←`), the `|`
-group separator, and quotes around literal separator keys are searchable too,
+same case-insensitive subsequence search. Arrow labels (`→`, `←`) and quotes
+around custom literal separator keys are searchable too,
 including in wrapped custom-binding entries. Entries retain their original order.
 Help navigation wraps from the first matching entry to the last and vice versa,
 with the viewport following selection. No matches leaves selection remembered
@@ -190,8 +212,11 @@ Configured navigation keys have the same wrapping behavior as the defaults.
   visibility guarantee: fonts and terminals can render allowed scalars differently,
   and some allowed letters/symbols may look blank. It validates custom bindings
   only; terminal decoding and search-text handling are unchanged.
-- Exact special names: `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`,
+- Special identities include `Enter`, `Esc`, `Backspace`, `Up`, `Down`, `Left`,
   `Right`, `Tab`, `Shift+Tab`, `Space`.
+- `Enter` is a built-in input identity, **not an allowed custom binding** in any
+  context or action. Such assignments produce `Unsupported keymap keys` ERROR
+  blocks with the mode, action and selected configuration source path.
 - **No Ctrl or Alt binding is allowed in any context or keyboard protocol**:
   letters, arrows, and modified special keys are all configuration errors.
 - Shift-generated printable symbols are stored as characters, for example `!`,
@@ -205,6 +230,86 @@ an entire Alt-letter input. `Ctrl+j` (LF) does not end search and `Ctrl+h` (BS)
 does not erase; neither is an artificial alias of Enter (CR) or Backspace (DEL).
 In help search, the first Esc ends editing; a subsequent default Esc closes help
 and returns to its caller. Help search never changes the pane filter.
+
+## Mouse controls
+
+Mouse capture is enabled by default on Linux, macOS ARM64/Intel and native Windows
+10/11 x86_64. It requires the terminal/Herdr popup to deliver SGR mouse reports;
+native verification limits below still apply. To opt out, add this root setting
+to the plugin-owned `keymaps.jsonc` (or the legacy file when `.jsonc` is absent):
+
+```jsonc
+{
+  "mouse_enabled": false,
+}
+```
+
+Reopen the popup after editing. Only booleans are accepted; malformed settings
+and duplicate fields are configuration errors. Disabled capture does not enable
+or disable the application's `1000`/`1006` modes and ignores delivered mouse reports; keyboard controls
+and custom bindings remain available. Crossroads does not write this setting.
+
+- A left click selects the clicked pane or theme without focusing/saving it.
+  Double-click focuses that pane (including a filtered pane in pane Search) or
+  explicitly saves that theme. The double-click interval is fixed at **400 ms**,
+  measured with a monotonic clock, for two left presses on the same item, view and
+  exact cell location. Releases do not activate. Keyboard input, intervening
+  misses/selection or view changes, resize, changed hit locations and refreshed
+  rows reset pending activation. Theme-table preview panes are not focus targets.
+- Clicking a search bar activates editing and shows the query cursor. Pane and
+  Help filters remain independent. Clicking the Themes table-preview bar edits
+  the pane filter with the pending palette; Enter/Esc returns to the same Themes
+  preview without saving or discarding that choice.
+- In Help, the first click selects an action, even if initially marked. Clicking
+  that same selected action again executes it using the Enter origin/dispatch
+  contract above. **There is no time limit** for this repeat-click; it is not the
+  pane/theme double-click gesture. Changing selection/view cancels the pending click.
+- Visible footer controls and the theme-list heading's `keys` control activate
+  on one click, using their existing action identities, not configured key synthesis.
+  Search return/erase and configuration-error scroll/close controls are clickable.
+  Actions absent from a footer (including theme opening and filter reset) remain
+  reachable through executable Help entries.
+- Wheel down/up performs the **standard `j`/`k` behavior of the active mode**,
+  independently of remapped bindings: pane, Help-entry or theme navigation wraps
+  normally; diagnostics scroll. During pane/Help text editing, standard `j`/`k`
+  inserts those letters; the wheel is not an independent viewport scroller.
+  Undersized ordinary views retain their inert-navigation behavior.
+- Header rules, group separators, noninteractive blank space and out-of-bounds
+  coordinates do not select or activate anything. Hit regions are recorded by the
+  actual rendered layout, including filtered/scrolled rows and terminal-cell widths
+  for controls. Right/middle/modified buttons, motion and drag/drop are not actions;
+  no clipboard or context-menu behavior is added.
+
+The terminal owns button tracking (`1000`) and SGR coordinates (`1006`), without
+motion tracking. Both owned modes are disabled on normal close, startup/action
+failure and unwinding through the existing terminal guard, alongside cursor/Kitty
+cleanup and exact saved Unix termios or Windows console-mode restoration. These
+are best-effort writes; forced process termination cannot run destructors.
+
+Windows keeps `ENABLE_VIRTUAL_TERMINAL_INPUT` and VT output enabled. Mouse capture
+also sets `ENABLE_MOUSE_INPUT` to request ConPTY mouse delivery, **always together
+with VT byte input**, not the legacy-only `ReadConsoleInput` record path. Quick
+Edit stays off; opt-out does not request mouse delivery. ConPTY translates its
+outer tracking protocol (for example `1003;1006`) independently of the application's
+inner `1000`/`1006` modes, including when restoring the original console flags.
+Native tests query actual inner mode state (`DECRQM`) before capture, while active,
+after drop and after panic, rather than assuming application escape bytes survive
+ConPTY translation unchanged. They also require exact saved console-mode restoration.
+Source evidence is Microsoft Terminal `v1.23.13503.0`:
+[`SetConsoleInputModeImpl`](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/host/getset.cpp),
+[`VtIo::Writer::WriteSGR1006`](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/host/VtIo.cpp),
+and [`InputStateMachineEngine::ActionCsiDispatch`'s VT passthrough](https://github.com/microsoft/terminal/blob/v1.23.13503.0/src/terminal/parser/InputStateMachineEngine.cpp),
+alongside Microsoft's [VT input contract](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#input-sequences),
+consulted 2026-10-28. This is mechanism evidence, not execution on every Windows build.
+
+Mouse coverage is part of the **complete** keymap PTY gate, so existing Linux/macOS
+build and installed-byte four-PTY gates include it. The native ConPTY acceptance
+suite also exercises mouse search, origin-aware Help execution, theme preview/save,
+wheel, filtered stable-ID focus, opt-out, reserved-Enter errors and cleanup, including
+console-mode restoration during unwinding. **New native macOS ARM64/Intel and
+Windows 10/11 mouse execution remains pending**; earlier native results in this
+document predate these changes and do not validate them. Fake-host gates do not
+establish live Herdr mouse routing.
 
 ## Conflicts and error page
 
@@ -318,7 +423,7 @@ legacy `.json`.
 
 ## Terminal limits
 
-In an interactive popup Crossroads queries local Kitty keyboard-protocol support.
+On Linux/macOS an interactive popup queries local Kitty keyboard-protocol support.
 A valid response within the 100-ms opening probe activates Kitty disambiguation
 with its own push; normal closing and error unwinding pop that change. Without
 a response, Crossroads uses classical input, **not** a modifyOtherKeys fallback.
@@ -356,6 +461,129 @@ universal guarantee for every physical key combination.
 Verification sources: [Herdr v0.9.3 input routing](https://github.com/herdrdev/herdr/blob/v0.9.3/src/client/shell/input.rs#L503-L578),
 [recoding](https://github.com/herdrdev/herdr/blob/v0.9.3/src/input/encode.rs#L304-L342),
 [Ghostty VT](https://github.com/herdrdev/herdr/blob/v0.9.3/vendor/libghostty-vt/src/terminal/stream_terminal.zig#L4702-L4732).
+
+### Windows preparation verification
+
+The Windows WIP uses native console modes and VT input/output, not `stty`.
+It saves/restores the original input/output modes, uses native terminal sizing
+with an 80×24 fallback, and does **not** send Kitty query/push/pop sequences.
+Shared decoding and keymap rules remain in place; this is not a guarantee that
+Windows delivers every key identity or resolves the classical aliases above.
+
+The prepared native gate is `python -B scripts/build-windows.py` from the repository
+root with [native builder prerequisites](builds.md#windows-preparation-not-certification).
+It runs selected Rust suites and `tests/test_windows_acceptance.py` with the
+final-linked release executable, compiled fake Herdr CLI, and native ConPTY test
+executable selected by the helper. The acceptance harness covers console-mode
+restoration (including queried inner mouse modes), and the selected Rust groups
+include mouse/layout/action, reserved-Enter and default-search policy regressions.
+The acceptance harness also covers
+search/help/themes/navigation, resize/close, filtered stable-ID focus,
+status disconnect/reconnect/resnapshot, noninteractive EOF/missing CLI and theme
+save/reopen/Auto removal. Pipes and CLI are fake-host fixtures, not a real Herdr
+server/client. After packaging, the helper also installs in a temporary checkout,
+checks exact executable bytes, and repeats acceptance on that installed binary.
+The Unix four-PTY commands below are not Windows gates; a plain Windows
+`cargo test` does not run this ConPTY suite (its console test is ignored unless
+explicitly launched by the harness).
+
+Each acceptance method runs in a separate process with a 30-second deadline,
+including cleanup. The suite stops on the first failure. `scripts/windows-process.py`
+logs command start/end, PID, exit code and elapsed time; on timeout it attempts
+`taskkill /T /F` with a five-second deadline, then kills/reaps the direct child
+with a further five-second deadline. Cleanup failures are reported, not ignored.
+Captured command output uses temporary files; after command exit or cleanup, the
+supervisor snapshots their byte counts and reads at most the first 1 MiB per
+stream, reporting cap truncation on stderr even for successful commands. Later
+writes are excluded, so a surviving inherited writer cannot prolong capture or
+grow its in-memory result without bound. This does not cap temporary-file disk
+usage while a command or surviving writer runs. Rust test groups and distribution
+checks have 60-second deadlines, each acceptance pass has 240 seconds, and other
+helper commands have 300 seconds. The workflow's overall 30-minute limit is unchanged.
+
+The ConPTY fixture keeps its startup pipe ends until `CreateProcessW` completes
+and drains output on a separate thread during startup and teardown. Its progress
+messages distinguish child exit, `ClosePseudoConsole`, and reader shutdown.
+The latter API can block on older Windows; the process deadline, **not** the
+reader's five-second join, bounds that call. See Microsoft's
+[session lifetime guidance](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+and [shutdown contract](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole)
+(consulted 2026-10-21). The native mode test reports the standard-handle value,
+console mode and Win32 error on failure; it still requires real console handles
+before entering the terminal and verifies exact restoration afterward.
+
+The fixture sets `STARTF_USESTDHANDLES` with null standard handles so Windows
+connects them to ConPTY instead of copying redirected parent handles, even with
+`bInheritHandles=False`. This addresses the mechanism described by a Microsoft
+Terminal maintainer in [discussion 15814](https://github.com/microsoft/terminal/discussions/15814#discussioncomment-6684982)
+(2021-09-20; consulted 2026-10-21), alongside Microsoft's
+[null-handle attachment contract](https://learn.microsoft.com/en-us/windows/console/getstdhandle#attachdetach-behavior).
+An additional native regression explicitly redirects the Python parent's three
+standard streams and requires the unchanged mode/restoration test to pass through
+ConPTY. No `CONIN$` fallback or plain-input substitution is used.
+
+`Console.until` checks emitted label runs, ignoring only complete SGR styling
+sequences, including those fragmented across reads. Cursor/erase commands,
+newlines and other controls remain boundaries; control-string payloads are not
+labels. OSC ends at BEL or ST (`ESC \`); DCS/SOS/PM/APC remain hidden through
+BEL and end only at ST. This is not current-screen reconstruction and does not
+join labels across cursor movements or redraws. Protocol-byte checks use `raw=True`.
+Returned output and timeout/EOF diagnostics retain the original bytes; output
+resets and the five-second default deadline are unchanged. Portable regressions
+in `tests/test_windows_support.py` exercise the actual wait loop without invoking
+native APIs.
+
+**Native Windows CI passed on 2026-10-21** in
+[run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+for head `6c464a7` (actual PR merge checkout recorded in
+[build evidence](builds.md#successful-windows-preparation-evidence)). All seven
+acceptance checks passed on both final-linked and byte-identical installed
+executables, including theme save/replace/reopen/Auto removal. All ten distribution
+checks passed, including pin rename, junction swap and existing DELETE-handle
+rejection. The watchdog suite's POSIX-only skip did not skip a native acceptance
+check. This is Windows Server 2025 build `10.0.26100` fake-host evidence, not a
+Windows 10/11 or actual-Herdr certification.
+
+Earlier failure history remains useful for the fixture contracts: the first two runs
+reached the 30-minute job timeout. The supplied evidence for
+[run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
+at `343144f` shows failure in 2m 50s: all nine watchdog checks, native Clippy,
+compilation and selected Rust suites passed, but initial `GetConsoleMode` still
+failed before terminal entry. Rust output bypassed ConPTY; cleanup completed
+immediately after the five-second capture timeout, and no artifact was uploaded.
+This verified bounded teardown/fail-fast, not console restoration. The supplied
+[run 39605428457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39605428457)
+at `bcbd93e` subsequently passed redirected-parent stdio, exact console-mode
+restoration, filtered stable-ID focus, live status disconnect/reconnect/resnapshot/
+quit, and noninteractive startup/EOF/missing CLI. It failed in 3m 38s at the
+search/help/themes/navigation test's `codex` assertion: ConPTY emitted `cod`, SGR
+color/underline changes, then `ex`, so the visible label was correct but the raw
+substring was absent. Teardown was clean and no preparation artifacts were
+uploaded. Supplied evidence from
+[run 39614583553](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39614583553)
+at `6623013` confirms the SGR-aware matcher passed the search assertion, alongside
+the earlier console, stable-ID focus, reconnect and noninteractive checks. It
+failed in 2m 56s at `console.until(b"too small")` after resizing to `60x12`:
+the UI correctly emitted `ERROR: Crossroads needs minimum content size 80x15.`,
+`Your content size is: 60x12.` and close instructions, not that stale substring.
+The acceptance test now checks those minimum/actual dimensions and close
+instructions, retaining resize recovery and the existing successful-quit check;
+supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal. It failed in 3m 00s at the distribution
+suite's pinned-directory rename assertion (seven of eight distribution tests
+passed). That failed run did not reach the installed-binary second pass; the
+subsequent successful run above passed the access-mask correction, expanded
+regressions and both acceptance passes.
+Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
+certification. Windows is
+preparation for intended 0.3.0, package still 0.2.0. Separately, on 2026-10-28 the
+user reported successful basic source-build/link/popup use with real Herdr 0.9.5
+on a physical Windows 11 PC. The exact OS build and per-function checklist were
+not recorded, so this does not establish every key/theme/resize behavior on that
+PC, Windows 10 coverage or managed installation. See
+[installer/entrypoint limitations](installation.md#windows-preparation-limitations)
+and [remaining gates](builds.md#windows-preparation-not-certification).
 
 ## Local verification
 
@@ -436,10 +664,50 @@ exactly once after successful child exit. On mismatch they report the changed
 fields, full saved/active/post-exit attributes, platform and Python version, and
 captured output including any immediately ready post-exit `stty` diagnostics.
 The active snapshot is taken before sending the close key. Failure-output
-collection neither waits nor retries restoration. These diagnostics do not
+collection neither waits nor retries restoration. On Darwin, the test reuses that
+snapshot as `pre_close`, additionally samples attributes after the cursor-marker
+frame reader returns, and reports the existing post-exit sample alongside macOS,
+Darwin kernel and Python versions. SDK provenance is explicitly unknown. The
+marker observation is receive-time evidence, not the instant the marker was
+emitted or proof that `stty` restoration has completed; the reader also drains
+output before returning. No input-queue query, input flush, retry or attribute
+mask is added, and a `PENDIN`-only difference still fails exact equality.
+These diagnostics do not
 establish the cause of the Intel installed-binary restoration failure in
 [macOS run 39318351418](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39318351418);
 native failure output with these details is still needed.
+
+For the separately reported Intel missing-CLI restoration failure in
+[run 41124150532](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41124150532)
+at `c0ecbfe`, the macOS workflow now runs
+`python3 tests/diagnose_darwin_terminal.py` before acceptance gates on both
+architectures. It logs selected uname fields (excluding hostname), kernel
+release/build/version, `sw_vers`, Python, and PATH-selected plus `/bin/stty`
+paths, resolved paths, SHA256, optional Mach-O identity from `file` and embedded
+build/version markers from `what` when available.
+Hashes and binary identity do not establish an exact Apple source version.
+Required command failures fail the diagnostic; optional `file`/`what` failures are
+labelled unavailable. Commands have two-second deadlines, within a one-minute
+workflow step. Non-Darwin execution explicitly skips only this diagnostic.
+
+One fresh disposable PTY records saved attributes/`stty -g`, raw attributes and
+attributes immediately after synchronous saved-state restoration using the
+application's raw flags. There is no slave reader, input write, input flush,
+retry or normalization; attribute differences are observations, not acceptance
+results. The missing-CLI acceptance fixture separately logs Darwin attributes
+before launch, after child exit and after its existing output drain to stderr,
+before its unchanged mode and exact-equality assertions. Raw state is explicitly
+unobserved: no new wait/probe is inserted into that fixture. Its success message
+now follows this check too. Native execution of these diagnostics is pending;
+they neither fix the restoration failure nor replace any full or installed-byte
+PTY gate.
+
+The trickling-focus-reply startup test accepts only `BrokenPipe` or `NotConnected`
+when its server writes after the peer disconnects: Darwin can report either
+condition. Its original 800-ms process-exit bound, unsuccessful-exit and timeout
+message checks, request identity and no-retry assertions remain unchanged. The
+expectation correction and new Darwin restoration observations still need native
+macOS execution; Linux tests and simulated Darwin diagnostics are not that proof.
 
 The popup helper and standalone render cases retain the parent's slave descriptor
 until final output has been read, then close both descriptors. This avoids a last
@@ -450,6 +718,24 @@ which flushes the input and output queues. Output is collected during the bounde
 exit wait and then by the post-exit readiness drain, not EOF, while the parent
 slave remains open. These regressions run on Linux too; the native macOS
 verification below passed on both architectures, including the exit-output checks.
+
+After the keymap popup child has exited, its final drain now checks readiness
+with zero timeout until all queued chunks have been read, rather than waiting
+for another 200-ms output gap. The exit wait still reads under its original
+three-second deadline; interactive `drain()` calls still require 200 ms of quiet.
+The terminal destructor flushes restore bytes and waits for `stty` before exit.
+Darwin's [write path](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty.c#L2540-L2643)
+queues output synchronously; its [master read/readiness paths](https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/tty_dev.c#L622-L711)
+consume/test that same queue (`ptcselect`, lines 807–866). Linux delivery uses queued
+work, but [N_TTY readiness](https://codebrowser.dev/linux/linux/drivers/tty/n_tty.c.html#2433)
+flushes pending delivery work before reporting no input (reference revision
+`v6.19-rc8-185-g2687c848e578`, not an exact local-kernel source match).
+Reader regressions force exit before collection, split queued output into small
+reads, retain trailing diagnostics and the open parent slave, and reject missing
+cursor/Kitty restoration or incorrect exit status. Delayed pre-exit output,
+oversized repaints, stopped-child timeout/reaping and EOF/error handling remain
+covered. This optimization still needs native macOS execution; earlier native
+results above do not validate the new zero-timeout drain.
 
 Do not add `--input-protocol` to the complete keymap gate: it returns before
 binding-policy, error-page, search, and long-binding checks. The hint gate checks
@@ -496,9 +782,9 @@ The later exact `6f91a3f` Linux and native Apple Silicon/Intel CI also passed al
 four full PTYs per platform. These earlier results predate the new 0.2.0
 distribution gates; [current three-platform CI and artifact verification](builds.md#current-020-three-platform-ci-evidence)
 now cover packaging/provenance and isolated real-Herdr installation.
-The checkout prepares macOS 15.0+ on both architectures, with explicit
-`MACOSX_DEPLOYMENT_TARGET=15.0`; 0.2.0 is not released and published 0.1.0 remains
-Linux-only. This approved deployment minimum is not an exact OS-version test matrix.
+Released 0.2.0 targets macOS 15.0+ on both architectures, with explicit
+`MACOSX_DEPLOYMENT_TARGET=15.0`; published 0.1.0 remains Linux-only. This approved
+deployment minimum is not an exact OS-version test matrix or Windows evidence.
 Automated installation/distribution is not waived: the new CI gate runs all four
 full fake-host PTYs against the real-Herdr-installed binary, without a server or
 popup. See [its verified scope and limits](installation.md#automated-release-installation-gate).

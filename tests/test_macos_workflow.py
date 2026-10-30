@@ -87,6 +87,7 @@ jobs:
 
     def test_full_release_gates_in_order(self):
         commands = [
+            "python3 tests/diagnose_darwin_terminal.py",
             "python3 tests/test_macos_workflow.py",
             "cargo fmt --check",
             "cargo clippy --locked --all-targets -- -D warnings",
@@ -97,20 +98,20 @@ jobs:
             "python3 tests/test_install_binary.py",
             "python3 tests/test_setup_keybind.py",
             "python3 tests/test_release_install_helpers.py",
-            "cargo build --release --locked",
-            "python3 -u tests/pty_latency.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_render.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_keymaps.py target/release/herdr-crossroads",
-            "python3 -u tests/pty_hints.py target/release/herdr-crossroads",
         ]
         actual = re.findall(r"^\s+(?:run: )?((?:cargo |python3 (?:-u )?tests/).*)$", self.workflow, re.M)
         self.assertEqual(actual, ["cargo --version", *commands,
             'python3 -u tests/test_release_install.py target/herdr-acceptance "target/builds/${{ steps.package.outputs.artifact }}.tar.gz"'])
-        for harness in ["latency", "render", "keymaps", "hints"]:
-            self.assertIn(f"Run full release PTY {harness} gate\n"
-                          "        timeout-minutes: 5\n"
-                          f"        run: python3 -u tests/pty_{harness}.py target/release/herdr-crossroads\n",
-                          self.workflow)
+        self.assertNotIn("cargo build --release", self.workflow)
+        self.assertNotIn("target/release/herdr-crossroads", self.workflow)
+
+    def test_bounded_diagnostic_and_its_regressions_precede_native_gates(self):
+        diagnostic = "python3 tests/diagnose_darwin_terminal.py"
+        self.assertIn("timeout-minutes: 1\n        run: " + diagnostic, self.workflow)
+        regression = "python3 -B -m unittest discover -s tests -p test_darwin_terminal_diagnostics.py"
+        self.assertIn(regression, self.workflow)
+        self.assertLess(self.workflow.index(diagnostic), self.workflow.index("cargo test --locked"))
+        self.assertLess(self.workflow.index(regression), self.workflow.index("sh scripts/build-macos.sh"))
 
     def test_native_packaging_then_real_installation_then_exact_upload(self):
         reader = "python3 -B -m unittest discover -s tests -p test_pty_readers.py"

@@ -11,6 +11,11 @@ pub(crate) fn auto_choice() -> (&'static str, Option<String>) {
         PathBuf::from(path)
     } else if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
         PathBuf::from(dir).join("herdr/config.toml")
+    } else if cfg!(windows) && std::env::var_os("APPDATA").is_some() {
+        PathBuf::from(std::env::var_os("APPDATA").unwrap()).join("herdr/config.toml")
+    } else if cfg!(windows) && std::env::var_os("USERPROFILE").is_some() {
+        PathBuf::from(std::env::var_os("USERPROFILE").unwrap())
+            .join("AppData/Roaming/herdr/config.toml")
     } else if let Some(home) = std::env::var_os("HOME") {
         PathBuf::from(home).join(".config/herdr/config.toml")
     } else {

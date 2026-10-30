@@ -1,11 +1,22 @@
-use std::io::{self, IsTerminal, Write};
+#[cfg(not(windows))]
+use std::io::IsTerminal;
+use std::io::{self, Write};
+#[cfg(not(windows))]
 use std::process::{Command, Stdio};
+
+#[cfg(windows)]
+mod windows;
+#[cfg(any(windows, test))]
+pub(crate) mod windows_input;
+#[cfg(windows)]
+pub(super) use windows::{terminal_size, Terminal};
 
 use ratatui::{buffer::CellWidth, style::Color};
 
 use super::presentation::{clipped, sgr_fg};
 use super::selection::{Mode, Ui};
 
+#[cfg(not(windows))]
 pub(super) fn terminal_size() -> (usize, usize) {
     let measured = Command::new("stty")
         .arg("size")
@@ -35,11 +46,13 @@ pub(super) fn terminal_size() -> (usize, usize) {
     )
 }
 
-pub(super) struct Terminal(pub(super) Option<String>, bool);
+#[cfg(not(windows))]
+pub(super) struct Terminal(pub(super) Option<String>, bool, bool);
+#[cfg(not(windows))]
 impl Terminal {
     pub(super) fn enter() -> io::Result<Self> {
         if !io::stdin().is_terminal() {
-            return Ok(Self(None, false));
+            return Ok(Self(None, false, false));
         }
         let saved = Command::new("stty")
             .arg("-g")
@@ -49,6 +62,7 @@ impl Terminal {
             return Err(io::Error::other("stty -g failed"));
         }
         let state = String::from_utf8(saved.stdout).map_err(io::Error::other)?;
+        let terminal = Self(Some(state.trim().to_owned()), false, false);
         let status = Command::new("stty")
             .args(["raw", "-echo", "min", "0", "time", "1"])
             .stdin(Stdio::inherit())
@@ -56,7 +70,7 @@ impl Terminal {
         if !status.success() {
             return Err(io::Error::other("stty raw failed"));
         }
-        Ok(Self(Some(state.trim().to_owned()), false))
+        Ok(terminal)
     }
     pub(super) fn query(&self) -> io::Result<()> {
         if self.0.is_some() {
@@ -73,11 +87,24 @@ impl Terminal {
         out.write_all(b"\x1b[>1u")?;
         out.flush()
     }
+    pub(super) fn enable_mouse(&mut self) -> io::Result<()> {
+        if self.0.is_some() {
+            self.2 = true;
+            let mut out = io::stdout().lock();
+            out.write_all(b"\x1b[?1000h\x1b[?1006h")?;
+            out.flush()?;
+        }
+        Ok(())
+    }
 }
+#[cfg(not(windows))]
 impl Drop for Terminal {
     fn drop(&mut self) {
         if let Some(state) = &self.0 {
             let mut out = io::stdout().lock();
+            if self.2 {
+                let _ = out.write_all(b"\x1b[?1000l\x1b[?1006l");
+            }
             if self.1 {
                 let _ = out.write_all(b"\x1b[<u");
             }

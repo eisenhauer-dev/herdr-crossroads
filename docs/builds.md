@@ -6,11 +6,153 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-The checkout prepares **0.2.0, not yet released**. The latest published version is
-`0.1.0`, the first regular Linux release, published as
+**0.2.0 is released** for Linux and macOS. Native Windows 10/11 x86_64 is intended
+for **0.3.0**, currently **PREPARATION only**; the checkout's package/manifest
+version remains **0.2.0**. The historical `0.1.0` Linux release was published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Historical local/CI `0.1.0` artifacts below were not reused or renamed.
+
+## Windows preparation (not certification)
+
+The WIP target is `x86_64-pc-windows-msvc`. The first two native Windows CI attempts
+reached the 30-minute job timeout. The third failed at the initial console-handle
+check; the fourth passed console restoration but failed a styled-label assertion
+in 3m 38s, with clean teardown and no preparation artifact upload.
+Those attempts are historical; native Windows CI subsequently passed on
+2026-10-21 in [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130).
+The public-only `.github/workflows/windows.yml` selects the standard free public
+`windows-2025` runner, PowerShell, Rust/Cargo 1.99.0, and Python 3.11+. It has
+read-only contents permission, pinned checkout/upload actions, no persisted Git
+credentials, and no release publication job. It checks formatting and native
+library/binary Clippy before invoking the preparation helper.
+
+On a native Windows x86_64 builder with Rust/Cargo 1.99.0, Python 3.11+, Git,
+MSVC linker/Windows SDK, installed Rust documentation and cached locked
+dependencies, the repository-root command is:
+
+```powershell
+python -B scripts/build-windows.py
+```
+
+The command completed successfully in that run. Earlier attempts are retained
+below as failure history, not the current gate status. The first
+attempt failed the initial `GetConsoleMode` check before terminal entry, then
+hung; the unchanged second attempt also timed out. Supplied evidence from
+[run 39603155778](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39603155778)
+at `343144f` confirms nine watchdog checks, native Clippy, compilation and selected
+Rust suites passed; the console test still failed before terminal entry, but
+teardown and fail-fast completed without a hang. Supplied evidence from
+[run 39605428457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39605428457)
+at `bcbd93e` confirms the standard-handle correction: redirected-parent and exact
+console-restoration checks passed, along with filtered stable-ID focus, live
+status reconnect/resnapshot/quit, and noninteractive startup/EOF/missing CLI.
+Search then failed because styling split the visible `codex` label in raw bytes.
+Supplied evidence from
+[run 39614583553](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39614583553)
+at `6623013` confirms the SGR-aware matcher passed that search assertion and the
+earlier console, focus, reconnect and noninteractive checks. It failed in 2m 56s
+at the stale resize expectation `too small`, despite displaying the correct
+minimum `80x15` and actual `60x12` content-size notice. The corrected expectation
+passed in supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649`: all seven native acceptance tests passed, including resize/close and
+theme save/replace/reopen/Auto removal. The job failed in 3m 00s during distribution
+checks: seven of eight passed, but the pinned-directory rename test did not raise
+`OSError`. The installer now requests directory-read as well as attribute access;
+that run did not reach installed-binary acceptance. The later successful run
+passed the correction and expanded rename/swap regressions, plus both acceptance
+passes. See
+[the matcher contract and native evidence](keymaps.md#windows-preparation-verification).
+The helper installs no tooling. It checks versions and target notices, forces a
+fresh final link with an MSVC map and library diagnostics, validates PE bytes, and binds the
+binary/map SHA256 in preparation-only provenance. It runs selected Windows,
+input, search and navigation Rust tests, fake-host named-pipe/ConPTY acceptance,
+and distribution checks. It packages exactly `herdr-crossroads.exe`,
+`herdr-crossroads.exe.sha256`, `LICENSE`, and `THIRD-PARTY-NOTICES.md`, then runs
+the Python installer in a temporary checkout, compares installed bytes with the
+final-linked executable, and repeats fake-host acceptance on those installed bytes.
+It does **not** run an actual Herdr managed install, server, client or live popup.
+
+The workflow now checks `tests/test_windows_process.py` before native preparation.
+The shared `scripts/windows-process.py` supervisor logs progress and enforces
+command deadlines with bounded process-tree cleanup. Each acceptance method is
+isolated in a process with a 30-second deadline, including fixture teardown;
+the overall job timeout is unchanged. See [native test scope and timeout limits](keymaps.md#windows-preparation-verification).
+
+Outputs under `target/builds/` currently use
+`herdr-crossroads-0.2.0-x86_64-pc-windows-msvc` with `.tar.gz`, `.tar.gz.sha256`,
+`.provenance.json`, and `.link.map` suffixes. They follow the unchanged package
+version, not the intended 0.3.0 release. CI uploads exactly these four files as a
+`windows-preparation-` artifact with seven-day retention; these are not approved
+release assets. Handled failures after output selection remove the selected
+sidecars/archive; stale files never establish a successful invocation.
+
+### Successful Windows preparation evidence
+
+On 2026-10-21, run `39619790130`, job `119289869684`, completed successfully in
+3m 14s for head `6c464a799e826d246e83357c01ab4298f406c79d`. The actual PR checkout
+was synthetic merge `5d5b8c4f9d98e81c0d29f8862a1508e64a2b6826`, with head and base
+parents, not a claim that CI directly built the head SHA. All seven native
+acceptance checks passed twice: on the exact final-linked binary, then the
+byte-identical installed binary. All ten distribution checks passed, including
+pinned-parent rename, junction swap and rejection of an existing DELETE handle.
+The watchdog suite's one POSIX-only skip was not a bypassed acceptance test.
+The runner reported Windows Server 2025 build `10.0.26100`, not Windows 10/11.
+
+Artifact `12353319857`,
+`windows-preparation-herdr-crossroads-0.2.0-x86_64-pc-windows-msvc`, contained the
+four expected outer assets. Read-only in-memory verification matched the ZIP
+digest, archive/checksum, binary/map bindings, exact four inner archive members
+and canonical notice bytes. The 890,237-byte ZIP had SHA256
+`b33d82b2bf188ac18b1cfcc1cb355c6da030dcccefde248eb7764d812da7df95`.
+
+| Windows preparation evidence | SHA256 |
+| --- | --- |
+| Binary | `60c87612c6bf7717abff11b702b3e0c34b25be6b057958b0581cd8b9d0e104b9` |
+| Normalized link map | `6ac6c964d314a9c7b1709b803571a5a92df548f093f7dfc5b8523a5499c66089` |
+
+The artifact's seven-day retention expires at `2026-10-28T14:49:38Z`; this is a
+historical receipt, not a persistent download route. Its provenance remains
+`preparation_only: true`, `distribution_approved: false`, with the original
+MSVC/SDK, Windows 10 and real-Herdr open gates. Later manual evidence does not
+rewrite that historical artifact.
+
+On 2026-10-28, the user separately reported successful basic real-Herdr 0.9.5
+source-build/link/live-popup use on a physical Windows 11 PC at the same local
+`develop` head. The OS was described as the latest Windows 11, without an exact
+build or per-function checklist. This is user-reported basic manual acceptance,
+not automated hardware testing, full-feature certification, Windows 10 coverage
+or Herdr managed-install acceptance. See [launch details](installation.md#windows-preparation-limitations).
+
+**Open gates:** MSVC/SDK linked-input attribution review; Windows 10/11 runtime
+certification beyond that basic Windows 11 report; independent combined review,
+primary acceptance and separate release approval. No approved Windows release or
+managed-install route exists. Neither the runner label nor synthetic PE tests
+establish Windows 10/11 support.
+See [installer and launch limitations](installation.md#windows-preparation-limitations)
+and [native test scope](keymaps.md#windows-preparation-verification).
+
+### MSVC and SDK attribution gate
+
+Research checked on 2026-10-28 did **not** establish license clearance. The exact
+artifact's link diagnostics identify Visual Studio 18 Enterprise / MSVC
+`14.51.36231`, but do not establish the exact Windows SDK version, resolved
+library paths or applicable license provenance. The current `/VERBOSE:LIB`
+capture is not a complete linked-input attribution inventory.
+
+Microsoft's [Visual Studio 2026 redistribution list](https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution)
+conditionally permits licensed Visual Studio users to redistribute listed files
+unmodified. The [Windows SDK license](https://learn.microsoft.com/en-us/legal/windows-sdk/license)
+and [SDK redistribution list](https://learn.microsoft.com/en-us/legal/windows-sdk/redist)
+also require matching applicable terms; the runner's entitlement and applicable
+version-specific terms have not been proven. This uncertainty is **not evidence
+that MSVC linking is prohibited**, nor automatic redistribution approval.
+
+The next evidence needed is the exact SDK version, resolved libraries and complete
+matching map/link capture, plus applicable Visual Studio/SDK license and
+redistribution provenance. Collecting new executable evidence or running new CI
+requires separate scope/approval. No Microsoft notice is added and no existing
+notice is declared sufficient on this incomplete evidence; the gate stays open.
 
 ## macOS 0.2.0 preparation
 
@@ -24,7 +166,26 @@ It installs no tooling. Rosetta is rejected as a release builder.
 
 The helper validates versions/notices, forces a fresh final link, verifies the
 binary/evidence hash binding, then runs all four full PTYs against that exact
-explicit-target executable. Link-time ad-hoc signing occurs **before** testing;
+explicit-target executable, in latency/render/keymaps/hints order. Each gate has
+a 300-second timeout; timeout or interruption kills its process group, and timeout
+diagnostics retain captured output. The helper flushes each gate's start marker,
+captured output on success, and passed/failed elapsed time (monotonic seconds)
+before proceeding. Output within a running gate remains captured until it exits;
+these measurements attribute native gate cost, not a CI performance improvement.
+The subsequent [keymap post-exit drain optimization](keymaps.md#local-verification)
+removed 80 redundant 200-ms quiet waits per complete keymap run. On local Linux
+on 2026-10-28, two unprofiled runs took 51.144/51.290 seconds before and
+34.975/34.924 seconds after, against the unchanged release executable (SHA256
+`0c93bab560a765502000f351e8ae52ee6d9532b289efb075f6efffa6ecedcc2e`).
+Separate bounded operation counts measured 16.032 seconds in post-exit drains
+before and 0.002 seconds after, with all 80 popups and four interactive drains
+retained. These are local harness measurements, not native macOS timings or a
+claim that CI is under ten minutes. Native final-linked and byte-identical
+installed-binary verification remains pending for this change.
+CI relies on these final-binary gates instead
+of a duplicate ordinary release build/PTY pass, then retains the separate
+installed-package real-Herdr acceptance before upload. The job limit remains
+30 minutes. Link-time ad-hoc signing occurs **before** testing;
 there is no post-test signing, stripping or other binary mutation. These are
 **not Developer ID signed or notarized** assets; ad-hoc signing and SHA256 do not
 authenticate a publisher or establish Gatekeeper acceptance.
@@ -125,8 +286,10 @@ attribution limits above remain. Independent combined review has **not** been
 performed and final acceptance is pending. True macOS Herdr live-popup acceptance
 is **waived, not passed**; automated distribution was not waived. No Rosetta
 execution, Developer ID signing/notarization or public 0.2.0 download is proven.
-**0.2.0 is not released**; no release, tag, merge or publication is authorized by
-this evidence. Published 0.1.0 remains the immutable Linux-only Latest release.
+These are historical pre-release evidence limits; **0.2.0 was subsequently
+released**. They do not authorize a new release, tag, merge or publication, and
+none of this evidence certifies the Windows WIP. Published 0.1.0 remains immutable
+and Linux-only.
 
 ## Build and verify locally
 

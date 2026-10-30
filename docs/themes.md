@@ -16,9 +16,17 @@ Theme navigation wraps in both directions: previous from Auto selects `vesper`,
 and next from `vesper` selects Auto, in both list and table preview. The palette
 changes immediately, but neither navigation nor preview toggling writes a theme
 file. Help cycles only through matching entries, without changing its query.
+Enter in Help navigation executes the marked action **after restoring that same
+Themes view**, so save/cancel/navigation/preview retain their normal meanings.
+Mouse first-click selects a Help action; clicking it again executes it without
+a timing limit. Click a theme to preview and double-click it within 400 ms at
+the same location to save. The theme-list heading's `keys` control opens Help;
+footer controls work on one click. Clicking the table-preview search bar edits
+the pane filter; Enter/Esc returns to the pending preview without saving.
+See [mouse controls and opt-out](keymaps.md#mouse-controls) for the full contract.
 The table preview's search row has a right-aligned `Themes` mode label; help's
 search row shows `Help`, separately from `Keys — Themes`. The theme list has no
-search row and keeps its existing `Themes · selected: … · preview: …` heading.
+search row and shows `Themes · selected: … · preview: … · keys`.
 
 The picker offers Auto (Herdr) plus Herdr v0.9.1's 18 built-ins: `catppuccin`, `catppuccin-latte`, `terminal`, `tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`, `gruvbox-light`, `one-dark`, `one-light`, `solarized`, `solarized-light`, `kanagawa`, `kanagawa-lotus`, `rose-pine`, `rose-pine-dawn`, and `vesper`. `terminal` uses terminal default foreground and background and ANSI palette colors, not a fixed RGB approximation.
 

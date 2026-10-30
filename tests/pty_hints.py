@@ -10,7 +10,7 @@ from pty_keymaps import Popup
 from pty_render import screen
 
 DEFAULT_SELECT = "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys"
-DEFAULT_HELP = "j/↓: ↓move · k/↑: ↑move · Esc: close keys"
+DEFAULT_HELP = "j/↓: ↓move · k/↑: ↑move · Enter: run · Esc: close keys"
 DEFAULT_THEMES = "j/↓: ↓theme · k/↑: ↑theme · Space: table · Enter: save · Esc: cancel"
 
 

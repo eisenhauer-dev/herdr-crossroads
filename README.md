@@ -1,6 +1,6 @@
 # Herdr Crossroads
 
-A keyboard-driven pane navigator for [Herdr](https://herdr.dev): search panes,
+A keyboard-and-mouse pane navigator for [Herdr](https://herdr.dev): search panes,
 tabs, workspaces, or agent names and focus the pane you need without reorganizing
 your session.
 
@@ -41,13 +41,16 @@ Historical native previews (not current release verification):
 [navigation and themes provenance](docs/media/recordings/native-loops.md).
 
 ![Native navigation and live search](docs/media/native-navigation.gif)
+
+Recordings predate mouse support and the current `f` search / Help Enter controls;
+use the [current controls](#controls) below rather than the recorded key labels.
 ![Native linked-worktree selection](docs/media/linked-worktrees.gif)
 ![Native theme preview and save](docs/media/native-themes.gif)
 
 ## Requirements and compatibility
 
-[![Published: 0.1.0](https://img.shields.io/badge/published-0.1.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
-[![Preparing: 0.2.0](https://img.shields.io/badge/preparing-0.2.0-orange?style=flat)](docs/releases.md)
+[![Published: 0.2.0](https://img.shields.io/badge/published-0.2.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.2.0)
+[![Preparing: Windows for 0.3.0](https://img.shields.io/badge/preparing-Windows_for_0.3.0-orange?style=flat)](docs/builds.md#windows-preparation-not-certification)
 [![Herdr: ≥ 0.9.1](https://img.shields.io/badge/Herdr-%E2%89%A5%200.9.1-5865a3?style=flat)](https://herdr.dev)
 [![Managed installation: Python ≥ 3.11](https://img.shields.io/badge/managed_install-Python_%E2%89%A5_3.11-3776ab?style=flat&logo=python&logoColor=white)](docs/installation.md)
 [![Supported: Linux x86_64 glibc](https://img.shields.io/badge/Linux-x86__64_glibc-2ea44f?style=flat&logo=linux&logoColor=white)](docs/builds.md#runtime-and-verification-limits)
@@ -56,9 +59,14 @@ Historical native previews (not current release verification):
 
 - **Linux x86_64 with glibc** (`x86_64-unknown-linux-gnu` only), `stty` on `PATH`,
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
-- Upcoming **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
-  `MACOSX_DEPLOYMENT_TARGET=15.0`. Native packaging/installation CI passed on all
-  three targets; **0.2.0 is not released**. Published 0.1.0 remains Linux-only.
+- Released **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
+  `MACOSX_DEPLOYMENT_TARGET=15.0`. Published 0.1.0 remains Linux-only.
+- Native **Windows 10/11 x86_64** is intended for **0.3.0**, currently
+  **PREPARATION only**, not supported or certified. The package version is still
+  **0.2.0**. Native Windows CI passed on 2026-10-21; a user-reported basic
+  Windows 11 source-build/link/live-popup test with Herdr 0.9.5 succeeded on
+  2026-10-28. Neither establishes Windows 10/11 certification or release approval.
+  See [Windows evidence and remaining gates](docs/builds.md#windows-preparation-not-certification).
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
 
 ### Managed installation
@@ -71,10 +79,12 @@ Historical native previews (not current release verification):
 ### Source builds
 
 - Git, Rust/Cargo, and a system linker, in addition to the runtime requirements.
+- Windows source preparation needs an MSVC linker and Windows SDK; the native
+  preparation helper has [additional prerequisites](docs/builds.md#windows-preparation-not-certification).
 
 ### Compatibility status
 
-- No Windows, other-architecture, or SSH support is claimed; no minimum glibc
+- No released Windows, other-architecture, or SSH support is claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
 - **[0.1.0](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
@@ -84,14 +94,16 @@ Historical native previews (not current release verification):
 - Current Linux/Apple Silicon/Intel CI passed packaging, provenance and isolated
   real-Herdr installation with four full PTYs against each installed binary.
   Actual macOS Herdr live-popup acceptance was **waived, not performed**; automated
-  evidence is not live-popup acceptance or release approval. See [verified build evidence and limits](docs/builds.md#current-020-three-platform-ci-evidence).
+  evidence is not live-popup acceptance. Those historical results do not certify
+  the Windows preparation. See [verified build evidence and limits](docs/builds.md#current-020-three-platform-ci-evidence).
 
 ## Installation
 
 ### Quickstart
 
 Install [Herdr](https://herdr.dev) first and check the
-[requirements](#requirements-and-compatibility) (published 0.1.0: Linux only).
+[requirements](#requirements-and-compatibility). This quickstart is for Linux/macOS;
+Windows preparation uses a separate entrypoint and has no setup action.
 **Review the source, manifest, and assets before approving installation: it executes
 code and registers a plugin globally for your user, not in a sandbox.**
 
@@ -102,9 +114,9 @@ herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
 This follows the public default branch and downloads the checkout's matching
-version and platform binary. Until 0.2.0 assets are approved and available, use
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0` for the
-published Linux version if the default branch has moved ahead. See [installation options and safeguards](docs/installation.md) and
+version and platform binary. To select released Linux/macOS 0.2.0 rather than
+the development branch, use `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`.
+The Windows WIP is not a released Windows installation route. See [installation options and safeguards](docs/installation.md) and
 [public installation evidence](docs/installation.md#regular-010-public-installation).
 
 <a id="add-the-launch-binding-reload-and-open"></a>
@@ -208,13 +220,26 @@ herdr plugin link "$PWD"
 ```
 
 - Linking does not run build hooks. Keep the checkout and `target/release/herdr-crossroads`
-  in place; Cargo may download dependencies on a fresh machine.
-- Use the launch binding above, or open Crossroads from a shell in your running
-  Herdr session:
+  (`target/release/herdr-crossroads.exe` on Windows) in place; Cargo may download
+  dependencies on a fresh machine.
+- Use the launch binding above on Linux/macOS, or open Crossroads from a shell in
+  your running Herdr session using the platform-specific entrypoint:
+
+**Linux/macOS:**
 
 ```sh
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
+
+**Windows (preparation on `develop`, not a released Windows installation):**
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
+```
+
+The `crossroads` entrypoint supports Linux/macOS only; opening it on Windows fails
+with `platform_unsupported`. Windows must use `crossroads-windows`, and the Unix
+`setup-keybind` action does not apply. See [Windows preparation limitations](docs/installation.md#windows-preparation-limitations).
 
 - Without manifest dimensions or CLI overrides, the popup defaults to half-size.
   For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's
@@ -234,7 +259,7 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 | Next / previous pane | `j` / `k`, or Down / Up |
 | Next / previous tab | `l` / `h`, or Right / Left |
 | Next / previous workspace | Tab / Shift+Tab |
-| Search / reset filter | `/` / `r` |
+| Search / reset filter | `f` / `r` |
 | Keys help / themes | `?` / `t` |
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
@@ -244,6 +269,11 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
   the filter. Press Enter again to focus; no matches means no focus.
 - Themes: `j`/`k` or arrows to preview, Space for list/table view, Enter to save,
   Esc/`q` to cancel. `?` shows the current view's effective keys.
+- Help: Enter executes the marked action after returning to its calling view.
+  Mouse first-click selects an action; clicking it again executes it, without a time limit.
+- Mouse is enabled by default: click to select, double-click a pane to focus or a
+  theme to save, click the search bar to edit, and use the wheel for standard `j`/`k`.
+  See [mouse controls and opt-out](docs/keymaps.md#mouse-controls).
 - See [complete controls, customization and input limits](docs/keymaps.md#actions-and-defaults).
 
 ## Configuration
@@ -266,6 +296,8 @@ Crossroads after editing.
   `.jsonc` is absent, never when it is invalid or unreadable.
 - Keymaps and status colors are read-only. Saving a theme writes only plugin-owned
   theme files; explicitly saving Auto removes both theme files. See the references for failure behavior.
+- In `keymaps.jsonc`, `"mouse_enabled": false` disables mouse capture. Enter is
+  reserved: assigning it in any custom binding is a configuration error.
 
 ## Update and uninstall
 

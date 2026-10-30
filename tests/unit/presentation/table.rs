@@ -302,7 +302,7 @@ fn search_and_keyboard_footer_share_table_extent_in_both_modes() {
         state.query.clear();
         let frame = state.terminal_frame(width, 15);
         if width >= 24 {
-            assert!(frame.starts_with("  Search: / to search"), "{frame}");
+            assert!(frame.starts_with("  Search: f to search"), "{frame}");
         }
         assert!(!frame.contains("Filter:"), "{frame}");
     }
@@ -686,7 +686,7 @@ fn compact_pipe_is_dim_only_between_unstyled_spaces() {
         idle.contains("co… \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m"),
         "{idle}"
     );
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.query = "Claude".into();
     let filtered = state.terminal_frame(60, 15);
     assert_eq!(
@@ -1601,7 +1601,7 @@ fn table_block_uses_nearly_full_width_without_moving_chrome() {
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(
             lines[0],
-            format!("  Search: / to search{}Select", " ".repeat(width - 29))
+            format!("  Search: f to search{}Select", " ".repeat(width - 29))
         );
         assert!(
             lines[15]

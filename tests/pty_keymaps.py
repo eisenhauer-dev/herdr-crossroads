@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 from pty_render import expected_search_row, screen
+from terminal_screen import Screen, table_state
 
 
 def read_until(fd, marker, timeout=3):
@@ -83,9 +84,9 @@ def read_frame(reader, expected=None):
     return data.decode("utf-8", "replace")
 
 
-def drain(fd):
+def drain(fd, timeout=0.2):
     data = bytearray()
-    while select.select([fd], [], [], 0.2)[0]:
+    while select.select([fd], [], [], timeout)[0]:
         try:
             chunk = os.read(fd, 65536)
             if not chunk:
@@ -114,7 +115,7 @@ def read_search_escape(reader, start, query, search_lines):
             continue
         assert frame_begin >= 0.075, ("Esc resolved before its deadline", frame_begin, raw)
         assert 0.09 <= elapsed < 0.22, ("Esc transition timing", elapsed, raw)
-        assert lines[0] == expected_search_row(80, query or "/ to search", "Help" if help_search else "Select"), lines
+        assert lines[0] == expected_search_row(80, query or "f to search", "Help" if help_search else "Select"), lines
         assert "Backspace: erase" not in lines[-1] and cursor[0] is False, (lines, cursor)
         if help_search:
             assert lines[1:-1] == search_lines[1:-1] and "close keys" in lines[-1], (search_lines, lines)
@@ -165,6 +166,7 @@ class Popup:
             env["HERDR_SOCKET_PATH"] = str(focus_socket)
         try:
             fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+            self.saved_termios = termios.tcgetattr(self.slave)
             self.child = subprocess.Popen([binary], stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
             query = read_until(self.master, b"\x1b[?u")
             assert b"\x1b[>1u" not in query
@@ -186,7 +188,7 @@ class Popup:
         assert wraps == 0, lines
         return lines
 
-    def finish(self, key, success=True):
+    def finish(self, key, success=True, expect_mouse=None):
         try:
             os.write(self.master, key)
             # A return-to-navigation repaint can fill the PTY queue before exit.
@@ -205,9 +207,14 @@ class Popup:
             assert (self.child.returncode == 0) == success
             # Keep the parent slave open until buffered exit output is consumed:
             # Darwin's last slave close flushes the terminal output queue.
-            tail.extend(drain(self.master))
+            # The writer has exited: collect the queued bytes, not a quiet window.
+            tail.extend(drain(self.master, timeout=0))
             assert tail.count(b"\x1b[<u") == int(self.kitty), tail
             assert b"\x1b[?25h" in tail, tail
+            if expect_mouse is not None:
+                for mode in (1000, 1006):
+                    assert tail.count(f"\x1b[?{mode}l".encode()) == int(expect_mouse), tail
+                assert termios.tcgetattr(self.slave) == self.saved_termios, (self.saved_termios, termios.tcgetattr(self.slave), tail)
         finally:
             self.abort()
 
@@ -222,6 +229,152 @@ class Popup:
                 if fd != -1:
                     setattr(self, name, -1)
                     os.close(fd)
+
+
+def mouse_report(x, y, button=0, release=False):
+    return f"\x1b[<{button};{x + 1};{y + 1}{'m' if release else 'M'}".encode()
+
+
+def point(lines, text, start=0):
+    matches = [(line.index(text), y) for y, line in enumerate(lines) if y >= start and text in line]
+    assert len(matches) == 1, (text, lines)
+    return matches[0]
+
+
+def mouse_cases(binary, directory):
+    for kitty in (False, True):
+        popup = Popup(binary, directory, kitty=kitty, width=120, height=30)
+        try:
+            assert "\x1b[?1000h\x1b[?1006h" in popup.initial, popup.initial
+            current = Screen(rows=30, cols=120)
+            current.feed(popup.initial.encode())
+            assert table_state(current) == {"mode": "Select", "query": "f to search",
+                "selected": (0, "Claude"),
+                "panes": ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2"),
+                "capture": True}, table_state(current)
+            lines, _ = screen(popup.initial, 120, 30)
+            # A visible search bar activates editing, not just an inert highlight.
+            lines = popup.send(mouse_report(*point(lines, "Search:")))
+            assert lines[0].endswith("Search") and "Backspace: erase" in lines[-1], lines
+            lines = popup.send(b"codex")
+            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: select")))
+            assert lines[0].endswith("Select"), lines
+            # Help remains reachable from the footer; search and execute Reset Search
+            # in its actual caller, without synthesizing remapped keyboard keys.
+            lines = popup.send(mouse_report(*point(lines, "?: keys")))
+            assert "Keys — Select" in lines[1], lines
+            lines = popup.send(mouse_report(*point(lines, "Search:")))
+            lines = popup.send(b"choose theme")
+            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: return to keys")))
+            at = point(lines, "choose theme", start=3)
+            lines = popup.send(mouse_report(*at))
+            assert "Keys — Select" in lines[1] and any(line.startswith("  >") and "choose theme" in line for line in lines), lines
+            time.sleep(0.45)  # Help repeat-click is deliberately not a 400ms double-click.
+            lines = popup.send(mouse_report(*at))
+            assert lines[0].startswith("  Themes"), lines
+            lines = popup.send(mouse_report(*point(lines, "keys")))
+            assert "Keys — Themes" in lines[1], lines
+            at = point(lines, "next theme", start=3)
+            popup.send(mouse_report(*at))
+            lines = popup.send(mouse_report(*at))
+            assert "preview: catppuccin" in lines[0], lines
+            lines = popup.send(mouse_report(*point(lines, "Space: table")))
+            assert any("Agent/Pane Name" in line for line in lines), lines
+            lines = popup.send(mouse_report(*point(lines, "Search:")))
+            assert "Enter/Esc: preview" in lines[-1], lines
+            lines = popup.send(b"\r")
+            assert any("Agent/Pane Name" in line for line in lines), lines
+            lines = popup.send(mouse_report(*point(lines, "Space: list")))
+            at = point(lines, "terminal", start=1)
+            lines = popup.send(mouse_report(*at) + mouse_report(*at, release=True) + mouse_report(*at), expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("Select"))
+            assert lines[0].endswith("Select"), lines
+            assert json.loads((directory / "theme.jsonc").read_text())["theme"] == "terminal"
+            # Keyboard Help Enter follows the same origin/action path.
+            lines = popup.send(b"?")
+            lines = popup.send(mouse_report(*point(lines, "Search:")))
+            lines = popup.send(b"reset search\r")
+            lines = popup.send(b"\r", expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("Select"))
+            assert "Search: f to search" in lines[0], lines
+            before = [line for line in lines if line.startswith("  >")]
+            lines = popup.send(mouse_report(5, 5, button=65))
+            assert [line for line in lines if line.startswith("  >")] != before, lines
+            popup.finish(mouse_report(*point(lines, "Esc: exit")), expect_mouse=True)
+        finally:
+            popup.abort()
+        (directory / "theme.jsonc").unlink()
+        popup = Popup(binary, directory, {"mouse_enabled": False}, kitty=kitty)
+        try:
+            assert "\x1b[?1000h" not in popup.initial and "\x1b[?1006h" not in popup.initial
+            initial, _ = screen(popup.initial, 80, 15)
+            assert popup.send(mouse_report(4, 0)) == initial
+            assert popup.send(mouse_report(5, 5, button=65)) == initial
+            assert popup.send(b"j") != initial
+            popup.finish(b"q", expect_mouse=False)
+        finally:
+            popup.abort()
+    # Double-click a filtered pane and verify the actual stable-ID IPC request.
+    address = directory / "mouse-focus.sock"
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(address))
+    listener.listen()
+    listener.settimeout(3)
+    requests, errors = [], []
+    def reply():
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                requests.append(json.loads(connection.makefile("rb").readline()))
+                connection.sendall(b'{"id":"crossroads-focus","result":{"type":"pane_info","pane":{"pane_id":"p-other","focused":true}}}\n')
+        except Exception as error:
+            errors.append(error)
+    worker = threading.Thread(target=reply)
+    worker.start()
+    popup = None
+    try:
+        popup = Popup(binary, directory, focus_socket=address)
+        lines = popup.send(mouse_report(4, 0))
+        lines = popup.send(b"codex")
+        at = point(lines, "codex", start=3)
+        popup.finish(mouse_report(*at) + mouse_report(*at), expect_mouse=True)
+        worker.join(timeout=3)
+        assert not worker.is_alive() and not errors, errors
+        assert len(requests) == 1 and requests[0]["method"] == "pane.focus" and requests[0]["params"] == {"pane_id": "p-other"}, requests
+    finally:
+        if popup:
+            popup.abort()
+        listener.close()
+        worker.join(timeout=3)
+    startup_failure_case(binary, directory)
+    print("Mouse PTY: classic/Kitty search/help/actions/themes/wheel/focus/opt-out/exact restoration passed")
+
+
+def startup_failure_case(binary, directory):
+    master, slave = pty.openpty()
+    child = None
+    try:
+        saved = termios.tcgetattr(slave)
+        env = dict(os.environ, HERDR_BIN_PATH=str(directory / "missing-herdr"), HERDR_PLUGIN_CONFIG_DIR=str(directory), HERDR_CONFIG_PATH=str(directory / "missing"))
+        env.pop("HERDR_SOCKET_PATH", None)
+        child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
+        assert child.wait(timeout=3) != 0, "missing CLI must fail startup"
+        after_wait = termios.tcgetattr(slave) if sys.platform == "darwin" else None
+        raw = drain(master, timeout=0)
+        if sys.platform == "darwin":
+            after_drain = termios.tcgetattr(slave)
+            # Read-only observations after exit; do not wait for a raw sample or
+            # touch the input queue to normalize the kernel's pending state.
+            print(f"Darwin missing-CLI terminal: before_app={saved!r} raw_state=unobserved "
+                  f"after_wait={after_wait!r} after_drain={after_drain!r}",
+                  file=sys.stderr, flush=True)
+        for mode in (1000, 1006):
+            assert raw.count(f"\x1b[?{mode}h".encode()) == 1 and raw.count(f"\x1b[?{mode}l".encode()) == 1, raw
+        assert termios.tcgetattr(slave) == saved, (saved, termios.tcgetattr(slave), raw)
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait()
+        os.close(master)
+        os.close(slave)
 
 
 def frame_reader_cases():
@@ -270,6 +423,7 @@ def main(binary):
         if "--input-protocol" in sys.argv[2:]:
             print("Input protocol PTY: repeated Esc, delayed Esc/q, Alt+q, late Kitty reply, buffered probe input passed")
             return
+        mouse_cases(binary, directory)
         binding_policy_cases(binary, directory)
         themes_help_cases(binary, directory)
         error_block_cases(binary, directory)
@@ -281,7 +435,7 @@ def main(binary):
                 for help_search in [False, True]:
                     if help_search:
                         popup.send(b"?", expected=lambda raw: True)
-                    for action in (b"/", b"x"):
+                    for action in (b"f", b"x"):
                         lines = popup.send(action, expected=lambda raw: True)
                     assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
                     searching = lines
@@ -413,7 +567,7 @@ def main(binary):
                 assert not request and popup.child.poll() is None
             lines = popup.send(b"J")
             assert any(line.startswith("  >") and "Claude" not in line for line in lines), lines
-            popup.finish(b"F", success=False)
+            popup.finish(b"F", success=False, expect_mouse=True)
             worker.join(timeout=3)
             listener.close()
             assert request and request[0]["method"] == "pane.focus" and request[0]["params"]["pane_id"] == "p-a", request
@@ -425,6 +579,18 @@ def main(binary):
 
 def binding_policy_cases(binary, directory):
     for kitty in (False, True):
+        for context, action in (("select", "focus_pane"), ("help", "close"), ("themes", "save")):
+            popup = Popup(binary, directory, {context: {action: ["Enter"]}}, kitty=kitty, width=160, height=24)
+            try:
+                lines, _ = screen(popup.initial, 160, 24)
+                heading = f"ERROR: Unsupported keymap keys - {context} mode"
+                at = lines.index(heading)
+                assert lines[at + 1] == expected_source_row(directory, "keymaps.jsonc", 160), lines
+                assert f"{action}: Enter is reserved; custom Enter bindings are not allowed" in lines, lines
+                assert "Agent/Pane Name" not in popup.initial, lines
+                popup.finish(b"q", expect_mouse=True)
+            finally:
+                popup.abort()
         for context, action in (("select", "next_row"), ("help", "next_category"), ("themes", "next_theme")):
             for keys in (["Ctrl+j", "Alt+x"], ["Ctrl+i", "Ctrl+m"], ["Ctrl+Up", "Alt+Down"], ["Ctrl+Left", "Alt+Right"]):
                 popup = Popup(binary, directory, {context: {action: keys}}, kitty=kitty, width=160, height=24)
@@ -465,7 +631,7 @@ def binding_policy_cases(binary, directory):
         try:
             lines = popup.send(b"\t")
             assert any(line.startswith("  >") and "codex" in line for line in lines), lines
-            popup.send(b"/x")
+            popup.send(b"fx")
             lines = popup.send(b"\r")
             assert lines[0] == expected_search_row(80, "x", "Select") and "Backspace: erase" not in lines[-1], lines
             popup.finish(b"q")
@@ -486,7 +652,7 @@ def themes_help_cases(binary, directory):
             for width, height in ((80, 15), (142, 30)):
                 popup = Popup(binary, directory, width=width, height=height, focus_socket=address)
                 try:
-                    popup.send(b"/Same")
+                    popup.send(b"fSame")
                     popup.send(b"\r")
                     select_before = popup.send(b"j")
                     assert select_before[0] == expected_search_row(width, "Same", "Select"), select_before
@@ -500,15 +666,15 @@ def themes_help_cases(binary, directory):
                             assert before[1] == expected_search_row(width, "Same", "Themes"), before
                             assert any("Agent/Pane Name" in line for line in before), before
                         else:
-                            assert before[0] == "  Themes · selected: dracula · preview: nord", before
+                            assert before[0] == "  Themes · selected: dracula · preview: nord · keys", before
                             assert any(line.startswith("  > nord") for line in before), before
                             assert not any("Search:" in line for line in before), before
                         help_lines = popup.send(b"?")
-                        assert help_lines[0] == expected_search_row(width, "/ to search", "Help"), help_lines
+                        assert help_lines[0] == expected_search_row(width, "f to search", "Help"), help_lines
                         assert help_lines[1] == "  Keys — Themes", help_lines
                         assert any("save theme" in line and "Enter" in line for line in help_lines), help_lines
                         assert not any("focus selected pane" in line or "next workspace" in line for line in help_lines), help_lines
-                        popup.send(b"/")
+                        popup.send(b"f")
                         searching = popup.send(b"?")
                         assert searching[0] == expected_search_row(width, "?", "Help"), searching
                         assert searching[1] == "  Keys — Themes", searching
@@ -685,11 +851,11 @@ def input_protocol_cases(binary, directory):
             for kitty in [False, True]:
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 initial, _ = screen(popup.initial, 80, 15)
-                assert initial[0] == expected_search_row(80, "/ to search", "Select"), initial
+                assert initial[0] == expected_search_row(80, "f to search", "Select"), initial
                 # Recognized modifier sequences must never focus, navigate, close,
                 # or leak their bytes into Select/Help search or theme controls.
                 modified = (b"\n", b"\x08", b"\x1bf", b"\x1b[105;5u", b"\x1b[109;5u", b"\x1b[106;3u", b"\x1b[1;5A", b"\x1b[1;3B", b"\x1b[57351;5u")
-                for open_key, close_key in ((None, None), (b"?", b"q"), (b"t", b"\x1b[27u"), (b"/x", b"\r"), (b"?/x", b"\rq")):
+                for open_key, close_key in ((None, None), (b"?", b"q"), (b"t", b"\x1b[27u"), (b"fx", b"\r"), (b"?fx", b"\rq")):
                     # Await each ordinary action's repaint before testing input.
                     lines = initial
                     for at in range(len(open_key or b"")):
@@ -697,8 +863,8 @@ def input_protocol_cases(binary, directory):
                     if open_key == b"t":
                         assert lines[0].startswith("  Themes · selected:"), lines
                     else:
-                        mode = {None: "Select", b"?": "Help", b"/x": "Search", b"?/x": "Help"}[open_key]
-                        query = "x" if open_key in (b"/x", b"?/x") else "/ to search"
+                        mode = {None: "Select", b"?": "Help", b"fx": "Search", b"?fx": "Help"}[open_key]
+                        query = "x" if open_key in (b"fx", b"?fx") else "f to search"
                         assert lines[0] == expected_search_row(80, query, mode), lines
                         assert ("Backspace: erase" in lines[-1]) == (query == "x"), lines
                     for sequence in modified:
@@ -708,13 +874,13 @@ def input_protocol_cases(binary, directory):
                     if close_key:
                         for action in ((b"\r", b"q") if close_key == b"\rq" else (close_key,)):
                             popup.send(action)
-                    if open_key in (b"/x", b"?/x"):
+                    if open_key in (b"fx", b"?fx"):
                         popup.send(b"r")
                 popup.finish(b"q")
 
                 # The first Esc returns from search; the second starts the arrow.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
-                for action in (b"j", b"/", b"S", b"a", b"m", b"e"):
+                for action in (b"j", b"f", b"S", b"a", b"m", b"e"):
                     lines = popup.send(action, expected=lambda raw: True)
                 assert lines[0] == expected_search_row(80, "Same", "Search") and "Backspace: erase" in lines[-1], lines
                 def arrow_complete(raw):
@@ -727,13 +893,13 @@ def input_protocol_cases(binary, directory):
                 assert lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" not in lines[-1], lines
                 assert any(line.startswith("  >") and "Claude" in line for line in lines), lines
                 assert popup.child.poll() is None
-                popup.send(b"/")
+                popup.send(b"f")
                 # Both Esc keys must run without closing stdin or the PTY master.
                 popup.finish(b"\x1b\x1b")
 
                 # Rapid Esc+q is Alt+q, not return/close; q cannot become search text.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
-                for action in (b"/", b"c", b"o", b"d", b"e", b"x"):
+                for action in (b"f", b"c", b"o", b"d", b"e", b"x"):
                     lines = popup.send(action, expected=lambda raw: True)
                 assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
                 os.write(popup.master, b"\x1bq")
@@ -780,7 +946,7 @@ def input_protocol_cases(binary, directory):
                 popup.finish(b"q")
 
                 # Preserve input preceding the probe response, including a pending Esc.
-                popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[B/codex\x1b", initial_frame=searching_codex)
+                popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[Bfcodex\x1b", initial_frame=searching_codex)
                 initial, wraps = screen(popup.initial, 80, 15)
                 assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in initial[-1], initial
                 raw = read_frame(popup.output, expected=navigation_codex)
