@@ -51,6 +51,9 @@ jobs:
           test ! -L /tmp/opencode
           mkdir -p -m 700 /tmp/opencode
           test -O /tmp/opencode && test -w /tmp/opencode
+      - name: Observe native terminal restoration without a reader
+        timeout-minutes: 1
+        run: python3 tests/diagnose_darwin_terminal.py
       - name: Check workflow contract
         run: python3 tests/test_macos_workflow.py
       - name: Check formatting
@@ -60,7 +63,9 @@ jobs:
       - name: Run Cargo tests
         run: cargo test --locked
       - name: Check buffered PTY reader regressions
-        run: python3 -B -m unittest discover -s tests -p test_pty_readers.py
+        run: |
+          python3 -B -m unittest discover -s tests -p test_pty_readers.py
+          python3 -B -m unittest discover -s tests -p test_darwin_terminal_diagnostics.py
       - name: Check release and installation helpers
         run: |
           python3 tests/test_version.py

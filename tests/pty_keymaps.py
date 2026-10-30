@@ -344,7 +344,11 @@ def mouse_cases(binary, directory):
             popup.abort()
         listener.close()
         worker.join(timeout=3)
+    startup_failure_case(binary, directory)
     print("Mouse PTY: classic/Kitty search/help/actions/themes/wheel/focus/opt-out/exact restoration passed")
+
+
+def startup_failure_case(binary, directory):
     master, slave = pty.openpty()
     child = None
     try:
@@ -353,7 +357,15 @@ def mouse_cases(binary, directory):
         env.pop("HERDR_SOCKET_PATH", None)
         child = subprocess.Popen([binary], stdin=slave, stdout=slave, stderr=slave, env=env)
         assert child.wait(timeout=3) != 0, "missing CLI must fail startup"
+        after_wait = termios.tcgetattr(slave) if sys.platform == "darwin" else None
         raw = drain(master, timeout=0)
+        if sys.platform == "darwin":
+            after_drain = termios.tcgetattr(slave)
+            # Read-only observations after exit; do not wait for a raw sample or
+            # touch the input queue to normalize the kernel's pending state.
+            print(f"Darwin missing-CLI terminal: before_app={saved!r} raw_state=unobserved "
+                  f"after_wait={after_wait!r} after_drain={after_drain!r}",
+                  file=sys.stderr, flush=True)
         for mode in (1000, 1006):
             assert raw.count(f"\x1b[?{mode}h".encode()) == 1 and raw.count(f"\x1b[?{mode}l".encode()) == 1, raw
         assert termios.tcgetattr(slave) == saved, (saved, termios.tcgetattr(slave), raw)

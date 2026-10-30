@@ -677,6 +677,31 @@ establish the cause of the Intel installed-binary restoration failure in
 [macOS run 39318351418](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39318351418);
 native failure output with these details is still needed.
 
+For the separately reported Intel missing-CLI restoration failure in
+[run 41124150532](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41124150532)
+at `c0ecbfe`, the macOS workflow now runs
+`python3 tests/diagnose_darwin_terminal.py` before acceptance gates on both
+architectures. It logs selected uname fields (excluding hostname), kernel
+release/build/version, `sw_vers`, Python, and PATH-selected plus `/bin/stty`
+paths, resolved paths, SHA256, optional Mach-O identity from `file` and embedded
+build/version markers from `what` when available.
+Hashes and binary identity do not establish an exact Apple source version.
+Required command failures fail the diagnostic; optional `file`/`what` failures are
+labelled unavailable. Commands have two-second deadlines, within a one-minute
+workflow step. Non-Darwin execution explicitly skips only this diagnostic.
+
+One fresh disposable PTY records saved attributes/`stty -g`, raw attributes and
+attributes immediately after synchronous saved-state restoration using the
+application's raw flags. There is no slave reader, input write, input flush,
+retry or normalization; attribute differences are observations, not acceptance
+results. The missing-CLI acceptance fixture separately logs Darwin attributes
+before launch, after child exit and after its existing output drain to stderr,
+before its unchanged mode and exact-equality assertions. Raw state is explicitly
+unobserved: no new wait/probe is inserted into that fixture. Its success message
+now follows this check too. Native execution of these diagnostics is pending;
+they neither fix the restoration failure nor replace any full or installed-byte
+PTY gate.
+
 The trickling-focus-reply startup test accepts only `BrokenPipe` or `NotConnected`
 when its server writes after the peer disconnects: Darwin can report either
 condition. Its original 800-ms process-exit bound, unsuccessful-exit and timeout
