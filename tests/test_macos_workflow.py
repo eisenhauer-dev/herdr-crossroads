@@ -13,7 +13,7 @@ class MacosWorkflowTests(unittest.TestCase):
         self.workflow = (ROOT / ".github/workflows/macos.yml").read_text()
 
     def test_main_pushes_all_pull_requests_and_manual_dispatch(self):
-        self.assertEqual(self.workflow.split("\npermissions:\n", 1)[0], '''name: macOS preparation
+        self.assertEqual(self.workflow.split("\npermissions:\n", 1)[0], '''name: macOS
 
 on:
   push:
@@ -28,7 +28,7 @@ on:
 
 jobs:
   macos:
-    name: macOS preparation (${{ matrix.host }})
+    name: ${{ matrix.platform }} · Build & Tests (${{ matrix.arch }})
     if: github.event.repository.private == false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -37,9 +37,13 @@ jobs:
       matrix:
         include:
           - runner: macos-15
+            platform: macOS Apple Silicon
+            arch: ARM64
             machine: arm64
             host: aarch64-apple-darwin
           - runner: macos-15-intel
+            platform: macOS Intel
+            arch: x86_64
             machine: x86_64
             host: x86_64-apple-darwin
     defaults:

@@ -140,7 +140,7 @@ class ConsoleTableTests(unittest.TestCase):
     def paint(self, *, mode="Select", query="f to search", panes=None, selected=0, capture=False):
         panes = self.panes if panes is None else panes
         left = f"  Search: {query}"
-        badge = f"MODE: {mode.upper()}"
+        badge = "MODE: SELECT"
         lines = [left + " " * (118 - len(left) - len(badge)) + badge,
                  "  " + "─" * 116,
                  f"    {'Workspace':12} {'Tab':8} {'Agent/Pane Name':24} Status",
@@ -148,6 +148,7 @@ class ConsoleTableTests(unittest.TestCase):
         lines.extend(f"  {'>' if index == selected else ' '} {'Same':12} {'Same':8} {name:24} working"
                      for index, name in enumerate(panes))
         lines.append("  " + "─" * 116)
+        lines.append("  Enter/Esc: select  Backspace: erase" if mode == "Search" else "  Esc: exit")
         cursor = f"\x1b[1;{11 + len(query)}H\x1b[?25h" if mode == "Search" else "\x1b[?25l"
         return (f"\x1b[?1003;1006{'h' if capture else 'l'}\x1b[H\x1b[2J" + "\r\n".join(lines) + cursor).encode()
 

@@ -130,12 +130,17 @@ viewport and the theme cursor, list/table preview and saved choice. Opening or
 closing help without activation neither focuses a pane nor saves or cancels a pending theme.
 
 Existing search rows show a right-aligned informational badge: `MODE: SELECT`,
-`MODE: SEARCH`, `MODE: HELP` or `MODE: THEMES`. Only the badge reverses the active
-foreground/background colors, including terminal defaults; it is not clickable.
+`MODE: HELP` or `MODE: THEMES`. Search is an activity within its originating
+view: pane search keeps `MODE: SELECT`, and theme-preview search keeps
+`MODE: THEMES`. Only the badge reverses the active foreground/background
+colors, including terminal defaults; it is not clickable.
 Plain-text output includes the same label without styling.
-Query text clips to reserve space for the complete label.
-While editing pane or help search, the visible cursor follows the displayed
-query (including typed trailing spaces), before padding and the mode label.
+Populated queries scroll left when they overflow: the `Search:` label stays
+visible and the query's newest complete graphemes fit before the mode badge.
+Only the displayed query changes; filtering still uses the full query.
+While editing search, the visible cursor follows the displayed query tail
+(including typed trailing spaces), with a reserved cell before padding and the
+mode label. Backspace naturally reveals earlier query text again.
 Theme table preview shows `MODE: THEMES`, not `MODE: SELECT`; independent help
 search still shows `MODE: HELP`, separately from its caller header. The theme
 list has no search row and identifies itself with its existing Themes heading.
@@ -616,8 +621,8 @@ python3 tests/pty_hints.py target/release/herdr-crossroads
 ```
 
 The render gate checks effective foreground/background inversion on exactly the
-mode-badge cells in Select, Search, Help (including search), and Themes table
-preview, at minimum and wider sizes with Mocha, Latte and terminal-default colors.
+mode-badge cells in Select (including search), Help (including search), and Themes
+table preview, at minimum and wider sizes with Mocha, Latte and terminal-default colors.
 Reader regressions cover SGR reverse/reset state and reject inversion leaking
 into padding or following rows; cursor movement and erasure do not reset styling.
 
@@ -647,12 +652,20 @@ response delay still exceeds the unchanged 95-ms fast-input bound. Precise timin
 predicates use a deterministic clock and scheduled input, not Python-thread wake-up
 times. Real socket/PTY frame separation and lifecycle checks remain separate;
 the full native PTY gates still measure actual elapsed time with unchanged bounds.
-Long-query render checks await the exact visible search row and editing cursor
+Mouse search/action preparation also awaits complete draws: typed queries require
+their exact search row and editing cursor, and search return requires the navigation
+footer and hidden cursor before the Help click. The shared `MODE: SELECT` badge
+alone cannot distinguish editing from navigation. Deterministic regressions replay
+delayed, coalesced and fragmented typing plus stale search/Select repaints, retaining
+the original three-second deadline and read-ahead rather than waiting for quiet.
+Long-query render checks await the exact visible query tail and editing cursor
 in a complete frame within the original three-second deadline, retaining read-ahead
 and rejecting intermediate query repaints. Each predicate parses only the latest
 full repaint rather than repeatedly replaying the typing history, so fixture
-parsing does not grow quadratically. Clipped text does not prove ingestion
-of the hidden query suffix.
+parsing does not grow quadratically. The cases cover pane search, theme-preview
+search and independent help search from Select and both theme views, including
+ASCII, wide and combining query tails. Visible tail text does not prove ingestion
+of the hidden query prefix; Rust regressions separately check full-query filtering.
 All standalone search Esc timing checks, including Help search, observe complete
 frames rather than treating any readable bytes as resolved input. A delayed
 search repaint must retain its entire screen, query and editing cursor; navigation

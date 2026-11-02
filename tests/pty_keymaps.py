@@ -110,7 +110,7 @@ def read_search_escape(reader, start, query, search_lines):
         lines, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
         assert wraps == 0, lines
         help_search = search_lines[0] == expected_search_row(80, query, "Help")
-        if lines[0] == expected_search_row(80, query, "Help" if help_search else "Search") and "Backspace: erase" in lines[-1]:
+        if lines[0] == expected_search_row(80, query, "Help" if help_search else "Select") and "Backspace: erase" in lines[-1]:
             assert lines == search_lines, (search_lines, lines)
             assert "Backspace: erase" in lines[-1] and cursor == (True, 10 + len(query), 0), (lines, cursor)
             continue
@@ -244,6 +244,16 @@ def point(lines, text, start=0):
 
 
 def mouse_cases(binary, directory):
+    def searching(raw, query, mode="Select"):
+        lines, wraps, cursor = screen(raw, 120, 30, track_cursor=True)
+        return (wraps == 0 and lines[0] == expected_search_row(120, query, mode)
+                and "Backspace: erase" in lines[-1] and cursor == (True, 10 + len(query), 0))
+
+    def selecting(raw, query):
+        lines, wraps, cursor = screen(raw, 120, 30, track_cursor=True)
+        return (wraps == 0 and lines[0] == expected_search_row(120, query, "Select")
+                and "?: keys" in lines[-1] and cursor[0] is False)
+
     for kitty in (False, True):
         popup = Popup(binary, directory, kitty=kitty, width=120, height=30)
         try:
@@ -256,49 +266,51 @@ def mouse_cases(binary, directory):
                 "capture": True}, table_state(current)
             lines, _ = screen(popup.initial, 120, 30)
             # A visible search bar activates editing, not just an inert highlight.
-            lines = popup.send(mouse_report(*point(lines, "Search:")))
-            assert lines[0].endswith("MODE: SEARCH") and "Backspace: erase" in lines[-1], lines
-            lines = popup.send(b"codex")
-            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: select")))
+            lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, ""))
+            assert lines[0].endswith("MODE: SELECT") and "Backspace: erase" in lines[-1], lines
+            lines = popup.send(b"codex", expected=lambda raw: searching(raw, "codex"))
+            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: select")), expected=lambda raw: selecting(raw, "codex"))
             assert lines[0].endswith("MODE: SELECT"), lines
             # Help remains reachable from the footer; search and execute Reset Search
             # in its actual caller, without synthesizing remapped keyboard keys.
-            lines = popup.send(mouse_report(*point(lines, "?: keys")))
+            lines = popup.send(mouse_report(*point(lines, "?: keys")), expected=lambda raw: "Keys — Select" in screen(raw, 120, 30)[0][1])
             assert "Keys — Select" in lines[1], lines
-            lines = popup.send(mouse_report(*point(lines, "Search:")))
-            lines = popup.send(b"choose theme")
-            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: return to keys")))
+            lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, "", "Help"))
+            lines = popup.send(b"choose theme", expected=lambda raw: searching(raw, "choose theme", "Help"))
+            lines = popup.send(mouse_report(*point(lines, "Enter/Esc: return to keys")), expected=lambda raw: "Enter: run" in screen(raw, 120, 30)[0][-1])
             at = point(lines, "choose theme", start=3)
-            lines = popup.send(mouse_report(*at))
+            lines = popup.send(mouse_report(*at), expected=lambda raw: True)
             assert "Keys — Select" in lines[1] and any(line.startswith("  >") and "choose theme" in line for line in lines), lines
             time.sleep(0.45)  # Help repeat-click is deliberately not a 400ms double-click.
-            lines = popup.send(mouse_report(*at))
+            lines = popup.send(mouse_report(*at), expected=lambda raw: True)
             assert lines[0].startswith("  Themes"), lines
-            lines = popup.send(mouse_report(*point(lines, "keys")))
+            lines = popup.send(mouse_report(*point(lines, "keys")), expected=lambda raw: True)
             assert "Keys — Themes" in lines[1], lines
             at = point(lines, "next theme", start=3)
-            popup.send(mouse_report(*at))
-            lines = popup.send(mouse_report(*at))
+            popup.send(mouse_report(*at), expected=lambda raw: True)
+            lines = popup.send(mouse_report(*at), expected=lambda raw: True)
             assert "preview: catppuccin" in lines[0], lines
-            lines = popup.send(mouse_report(*point(lines, "Space: table")))
+            lines = popup.send(mouse_report(*point(lines, "Space: table")), expected=lambda raw: True)
             assert any("Agent/Pane Name" in line for line in lines), lines
-            lines = popup.send(mouse_report(*point(lines, "Search:")))
+            lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, "codex", "Themes"))
             assert "Enter/Esc: preview" in lines[-1], lines
-            lines = popup.send(b"\r")
+            assert lines[0] == expected_search_row(120, "codex", "Themes"), lines
+            lines = popup.send(b"\r", expected=lambda raw: "Space: list" in "\n".join(screen(raw, 120, 30)[0][-2:]))
             assert any("Agent/Pane Name" in line for line in lines), lines
-            lines = popup.send(mouse_report(*point(lines, "Space: list")))
+            lines = popup.send(mouse_report(*point(lines, "Space: list")), expected=lambda raw: True)
             at = point(lines, "terminal", start=1)
-            lines = popup.send(mouse_report(*at) + mouse_report(*at, release=True) + mouse_report(*at), expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("MODE: SELECT"))
+            lines = popup.send(mouse_report(*at) + mouse_report(*at, release=True) + mouse_report(*at), expected=lambda raw: selecting(raw, "codex"))
             assert lines[0].endswith("MODE: SELECT"), lines
             assert json.loads((directory / "theme.jsonc").read_text())["theme"] == "terminal"
             # Keyboard Help Enter follows the same origin/action path.
-            lines = popup.send(b"?")
-            lines = popup.send(mouse_report(*point(lines, "Search:")))
-            lines = popup.send(b"reset search\r")
-            lines = popup.send(b"\r", expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("MODE: SELECT"))
+            lines = popup.send(b"?", expected=lambda raw: True)
+            lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, "", "Help"))
+            lines = popup.send(b"reset search", expected=lambda raw: searching(raw, "reset search", "Help"))
+            lines = popup.send(b"\r", expected=lambda raw: "Enter: run" in screen(raw, 120, 30)[0][-1])
+            lines = popup.send(b"\r", expected=lambda raw: selecting(raw, "f to search"))
             assert "Search: f to search" in lines[0], lines
             before = [line for line in lines if line.startswith("  >")]
-            lines = popup.send(mouse_report(5, 5, button=65))
+            lines = popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True)
             assert [line for line in lines if line.startswith("  >")] != before, lines
             popup.finish(mouse_report(*point(lines, "Esc: exit")), expect_mouse=True)
         finally:
@@ -308,9 +320,9 @@ def mouse_cases(binary, directory):
         try:
             assert "\x1b[?1000h" not in popup.initial and "\x1b[?1006h" not in popup.initial
             initial, _ = screen(popup.initial, 80, 15)
-            assert popup.send(mouse_report(4, 0)) == initial
-            assert popup.send(mouse_report(5, 5, button=65)) == initial
-            assert popup.send(b"j") != initial
+            assert popup.send(mouse_report(4, 0), expected=lambda raw: True) == initial
+            assert popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True) == initial
+            assert popup.send(b"j", expected=lambda raw: True) != initial
             popup.finish(b"q", expect_mouse=False)
         finally:
             popup.abort()
@@ -334,8 +346,8 @@ def mouse_cases(binary, directory):
     popup = None
     try:
         popup = Popup(binary, directory, focus_socket=address)
-        lines = popup.send(mouse_report(4, 0))
-        lines = popup.send(b"codex")
+        lines = popup.send(mouse_report(4, 0), expected=lambda raw: True)
+        lines = popup.send(b"codex", expected=lambda raw: screen(raw, 80, 15, track_cursor=True)[2] == (True, 15, 0) and screen(raw, 80, 15)[0][0] == expected_search_row(80, "codex", "Select"))
         at = point(lines, "codex", start=3)
         popup.finish(mouse_report(*at) + mouse_report(*at), expect_mouse=True)
         worker.join(timeout=3)
@@ -440,20 +452,20 @@ def main(binary):
                         popup.send(b"?", expected=lambda raw: True)
                     for action in (b"f", b"x"):
                         lines = popup.send(action, expected=lambda raw: True)
-                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
+                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Select") and "Backspace: erase" in lines[-1], lines
                     searching = lines
                     start = time.monotonic()
                     lines = popup.send(b"\x1bx", expected=lambda raw: screen(raw, 80, 15)[0] == searching)
                     elapsed = time.monotonic() - start
                     assert elapsed < 0.095, ("complete Alt input must not wait for Esc timeout", elapsed)
-                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
+                    assert lines[0] == expected_search_row(80, "x", "Help" if help_search else "Select") and "Backspace: erase" in lines[-1], lines
                     keys = b"\n\x08\t" if not kitty else b"\x1b[106;5u\x1b[104;5u\x1b[105;5u\x1b[109;5u"
                     os.write(popup.master, keys)
                     raw = read_frame(popup.output) + drain(popup.master).decode("utf-8", "replace")
                     lines, wraps = screen(raw, 80, 15)
-                    assert wraps == 0 and lines[0] == expected_search_row(80, "x", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
+                    assert wraps == 0 and lines[0] == expected_search_row(80, "x", "Help" if help_search else "Select") and "Backspace: erase" in lines[-1], lines
                     lines = popup.send(b"\x7f", expected=lambda raw: True)
-                    assert lines[0] == expected_search_row(80, "", "Help" if help_search else "Search") and "Backspace: erase" in lines[-1], lines
+                    assert lines[0] == expected_search_row(80, "", "Help" if help_search else "Select") and "Backspace: erase" in lines[-1], lines
                     # Raw Esc has a fixed 100ms ambiguity deadline in either mode.
                     start = time.monotonic()
                     os.write(popup.master, b"\x1b")
@@ -866,7 +878,7 @@ def input_protocol_cases(binary, directory):
                     if open_key == b"t":
                         assert lines[0].startswith("  Themes · selected:"), lines
                     else:
-                        mode = {None: "Select", b"?": "Help", b"fx": "Search", b"?fx": "Help"}[open_key]
+                        mode = {None: "Select", b"?": "Help", b"fx": "Select", b"?fx": "Help"}[open_key]
                         query = "x" if open_key in (b"fx", b"?fx") else "f to search"
                         assert lines[0] == expected_search_row(80, query, mode), lines
                         assert ("Backspace: erase" in lines[-1]) == (query == "x"), lines
@@ -885,7 +897,7 @@ def input_protocol_cases(binary, directory):
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 for action in (b"j", b"f", b"S", b"a", b"m", b"e"):
                     lines = popup.send(action, expected=lambda raw: True)
-                assert lines[0] == expected_search_row(80, "Same", "Search") and "Backspace: erase" in lines[-1], lines
+                assert lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" in lines[-1], lines
                 def arrow_complete(raw):
                     lines, _ = screen(raw, 80, 15)
                     return lines[0] == expected_search_row(80, "Same", "Select") and "Backspace: erase" not in lines[-1] and any(line.startswith("  >") and "Claude" in line for line in lines)
@@ -904,14 +916,14 @@ def input_protocol_cases(binary, directory):
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address)
                 for action in (b"f", b"c", b"o", b"d", b"e", b"x"):
                     lines = popup.send(action, expected=lambda raw: True)
-                assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
+                assert lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" in lines[-1], lines
                 os.write(popup.master, b"\x1bq")
                 # Stop at a full frame boundary; do not consume a partial later
                 # repaint into the output-gap reader before measuring Esc.
                 raw = read_frame(popup.output, expected=lambda raw: True)
                 lines, wraps = screen(raw, 80, 15)
                 assert wraps == 0, lines
-                assert lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1], lines
+                assert lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" in lines[-1], lines
                 assert popup.child.poll() is None, "Alt+q must not close search"
                 # Now exercise actual standalone Esc, then q, with stdin still open.
                 start = time.monotonic()
@@ -934,7 +946,7 @@ def input_protocol_cases(binary, directory):
 
             def searching_codex(raw):
                 lines, _ = screen(raw, 80, 15)
-                return lines[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in lines[-1]
+                return lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" in lines[-1]
             def navigation_codex(raw):
                 lines, _ = screen(raw, 80, 15)
                 return lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" not in lines[-1]
@@ -951,7 +963,7 @@ def input_protocol_cases(binary, directory):
                 # Preserve input preceding the probe response, including a pending Esc.
                 popup = Popup(binary, directory, kitty=kitty, focus_socket=address, probe_input=b"j\x1b[Bfcodex\x1b", initial_frame=searching_codex)
                 initial, wraps = screen(popup.initial, 80, 15)
-                assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Search") and "Backspace: erase" in initial[-1], initial
+                assert wraps == 0 and initial[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" in initial[-1], initial
                 raw = read_frame(popup.output, expected=navigation_codex)
                 lines, wraps = screen(raw, 80, 15)
                 assert wraps == 0 and lines[0] == expected_search_row(80, "codex", "Select") and "Backspace: erase" not in lines[-1], lines

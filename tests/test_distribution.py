@@ -405,15 +405,16 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
             assert {p["pane_id"] for p in snapshot()["panes"]} == pane_ids, "popup entered ordinary pane topology"
             os.write(master, b"fArrival")
 
-            def filtered(mode):
+            def filtered(searching):
                 text = screen.popup_view()
                 lines = [line for line in text.splitlines() if "Arrival" in line]
-                return bool(re.search(r'Search: Arrival\s+MODE: ' + mode.upper() + r'\b', text)) and len(lines) == 2 and "Origin" not in text
+                editing = "Enter/Esc: select  Backspace: erase" in screen.text()
+                return bool(re.search(r'Search: Arrival\s+MODE: SELECT\b', text)) and len(lines) == 2 and "Origin" not in text and editing == searching
 
-            wait_for(lambda: filtered("Search"), "fresh search query and sole Arrival row")
+            wait_for(lambda: filtered(True), "fresh search query and sole Arrival row")
             assert snapshot()["focused_pane_id"] == origin
             os.write(master, b"\r")
-            wait_for(lambda: filtered("Select"), "first Enter retains filter")
+            wait_for(lambda: filtered(False), "first Enter retains filter")
             assert snapshot()["focused_pane_id"] == origin
             duplicate = command([*argv, "plugin", "pane", "open", "--plugin", "herdr-crossroads",
                                  "--entrypoint", "crossroads"])

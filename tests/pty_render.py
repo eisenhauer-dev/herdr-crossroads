@@ -163,7 +163,7 @@ def assert_panel_background(raw, width, height):
     assert wraps == 0, (width, height, wraps, lines)
     assert_mode_badge_colors(raw, width, height)
     for y, row in enumerate(colors):
-        badge = re.search(r"MODE: (SELECT|SEARCH|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
+        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
         for x, (_, bg) in enumerate(row):
             expected = (205, 214, 244) if badge and badge.start() <= x < badge.end() else (24, 24, 37)
             assert bg == expected, (x, y, bg, expected, lines)
@@ -176,7 +176,7 @@ def assert_mode_badge_colors(raw, width, height, foreground=(205, 214, 244), bac
     for y, line in enumerate(lines):
         if not line.startswith("  Search:"):
             continue
-        badge = re.search(r"MODE: (SELECT|SEARCH|HELP|THEMES)$", line)
+        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", line)
         assert badge and badge.end() == width - 2, line
         for x, color in enumerate(colors[y]):
             expected = (background, foreground) if badge.start() <= x < badge.end() else (foreground, background)
@@ -287,7 +287,7 @@ def assert_notice_style(raw):
 
 
 def search_cursor_cases(binary):
-    from pty_keymaps import Popup, read_frame
+    from pty_keymaps import Popup, read_frame, mouse_report
 
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cursor-") as temporary:
         directory = Path(temporary)
@@ -296,21 +296,31 @@ def search_cursor_cases(binary):
         fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
         fake.chmod(0o700)
         for width, height in ((80, 15), (142, 30)):
-            for mode in ("Help", "Search"):
+            for context, opening, mode in (
+                ("Help", (b"?",), "Help"),
+                ("Select", (), "Select"),
+                ("Themes", (b"t", b" ", mouse_report(4, 1)), "Themes"),
+                ("Themes list help", (b"t", b"?"), "Help"),
+                ("Themes table help", (b"t", b" ", b"?"), "Help"),
+            ):
                 badge = f"MODE: {mode.upper()}"
                 budget = width - 4 - len(badge) - 1
-                wide_count = (budget - 2 - 8) // 2
+                query_budget = budget - 8 - 1  # Keep a cell for the editing cursor.
+                wide_count = (query_budget - 1) // 2
                 # screen() retains a blank continuation cell after wide glyphs.
                 for query, expected_x, visible_query in (
                     ("", 10, ""), ("abc", 13, "abc"), ("abc  ", 15, "abc  "),
-                    ("x" * 200, 2 + budget - 1, "x" * (budget - 10) + "…"),
-                    ("界" * 100, 2 + 8 + 2 * wide_count + 1, "界 " * wide_count + "…"),
+                    ("x" * 200, 2 + budget - 1, "x" * query_budget),
+                    ("old" * 100 + "LATEST", 2 + budget - 1, ("old" * 100 + "LATEST")[-query_budget:]),
+                    ("界" * 100 + "Z", 10 + 2 * wide_count + 1, "界 " * wide_count + "Z"),
+                    ("e\u0301" * 200 + "Z", 2 + budget - 1, "e" * (query_budget - 1) + "Z"),
                 ):
                     popup = Popup(binary, directory, width=width, height=height)
                     try:
-                        if mode == "Help":
-                            popup.send(b"?")
-                        popup.send(b"f")
+                        for key in opening:
+                            popup.send(key)
+                        if context != "Themes":
+                            popup.send(b"f")
                         expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(badge)) + badge
                         latest = None
 
@@ -331,7 +341,7 @@ def search_cursor_cases(binary):
                         try:
                             raw = read_frame(popup.output, expected=final_query)
                         except AssertionError as error:
-                            error.add_note(f"width={width} mode={mode} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
+                            error.add_note(f"width={width} context={context} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
                             raise
                         lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
                         assert wraps == 0 and lines[0].endswith(badge), (lines, wraps)
@@ -339,10 +349,13 @@ def search_cursor_cases(binary):
                         assert lines[0] == expected_row, lines
                         if len(query) < 10:
                             assert lines[0] == expected_search_row(width, query, mode), lines
-                        else:
-                            assert "…" in lines[0], lines
+                        elif query.startswith("e\u0301"):
+                            assert "Search: " + "e\u0301" * (query_budget - 1) + "Z " in raw, raw
+                        assert expected_x < 2 + budget, (expected_x, budget)
                         popup.send(b"\r")
                         if mode == "Help":
+                            popup.send(b"q")
+                        if opening and opening[0] == b"t":
                             popup.send(b"q")
                         popup.finish(b"q")
                     finally:
@@ -350,7 +363,7 @@ def search_cursor_cases(binary):
 
 
 def mode_color_cases(binary):
-    from pty_keymaps import Popup, read_frame
+    from pty_keymaps import Popup, read_frame, mouse_report
 
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-mode-colors-") as temporary:
         directory = Path(temporary)
@@ -369,10 +382,13 @@ def mode_color_cases(binary):
                 try:
                     assert_mode_badge_colors(popup.initial, width, height, foreground, background)
                     for key, mode, y in (
-                        (b"f", "SEARCH", 0), (b"\r", "SELECT", 0),
+                        (b"f", "SELECT", 0), (b"\r", "SELECT", 0),
                         (b"?", "HELP", 0), (b"f", "HELP", 0),
                         (b"\r", "HELP", 0), (b"q", "SELECT", 0),
                         (b"t", None, 0), (b" ", "THEMES", 1),
+                        (mouse_report(4, 1), "THEMES", 0),
+                        (b"x", "THEMES", 0), (b"\x7f", "THEMES", 0),
+                        (b"\r", "THEMES", 1),
                         (b"?", "HELP", 0), (b"f", "HELP", 0),
                         (b"\r", "HELP", 0), (b"q", "THEMES", 1),
                         (b"q", "SELECT", 0),

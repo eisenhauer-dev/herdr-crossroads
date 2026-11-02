@@ -1,4 +1,4 @@
-name: PR source policy
+name: PR
 
 on:
   pull_request_target:
@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   source-policy:
-    name: PR source policy
+    name: PR · Branch-Regeln
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 5

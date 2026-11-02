@@ -1,4 +1,4 @@
-name: CI
+name: Linux
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   linux:
-    name: Linux gates
+    name: Linux · Build & Tests (x86_64)
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 30

@@ -7,7 +7,7 @@ import unicodedata
 def table_state(screen):
     """Read the current fixture table, not labels from earlier paints."""
     lines = screen.text().splitlines()
-    prompt = re.fullmatch(r"  Search: (.*?) +MODE: (SELECT|SEARCH) *", lines[0])
+    prompt = re.fullmatch(r"  Search: (.*?) +MODE: SELECT *", lines[0])
     header = next((y for y, line in enumerate(lines) if "Agent/Pane Name" in line), None)
     if prompt is None or header is None:
         return None
@@ -27,7 +27,8 @@ def table_state(screen):
             if line.startswith("  > "):
                 marked.append((len(panes), name))
             panes.append(name)
-    return {"mode": prompt[2].title(), "query": prompt[1], "panes": tuple(panes),
+    searching = any(line.strip() == "Enter/Esc: select  Backspace: erase" for line in lines[bottom + 1:])
+    return {"mode": "Search" if searching else "Select", "query": prompt[1], "panes": tuple(panes),
             "selected": marked[0] if len(marked) == 1 else None,
             # ConPTY's translated delivery state, not an assertion that inner
             # 1000/1006 requests survive as identical outer escape bytes.
@@ -143,7 +144,7 @@ class Screen:
         # Crop by the actual query/badge coordinates, excluding underlying host
         # chrome and labels rather than claiming their text belongs to the popup.
         lines = self.text().splitlines()
-        prompts = [(y, re.search(r'Search: .*?\s+MODE: (SELECT|SEARCH)\b', line))
+        prompts = [(y, re.search(r'Search: .*?\s+MODE: SELECT\b', line))
                    for y, line in enumerate(lines)]
         prompts = [(y, match) for y, match in prompts if match]
         if len(prompts) != 1:

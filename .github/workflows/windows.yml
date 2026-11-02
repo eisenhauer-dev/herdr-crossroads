@@ -1,4 +1,4 @@
-name: Windows preparation
+name: Windows
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   windows:
-    name: Windows x86_64 preparation (not certification)
+    name: Windows x64 · Build & Tests (x86_64)
     if: github.event.repository.private == false
     runs-on: windows-2025
     timeout-minutes: 30

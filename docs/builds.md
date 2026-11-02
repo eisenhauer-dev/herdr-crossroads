@@ -706,7 +706,7 @@ ELF symbol versions do **not** establish a tested minimum glibc version or
 distribution compatibility. No older runtime was tested, and no minimum glibc or
 distribution support guarantee is made.
 
-The public-only **Linux gates** CI job builds the same target on
+The public-only **Linux · Build & Tests (x86_64)** CI job builds the same target on
 Ubuntu 24.04, then uploads the tested tar, its checksum and the two builder-evidence
 sidecars using commit-pinned `actions/upload-artifact` v7.0.2 with seven-day
 retention and an error on missing files. The tar preserves executable mode inside

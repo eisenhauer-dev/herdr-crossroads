@@ -500,7 +500,7 @@ pending at that historical checkpoint; the later real cycle is recorded above.
 
 ## Public CI and later publication remain separate
 
-The existing **Linux gates** job accepts `push`, `pull_request`, and manual
+The **Linux · Build & Tests (x86_64)** job accepts `push`, `pull_request`, and manual
 `workflow_dispatch` on an existing ref. Every invocation remains public-only,
 read-only, and uses the same gates and helper. Only successful packaging writes
 the exact versioned name to step outputs; upload selects its tar, archive

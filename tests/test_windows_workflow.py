@@ -14,7 +14,7 @@ class WindowsWorkflowTests(unittest.TestCase):
         self.workflow = (ROOT / ".github/workflows/windows.yml").read_text()
 
     def test_standard_public_only_native_runner_and_read_only_events(self):
-        self.assertEqual(self.workflow.split("\npermissions:\n")[0], """name: Windows preparation
+        self.assertEqual(self.workflow.split("\npermissions:\n")[0], """name: Windows
 
 on:
   push:
@@ -22,6 +22,7 @@ on:
   pull_request:
   workflow_dispatch:
 """)
+        self.assertIn("jobs:\n  windows:\n    name: Windows x64 · Build & Tests (x86_64)\n", self.workflow)
         for expected in ["permissions:\n  contents: read\n", "if: github.event.repository.private == false",
                          "runs-on: windows-2025", "timeout-minutes: 30", "shell: pwsh",
                          'RUSTUP_TOOLCHAIN: "1.99.0"']:
@@ -34,7 +35,8 @@ on:
             "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"])
         for expected in ["persist-credentials: false", "name: windows-preparation-", "if-no-files-found: error",
-                         "retention-days: 7", ".tar.gz\n", ".tar.gz.sha256\n", ".provenance.json\n", ".link.map\n"]:
+                         "retention-days: 7", ".tar.gz\n", ".tar.gz.sha256\n", ".provenance.json\n", ".link.map\n",
+                         "Upload Windows preparation only (not release approval)"]:
             self.assertIn(expected, self.workflow)
         self.assertNotIn("target/builds/*", self.workflow)
         self.assertNotIn("target/release/", self.workflow)

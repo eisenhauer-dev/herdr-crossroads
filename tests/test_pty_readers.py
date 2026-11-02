@@ -235,18 +235,22 @@ class SearchCursorFrameTests(unittest.TestCase):
 
         class Popup:
             def __init__(self, binary, directory, width, height):
+                nonlocal now
+                now = 0.0  # Each child has its own modeled deadline/clock origin.
                 self.master, self.width, self.height = 123, width, height
                 self.output = pty_keymaps.DrawReader(self.master)
-                self.mode = "Search"
+                self.mode = "Select"
                 popups.append(self)
 
             def send(self, data):
                 if data == b"?":
                     self.mode = "Help"
+                elif data == b"t":
+                    self.mode = "Themes"
 
             def finish(self, key):
                 test.assertFalse(emissions, "final query draw was not consumed")
-                test.assertEqual(bytes(self.output.pending), pending if self.width == 142 and self.mode == "Search" and self.query == "x" * 200 else b"")
+                test.assertEqual(bytes(self.output.pending), pending if self.width == 142 and self.mode == "Select" and self.query == "x" * 200 else b"")
 
             def abort(self):
                 pass
@@ -256,16 +260,24 @@ class SearchCursorFrameTests(unittest.TestCase):
             query = "" if data == b"\x7f" else data.decode()
             popup.query = query
             budget = popup.width - 4 - len(f"MODE: {popup.mode.upper()}") - 1
+            query_budget = budget - 9
             if len(query) < 10:
                 text, x = query, 10 + len(query)
             elif query.startswith("界"):
-                count = (budget - 10) // 2
-                text, x = "界" * count + "…", 11 + 2 * count
+                count = (query_budget - 1) // 2
+                text, x = "界" * count + "Z", 11 + 2 * count
+            elif query.startswith("e\u0301"):
+                text, x = "e" * (query_budget - 1) + "Z", budget + 1
+            elif query.startswith("old"):
+                text, x = query[-query_budget:], budget + 1
             else:
-                text, x = "x" * (budget - 10) + "…", budget + 1
+                text, x = "x" * query_budget, budget + 1
             final = self.draw(popup.width, popup.mode, text, x)
-            if popup.width == 142 and popup.mode == "Search" and query == "x" * 200:
-                intermediate = self.draw(142, "Search", "x" * 104, 114)
+            if query.startswith("e\u0301"):
+                final = final.replace(("e" * (query_budget - 1) + "Z").encode(),
+                                      ("e\u0301" * (query_budget - 1) + "Z").encode())
+            if popup.width == 142 and popup.mode == "Select" and query == "x" * 200:
+                intermediate = self.draw(142, "Select", "x" * 104, 114)
                 emissions.extend(delivery(now, intermediate, final))
             else:
                 emissions.append((now, final))
@@ -342,6 +354,101 @@ class SearchCursorFrameTests(unittest.TestCase):
         self.run_cases(lambda now, intermediate, final: [
             (now, intermediate * 100), (now + 2.5, final),
         ], parsing_cost=True)
+
+
+class MouseReadinessTests(unittest.TestCase):
+    def run_mouse_help(self, delivery="delayed", missing=False):
+        now = 0.0
+        emissions = []
+        sent = []
+        panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
+
+        def paint(query="f to search", searching=False, help_view=False):
+            names = ("codex",) if query != "f to search" else panes
+            lines = [pty_keymaps.expected_search_row(120, query, "Help" if help_view else "Select"),
+                     "  Keys — Select" if help_view else "  " + "─" * 116,
+                     f"    {'Workspace':12} {'Tab':8} {'Agent/Pane Name':24} Status",
+                     "  " + "─" * 116]
+            lines.extend(f"  {'>' if index == 0 else ' '} {'Same':12} {'Same':8} {name:24} idle"
+                         for index, name in enumerate(names))
+            lines.append("  " + "─" * 116)
+            lines.extend([""] * (29 - len(lines)))
+            lines.append("  Enter/Esc: select  Backspace: erase" if searching else "  Esc: exit · ?: keys")
+            cursor = f"\x1b[1;{11 + len(query)}H\x1b[?25h" if searching else "\x1b[?25l"
+            return ("\x1b[?1000h\x1b[?1006h\x1b[H\x1b[J" + "\r\n".join(lines) + cursor).encode()
+
+        popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
+        popup.master, popup.width, popup.height = 123, 120, 30
+        popup.initial = paint().decode()
+        popup.output = pty_keymaps.DrawReader(popup.master)
+        popup.abort = Mock()
+
+        class HelpObserved(Exception):
+            pass
+
+        def write(fd, data):
+            sent.append(data)
+            if len(sent) == 1:
+                emissions.append((now, paint("", searching=True)))
+            elif len(sent) == 2:
+                self.assertEqual(data, b"codex")
+                # Each key repaints; a gap longer than 10ms is not completion.
+                frames = [paint("codex"[:index], searching=True) for index in range(1, 6)]
+                if delivery in ("coalesced", "stale Select"):
+                    emissions.append((now, b"".join(frames)))
+                elif delivery == "fragmented":
+                    emissions.extend([(now, b"".join(frames)[:-1]), (now + 0.1, frames[-1][-1:])])
+                elif delivery == "wrong cursor":
+                    emissions.append((now, frames[-1].replace(b"[1;16H", b"[1;15H")))
+                    if not missing:
+                        emissions.append((now + 0.1, frames[-1]))
+                else:
+                    emissions.extend((now + index * 0.02, frame) for index, frame in enumerate(frames, 1))
+            elif len(sent) == 3:
+                self.assertEqual(len(emissions), 0, "search return sent before the complete query draw")
+                # A late editing repaint has the same MODE: SELECT badge.
+                emissions.append((now, paint("codex", searching=True) + paint("codex")))
+            elif len(sent) == 4:
+                self.assertEqual(len(emissions), 0, "Help click sent before search return was observed")
+                self.assertEqual(popup.output.pending, b"", "editing repaint was mistaken for search return")
+                if delivery == "stale Select":
+                    emissions.extend([(now, paint("codex")), (now + 0.02, paint("f to search", help_view=True))])
+                else:
+                    emissions.append((now, paint("codex") + paint("f to search", help_view=True)))
+            else:
+                self.assertEqual(popup.output.pending, b"", "pre-Help Select repaint was mistaken for Help")
+                raise HelpObserved
+            return len(data)
+
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            if emissions and emissions[0][0] <= now + timeout:
+                now = max(now, emissions[0][0])
+                return readers, [], []
+            now += timeout
+            return [], [], []
+
+        with patch.object(pty_keymaps, "Popup", return_value=popup), \
+             patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_keymaps.select, "select", side_effect=ready), \
+             patch.object(pty_keymaps.os, "read", side_effect=lambda fd, size: emissions.pop(0)[1]), \
+             patch.object(pty_keymaps.os, "write", side_effect=write):
+            with self.assertRaisesRegex(AssertionError, "bytearray") if missing else self.assertRaises(HelpObserved):
+                pty_keymaps.mouse_cases("unused", Path("unused"))
+        self.assertEqual(len(sent), 2 if missing else 5)
+        if missing:
+            self.assertEqual(now, 3.0, "query repaints extended the original deadline")
+
+    def test_mouse_help_waits_for_typing_and_search_return_before_next_click(self):
+        for delivery in ("delayed", "coalesced", "fragmented", "wrong cursor"):
+            with self.subTest(delivery=delivery):
+                self.run_mouse_help(delivery)
+
+    def test_mouse_query_with_wrong_cursor_cannot_advance_to_search_return(self):
+        self.run_mouse_help("wrong cursor", missing=True)
+
+    def test_pre_help_select_repaint_is_not_the_help_click_result(self):
+        self.run_mouse_help("stale Select")
 
 
 class ReaderEofTests(unittest.TestCase):
@@ -429,7 +536,7 @@ finally:
 class EscapeObservationTests(unittest.TestCase):
     @staticmethod
     def frame(searching=True, query="codex", cursor=None, help_search=False):
-        header = pty_keymaps.expected_search_row(80, query, "Help" if help_search else "Search" if searching else "Select")
+        header = pty_keymaps.expected_search_row(80, query, "Help" if help_search else "Select")
         footer = "  Enter/Esc: return · Backspace: erase" if searching else "q: close keys" if help_search else "q: close"
         if cursor is None:
             cursor = b"\x1b[1;16H\x1b[?25h" if searching else b"\x1b[?25l"

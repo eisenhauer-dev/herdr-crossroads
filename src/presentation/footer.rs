@@ -1,4 +1,5 @@
 use ratatui::buffer::CellWidth;
+use ratatui::{style::Style, text::Span};
 
 use super::{clipped, columns, wrapped};
 use crate::keymap::Context;
@@ -6,13 +7,35 @@ use crate::selection::{Hit, Mode, Ui};
 
 impl Ui {
     pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
-        let badge = match self.mode {
-            Mode::Select => "MODE: SELECT",
-            Mode::Search => "MODE: SEARCH",
+        let badge = match if self.mode == Mode::Search {
+            self.search_return
+        } else {
+            self.mode
+        } {
+            Mode::Select | Mode::Search => "MODE: SELECT",
             Mode::Help => "MODE: HELP",
             Mode::Themes => "MODE: THEMES",
         };
         (badge, width.saturating_sub(4 + badge.len() + 1))
+    }
+
+    pub(crate) fn search_text(&self, query: &str, width: usize) -> String {
+        let (_, available) = self.search_prompt_geometry(width);
+        let label = clipped("Search: ", available.saturating_sub(1));
+        let budget = available.saturating_sub(label.cell_width() as usize + 1);
+        let source = Span::raw(query);
+        let graphemes: Vec<_> = source.styled_graphemes(Style::default()).collect();
+        let mut start = query.len();
+        let mut used = 0;
+        for grapheme in graphemes.iter().rev() {
+            let cells = grapheme.symbol.cell_width() as usize;
+            if used + cells > budget {
+                break;
+            }
+            used += cells;
+            start -= grapheme.symbol.len();
+        }
+        format!("{label}{}", &query[start..])
     }
 
     pub(super) fn search_prompt(
@@ -25,7 +48,7 @@ impl Ui {
     ) -> String {
         let (badge, available) = self.search_prompt_geometry(width);
         let text = if !query.is_empty() || searching {
-            clipped(&format!("Search: {query}"), available)
+            self.search_text(query, width)
         } else {
             let text = format!(
                 "Search: {} to search",

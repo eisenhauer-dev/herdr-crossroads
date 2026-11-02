@@ -695,7 +695,7 @@ fn compact_pipe_is_dim_only_between_unstyled_spaces() {
     assert_eq!(
         filtered.lines().next().unwrap(),
         format!(
-            "  Search: Claude{}\x1b[7mMODE: SEARCH\x1b[27m",
+            "  Search: Claude{}\x1b[7mMODE: SELECT\x1b[27m",
             " ".repeat(30)
         )
     );

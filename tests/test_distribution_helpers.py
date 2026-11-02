@@ -466,9 +466,12 @@ class DistributionHelpers(unittest.TestCase):
         self.assertIn("Origin", screen.popup_view())
         # Feed an incomplete CSI: no historical row can survive the erase.
         screen.feed(b"\x1b[2")
-        screen.feed(b"J\x1b[2;5HSearch: Arrival           MODE: SEARCH\x1b[4;5HArrival")
+        screen.feed(b"J\x1b[2;5HSearch: Arrival           MODE: SELECT\x1b[4;5HArrival")
         self.assertNotIn("Origin", screen.popup_view())
         self.assertEqual(screen.popup_view().count("Arrival"), 2)
+        screen.feed(b"\x1b[2;37HHELP\x1b[0K")
+        self.assertRegex(screen.text(), r"Search: Arrival\s+MODE: HELP")
+        self.assertEqual(screen.popup_view(), "")
         screen.feed(b"\x1b[2;37HSELECT\x1b[0K")
         self.assertRegex(screen.popup_view(), r"Search: Arrival\s+MODE: SELECT")
         # Underlying host labels are not popup rows.

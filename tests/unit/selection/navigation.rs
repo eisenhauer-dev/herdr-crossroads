@@ -313,7 +313,7 @@ fn query_above_list_and_help_describes_actual_keys() {
     let frame = state.terminal_frame(120, 20);
     assert!(
         frame.starts_with(&format!(
-            "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m  Search: x{}\x1b[7mMODE: SEARCH\x1b[27m\x1b[48;2;24;24;37m\x1b[K\r\n", " ".repeat(95)
+            "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m  Search: x{}\x1b[7mMODE: SELECT\x1b[27m\x1b[48;2;24;24;37m\x1b[K\r\n", " ".repeat(95)
         )),
         "{frame}"
     );

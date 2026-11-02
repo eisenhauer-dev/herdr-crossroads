@@ -160,7 +160,7 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     state.key(Key::Char('f'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: {}\x1b[7mMODE: SEARCH\x1b[27m", " ".repeat(96)).as_str())
+        Some(format!("  Search: {}\x1b[7mMODE: SELECT\x1b[27m", " ".repeat(96)).as_str())
     );
     for c in "codex".chars() {
         state.key(Key::Char(c));
@@ -169,7 +169,7 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
         state.terminal_frame(120, 8).split("\r\n").next(),
         Some(
             format!(
-                "  Search: codex{}\x1b[7mMODE: SEARCH\x1b[27m",
+                "  Search: codex{}\x1b[7mMODE: SELECT\x1b[27m",
                 " ".repeat(91)
             )
             .as_str()
@@ -953,14 +953,23 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
 #[test]
 fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_search() {
     for (width, height) in [(80, 15), (142, 30), (240, 40)] {
-        for (mode, badge, preview) in [
-            (Mode::Select, "MODE: SELECT", false),
-            (Mode::Search, "MODE: SEARCH", false),
-            (Mode::Help, "MODE: HELP", false),
-            (Mode::Themes, "MODE: THEMES", true),
+        for (mode, search_return, badge, preview) in [
+            (Mode::Select, Mode::Select, "MODE: SELECT", false),
+            (Mode::Search, Mode::Select, "MODE: SELECT", false),
+            (Mode::Search, Mode::Themes, "MODE: THEMES", false),
+            (Mode::Search, Mode::Themes, "MODE: THEMES", true),
+            (Mode::Help, Mode::Select, "MODE: HELP", false),
+            (Mode::Help, Mode::Themes, "MODE: HELP", false),
+            (Mode::Help, Mode::Themes, "MODE: HELP", true),
+            (Mode::Themes, Mode::Themes, "MODE: THEMES", true),
         ] {
             let mut state = super::test_support::ui();
+            if mode == Mode::Help && search_return == Mode::Themes {
+                state.key(Key::Char('t'));
+                state.key(Key::Char('?'));
+            }
             state.mode = mode;
+            state.search_return = search_return;
             state.theme_table_preview = preview;
             state.help.searching = true;
             for query in ["", "界👩\u{200d}💻", &"界".repeat(300)] {
@@ -968,13 +977,14 @@ fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_sear
                 state.help.query = query.into();
                 for ansi in [false, true] {
                     let lines = state.layout(width, height, ansi);
-                    let row = &lines[usize::from(preview)];
+                    let row = &lines[usize::from(preview && mode == Mode::Themes)];
                     let plain = row.replace("\x1b[7m", "").replace("\x1b[27m", "");
                     assert!(
                         plain.starts_with("  Search:") && plain.ends_with(badge),
                         "{row:?}"
                     );
                     assert_eq!(plain.cell_width() as usize, width - 2, "{row:?}");
+                    assert!(!lines.iter().any(|line| line.contains("MODE: SEARCH")));
                     if ansi {
                         assert!(
                             row.ends_with(&format!(" \x1b[7m{badge}\x1b[27m")),
@@ -985,7 +995,8 @@ fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_sear
                         assert!(!row.contains('\x1b'), "{row:?}");
                     }
                     if query.len() > width {
-                        assert!(row.contains('…'), "{row:?}");
+                        assert!(plain.starts_with("  Search: 界"), "{row:?}");
+                        assert!(!row.contains('…'), "{row:?}");
                     }
                 }
             }
@@ -1001,16 +1012,99 @@ fn theme_table_search_row_labels_current_mode_themes() {
 }
 
 #[test]
+fn search_query_overflow_keeps_latest_whole_graphemes_and_full_filter() {
+    for width in [60, 80, 142, 240] {
+        for (mode, search_return, preview, badge) in [
+            (Mode::Select, Mode::Select, false, "MODE: SELECT"),
+            (Mode::Search, Mode::Select, false, "MODE: SELECT"),
+            (Mode::Search, Mode::Themes, true, "MODE: THEMES"),
+            (Mode::Help, Mode::Select, false, "MODE: HELP"),
+            (Mode::Help, Mode::Themes, false, "MODE: HELP"),
+            (Mode::Help, Mode::Themes, true, "MODE: HELP"),
+            (Mode::Themes, Mode::Themes, true, "MODE: THEMES"),
+        ] {
+            let budget = width - 5 - badge.len() - "Search: ".len() - 1;
+            for (glyph, cells) in [("a", 1), ("界", 2), ("e\u{301}", 1), ("👩\u{200d}💻", 2)] {
+                let mut state = super::test_support::ui();
+                if mode == Mode::Help && search_return == Mode::Themes {
+                    state.key(Key::Char('t'));
+                    state.key(Key::Char('?'));
+                }
+                state.mode = mode;
+                state.search_return = search_return;
+                state.theme_table_preview = preview;
+                state.help.searching = true;
+                let query = format!("{}Z", glyph.repeat(300));
+                let tail = format!("{}Z", glyph.repeat((budget - 1) / cells));
+                state.query = query.clone();
+                state.help.query = query.clone();
+                state.rows[0].agent = query.clone();
+                state.rows[1].agent = tail.clone();
+                assert_eq!(state.visible(), vec![0], "filter must use the full query");
+                for ansi in [false, true] {
+                    let lines = state.layout(width, 30, ansi);
+                    let row = &lines[usize::from(mode == Mode::Themes)];
+                    let plain = row.replace("\x1b[7m", "").replace("\x1b[27m", "");
+                    assert!(plain.starts_with(&format!("  Search: {tail} ")), "{row:?}");
+                    assert!(plain.ends_with(badge), "{row:?}");
+                    assert_eq!(plain.cell_width() as usize, width - 2, "{row:?}");
+                    if ansi {
+                        assert!(row.ends_with(&format!(" \x1b[7m{badge}\x1b[27m")));
+                    }
+                }
+                assert_eq!(state.query, query);
+                assert_eq!(state.help.query, query);
+            }
+        }
+    }
+}
+
+#[test]
+fn search_text_reserves_cursor_space_even_at_tiny_widths_and_exact_boundaries() {
+    let state = super::test_support::ui();
+    for width in 0..160 {
+        let (_, available) = state.search_prompt_geometry(width);
+        for query in ["", "abc  ", "界e\u{301}👩\u{200d}💻", &"界".repeat(100)] {
+            let text = state.search_text(query, width);
+            assert!(text.cell_width() as usize <= available.saturating_sub(1));
+            if available >= 9 {
+                assert!(text.starts_with("Search: "), "{width}: {text:?}");
+            }
+        }
+        if available >= 9 {
+            let budget = available - 9;
+            assert_eq!(
+                state.search_text(&"x".repeat(budget), width),
+                format!("Search: {}", "x".repeat(budget))
+            );
+            assert_eq!(
+                state.search_text(&format!("Q{}", "x".repeat(budget)), width),
+                format!("Search: {}", "x".repeat(budget))
+            );
+        }
+    }
+}
+
+#[test]
 fn mode_badge_inverts_active_theme_colors_without_extending_search_hits() {
     use crate::selection::Hit;
     for index in 0..NAMES.len() {
-        for mode in [Mode::Select, Mode::Search, Mode::Help, Mode::Themes] {
+        for (mode, search_return) in [
+            (Mode::Select, Mode::Select),
+            (Mode::Search, Mode::Select),
+            (Mode::Search, Mode::Themes),
+            (Mode::Help, Mode::Select),
+            (Mode::Themes, Mode::Themes),
+        ] {
             let mut state = super::test_support::ui();
             state.popup_size = Some((80, 15));
             state.theme_index = index;
             state.theme_cursor = index;
             state.mode = mode;
+            state.search_return = search_return;
             state.theme_table_preview = true;
+            state.query = format!("{}Z", "界e\u{301}".repeat(100));
+            state.help.query = state.query.clone();
             for searching in [false, true] {
                 state.help.searching = searching;
                 let frame = state.terminal_frame(80, 15);

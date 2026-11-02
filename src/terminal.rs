@@ -13,7 +13,7 @@ pub(super) use windows::{terminal_size, Terminal};
 
 use ratatui::{buffer::CellWidth, style::Color};
 
-use super::presentation::{clipped, sgr_fg};
+use super::presentation::sgr_fg;
 use super::selection::{Mode, Ui};
 
 #[cfg(not(windows))]
@@ -140,14 +140,13 @@ pub(super) fn draw(ui: &Ui, terminal: bool) -> io::Result<()> {
             && width >= 80
             && height >= 15
         {
-            // Keep the cursor after the clipped query, before padding and the mode badge.
+            // Keep the cursor after the visible query tail, before padding and the mode badge.
             let query = if ui.mode == Mode::Help {
                 &ui.help.query
             } else {
                 &ui.query
             };
-            let (_, available) = ui.search_prompt_geometry(width);
-            let x = 2 + clipped(&format!("Search: {query}"), available).cell_width() as usize;
+            let x = 2 + ui.search_text(query, width).cell_width() as usize;
             write!(
                 out,
                 "\x1b[1;{}H\x1b[?25h",

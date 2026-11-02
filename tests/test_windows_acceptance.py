@@ -77,11 +77,13 @@ class WindowsAcceptanceTests(unittest.TestCase):
         for key, expected in [(b"?", b"MODE: HELP"), (b"q", b"Claude"),
                               (b"t", b"Themes"), (b"j", b"preview"),
                               (b" ", b"Themes"), (b"q", b"Claude"),
-                              (b"fcod", b"MODE: SEARCH"), (b"\r", b"codex"),
+                              (b"fcod", b"Backspace: erase"), (b"\r", b"codex"),
                               (b"r\x1b[B\x1b[C\t\x1b[Z", b"Claude")]:
             console.reset_output()
             console.send(key)
             console.until(expected)
+            if key == b"fcod":
+                console.until(b"MODE: SELECT")
         console.reset_output()
         console.resize(60, 12)
         console.until(b"ERROR: Crossroads needs minimum content size 80x15.")

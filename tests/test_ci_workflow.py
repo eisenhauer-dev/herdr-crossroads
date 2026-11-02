@@ -18,7 +18,7 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_unfiltered_own_and_fork_pull_requests_and_manual_dispatch(self):
         events = self.workflow.split("\npermissions:\n", 1)[0]
-        self.assertEqual(events, '''name: CI
+        self.assertEqual(events, '''name: Linux
 
 on:
   push:
@@ -33,7 +33,7 @@ on:
 
 jobs:
   linux:
-    name: Linux gates
+    name: Linux · Build & Tests (x86_64)
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 30

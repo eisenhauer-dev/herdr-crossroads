@@ -119,6 +119,14 @@ fn mouse_search_backspace_hits_exact_rendered_label_cells() {
 fn mouse_search_return_hits_only_its_label_not_separator_cells() {
     for context in [Mode::Select, Mode::Help, Mode::Themes] {
         let (state, line, label) = search_footer(context);
+        let badge = match context {
+            Mode::Select => "MODE: SELECT",
+            Mode::Help => "MODE: HELP",
+            Mode::Themes => "MODE: THEMES",
+            Mode::Search => unreachable!(),
+        };
+        assert!(render(&state)[0].ends_with(&format!("\x1b[7m{badge}\x1b[27m")));
+        assert!(state.mode == Mode::Search || state.help.searching);
         let start = line[..line.find(label).unwrap()].cell_width() as usize;
         let end = start + label.cell_width() as usize;
         let erase = line[..line.find("Backspace").unwrap()].cell_width() as usize;
@@ -197,6 +205,7 @@ fn mouse_theme_preview_search_returns_to_pending_preview_without_saving() {
     render(&state);
     click(&mut state, (4, 1), Instant::now());
     assert_eq!(state.mode, Mode::Search);
+    assert!(render(&state)[0].contains("MODE: THEMES"));
     state.key(Key::Char('c'));
     state.key(Key::Enter);
     assert_eq!(state.mode, Mode::Themes);
@@ -204,6 +213,58 @@ fn mouse_theme_preview_search_returns_to_pending_preview_without_saving() {
     assert_eq!(state.theme_cursor, 1);
     assert_eq!(state.theme_index, 0);
     assert_eq!(state.query, "c");
+}
+
+#[test]
+fn search_tail_tracks_typing_backspace_and_return_without_changing_the_query() {
+    for context in [Mode::Select, Mode::Help, Mode::Themes] {
+        let (mut state, _, _) = search_footer(context);
+        let (_, available) = state.search_prompt_geometry(80);
+        let budget = available - 9;
+        for _ in 0..100 {
+            state.key(Key::Char('a'));
+        }
+        for (key, suffix, expected_query) in [
+            (
+                Key::Char('Z'),
+                format!("{}Z", "a".repeat(budget - 1)),
+                format!("xy{}Z", "a".repeat(100)),
+            ),
+            (
+                Key::Backspace,
+                "a".repeat(budget),
+                format!("xy{}", "a".repeat(100)),
+            ),
+            (
+                Key::Char('界'),
+                format!("{}界", "a".repeat(budget - 2)),
+                format!("xy{}界", "a".repeat(100)),
+            ),
+            (
+                Key::Backspace,
+                "a".repeat(budget),
+                format!("xy{}", "a".repeat(100)),
+            ),
+        ] {
+            state.key(key);
+            let query = if context == Mode::Help {
+                &state.help.query
+            } else {
+                &state.query
+            };
+            assert_eq!(query, &expected_query);
+            assert_eq!(state.search_text(query, 80), format!("Search: {suffix}"));
+            assert!(render(&state)[0].contains(&format!("Search: {suffix} ")));
+            assert!(state.mode == Mode::Search || state.help.searching);
+        }
+        state.key(Key::Enter);
+        assert_eq!(state.mode, context);
+        assert!(!state.help.searching);
+        if context != Mode::Themes {
+            state.key(Key::Char('r'));
+            assert!(render(&state)[0].contains("Search: f to search"));
+        }
+    }
 }
 
 #[test]
