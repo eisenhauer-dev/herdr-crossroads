@@ -148,40 +148,70 @@ fn search_hint_appears_in_navigation_with_empty_query_not_input() {
     for width in [76, 120] {
         assert_eq!(
             state.terminal_frame(width, 8).split("\r\n").next(),
-            Some(format!("  Search: f to search{}Select", " ".repeat(width - 29)).as_str())
+            Some(
+                format!(
+                    "  Search: f to search{}\x1b[7mMODE: SELECT\x1b[27m",
+                    " ".repeat(width - 35)
+                )
+                .as_str()
+            )
         );
     }
     state.key(Key::Char('f'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: {}Search", " ".repeat(102)).as_str())
+        Some(format!("  Search: {}\x1b[7mMODE: SEARCH\x1b[27m", " ".repeat(96)).as_str())
     );
     for c in "codex".chars() {
         state.key(Key::Char(c));
     }
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: codex{}Search", " ".repeat(97)).as_str())
+        Some(
+            format!(
+                "  Search: codex{}\x1b[7mMODE: SEARCH\x1b[27m",
+                " ".repeat(91)
+            )
+            .as_str()
+        )
     );
     state.key(Key::Enter);
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: codex{}Select", " ".repeat(97)).as_str())
+        Some(
+            format!(
+                "  Search: codex{}\x1b[7mMODE: SELECT\x1b[27m",
+                " ".repeat(91)
+            )
+            .as_str()
+        )
     );
     state.key(Key::Char('r'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: f to search{}Select", " ".repeat(91)).as_str())
+        Some(
+            format!(
+                "  Search: f to search{}\x1b[7mMODE: SELECT\x1b[27m",
+                " ".repeat(85)
+            )
+            .as_str()
+        )
     );
     state.key(Key::Char('?'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: f to search{}Help", " ".repeat(93)).as_str())
+        Some(
+            format!(
+                "  Search: f to search{}\x1b[7mMODE: HELP\x1b[27m",
+                " ".repeat(87)
+            )
+            .as_str()
+        )
     );
     state.key(Key::Char('f'));
     assert_eq!(
         state.terminal_frame(120, 8).split("\r\n").next(),
-        Some(format!("  Search: {}Help", " ".repeat(104)).as_str())
+        Some(format!("  Search: {}\x1b[7mMODE: HELP\x1b[27m", " ".repeat(98)).as_str())
     );
 }
 
@@ -924,10 +954,10 @@ fn terminal_footer_stays_on_bottom_row_for_short_content() {
 fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_search() {
     for (width, height) in [(80, 15), (142, 30), (240, 40)] {
         for (mode, badge, preview) in [
-            (Mode::Select, "Select", false),
-            (Mode::Search, "Search", false),
-            (Mode::Help, "Help", false),
-            (Mode::Themes, "Themes", true),
+            (Mode::Select, "MODE: SELECT", false),
+            (Mode::Search, "MODE: SEARCH", false),
+            (Mode::Help, "MODE: HELP", false),
+            (Mode::Themes, "MODE: THEMES", true),
         ] {
             let mut state = super::test_support::ui();
             state.mode = mode;
@@ -939,11 +969,21 @@ fn mode_badge_reserves_query_width_and_reports_theme_table_preview_and_help_sear
                 for ansi in [false, true] {
                     let lines = state.layout(width, height, ansi);
                     let row = &lines[usize::from(preview)];
+                    let plain = row.replace("\x1b[7m", "").replace("\x1b[27m", "");
                     assert!(
-                        row.starts_with("  Search:") && row.ends_with(badge),
+                        plain.starts_with("  Search:") && plain.ends_with(badge),
                         "{row:?}"
                     );
-                    assert_eq!(row.cell_width() as usize, width - 2, "{row:?}");
+                    assert_eq!(plain.cell_width() as usize, width - 2, "{row:?}");
+                    if ansi {
+                        assert!(
+                            row.ends_with(&format!(" \x1b[7m{badge}\x1b[27m")),
+                            "{row:?}"
+                        );
+                        assert_eq!(row.matches('\x1b').count(), 2, "{row:?}");
+                    } else {
+                        assert!(!row.contains('\x1b'), "{row:?}");
+                    }
                     if query.len() > width {
                         assert!(row.contains('…'), "{row:?}");
                     }
@@ -957,5 +997,50 @@ fn theme_table_search_row_labels_current_mode_themes() {
     let mut state = super::test_support::ui();
     state.key(Key::Char('t'));
     state.key(Key::Char(' '));
-    assert!(state.layout(80, 15, false)[1].ends_with("Themes"));
+    assert!(state.layout(80, 15, false)[1].ends_with("MODE: THEMES"));
+}
+
+#[test]
+fn mode_badge_inverts_active_theme_colors_without_extending_search_hits() {
+    use crate::selection::Hit;
+    for index in 0..NAMES.len() {
+        for mode in [Mode::Select, Mode::Search, Mode::Help, Mode::Themes] {
+            let mut state = super::test_support::ui();
+            state.popup_size = Some((80, 15));
+            state.theme_index = index;
+            state.theme_cursor = index;
+            state.mode = mode;
+            state.theme_table_preview = true;
+            for searching in [false, true] {
+                state.help.searching = searching;
+                let frame = state.terminal_frame(80, 15);
+                let y = usize::from(mode == Mode::Themes);
+                let row = frame.split("\r\n").nth(y).unwrap();
+                let (badge, available) = state.search_prompt_geometry(80);
+                assert!(row.contains(&format!(" \x1b[7m{badge}\x1b[27m")), "{row:?}");
+                if let Color::Rgb(r, g, b) = state.theme().background {
+                    assert!(
+                        row.starts_with(&format!(
+                            "\x1b[48;2;{r};{g};{b}m{}",
+                            crate::presentation::sgr_fg(state.theme().text)
+                        )),
+                        "{row:?}"
+                    );
+                } else {
+                    assert!(row.starts_with("  Search:"), "{row:?}");
+                }
+                assert_eq!(available, 80 - 5 - badge.len());
+                let hits = state.mouse.borrow();
+                assert!(hits.hits.contains(&(2, y, available, Hit::Search)));
+                for x in 2 + available..80 {
+                    assert!(
+                        !hits.hits.iter().any(|(left, row, width, _)| *row == y
+                            && x >= *left
+                            && x - left < *width),
+                        "{mode:?}: x={x}"
+                    );
+                }
+            }
+        }
+    }
 }

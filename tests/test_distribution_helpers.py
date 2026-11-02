@@ -462,15 +462,15 @@ class DistributionHelpers(unittest.TestCase):
 
     def test_current_cells_replace_old_query_and_rows(self):
         screen = Screen(rows=20, cols=80)
-        screen.feed(b"\x1b[2J\x1b[2;5HSearch: f to search       Select\x1b[4;5HOrigin\x1b[5;5HArrival")
+        screen.feed(b"\x1b[2J\x1b[2;5HSearch: f to search       MODE: SELECT\x1b[4;5HOrigin\x1b[5;5HArrival")
         self.assertIn("Origin", screen.popup_view())
         # Feed an incomplete CSI: no historical row can survive the erase.
         screen.feed(b"\x1b[2")
-        screen.feed(b"J\x1b[2;5HSearch: Arrival           Search\x1b[4;5HArrival")
+        screen.feed(b"J\x1b[2;5HSearch: Arrival           MODE: SEARCH\x1b[4;5HArrival")
         self.assertNotIn("Origin", screen.popup_view())
         self.assertEqual(screen.popup_view().count("Arrival"), 2)
-        screen.feed(b"\x1b[2;30HSelect\x1b[0K")
-        self.assertRegex(screen.popup_view(), r"Search: Arrival\s+Select")
+        screen.feed(b"\x1b[2;37HSELECT\x1b[0K")
+        self.assertRegex(screen.popup_view(), r"Search: Arrival\s+MODE: SELECT")
         # Underlying host labels are not popup rows.
         screen.feed(b"\x1b[20;1HOrigin")
         self.assertIn("Origin", screen.text())

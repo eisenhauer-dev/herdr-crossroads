@@ -92,7 +92,7 @@ fn help_has_independent_search_and_fixed_table_chrome() {
     state.query = "Claude".into();
     state.key(Key::Char('?'));
     let lines = state.layout(80, 15, false);
-    assert!(lines[0].starts_with("  Search: f to search") && lines[0].ends_with("Help"));
+    assert!(lines[0].starts_with("  Search: f to search") && lines[0].ends_with("MODE: HELP"));
     assert_eq!(lines[1], "  Keys — Select");
     assert!(lines[2].starts_with("  ─"), "{lines:?}");
     assert!(

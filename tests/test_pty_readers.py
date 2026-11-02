@@ -23,6 +23,48 @@ import pty_render
 DARWIN_PENDIN = 0x20000000
 
 
+class ScreenColorTests(unittest.TestCase):
+    def test_panel_background_uses_effective_colors_through_reverse_and_reset(self):
+        raw = "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244mA\x1b[7mB\x1b[27mC\x1b[7mD\x1b[0mE"
+        lines, wraps, backgrounds = pty_render.screen(raw, 5, 1, track_panel_bg=True)
+        self.assertEqual((lines, wraps), (["ABCDE"], 0))
+        self.assertEqual(backgrounds, [[True, False, True, False, False]])
+
+    def test_reverse_swaps_indexed_selection_and_panel_foreground(self):
+        raw = "\x1b[48;5;236m\x1b[38;2;24;24;37mA\x1b[7mB\x1b[27mC"
+        self.assertEqual(pty_render.screen(raw, 3, 1, track_bg=True)[2], [[True, False, True]])
+        self.assertEqual(pty_render.screen(raw, 3, 1, track_panel_bg=True)[2], [[False, True, False]])
+
+    def test_effective_colors_keep_defaults_ansi_rgb_and_indexed_roles(self):
+        raw = "A\x1b[49;7mB\x1b[7mC\x1b[27mD\x1b[34m\x1b[48;5;236mE\x1b[7mF\x1b[39;49mG\x1b[0mH"
+        colors = pty_render.screen(raw, 8, 1, track_colors=True)[2][0]
+        normal = ("default-fg", "default-bg")
+        self.assertEqual(colors, [normal, normal[::-1], normal[::-1], normal,
+                                  (4, 236), (236, 4), normal[::-1], normal])
+        raw = "\x1b[38;2;76;79;105m\x1b[48;2;239;241;245m\x1b[7mA\x1b[27mB"
+        self.assertEqual(pty_render.screen(raw, 2, 1, track_colors=True)[2],
+                         [[((239, 241, 245), (76, 79, 105)), ((76, 79, 105), (239, 241, 245))]])
+
+    def test_cursor_and_erase_do_not_reset_reverse_or_colors(self):
+        raw = "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m\x1b[7m\x1b[H\x1b[J\x1b[1;2HA\x1b[K"
+        colors = pty_render.screen(raw, 4, 1, track_colors=True)[2]
+        self.assertEqual(colors, [[((24, 24, 37), (205, 214, 244))] * 4])
+
+    def test_panel_assertion_rejects_reverse_leaking_past_mode_badge(self):
+        badge = "MODE: SELECT"
+        row = pty_render.expected_search_row(80, "f to search", "Select")
+        prefix = "\x1b[H\x1b[J\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m"
+        raw = prefix + row.replace(badge, f"\x1b[7m{badge}\x1b[27m") + "\x1b[K\r\n\x1b[K"
+        pty_render.assert_panel_background(raw, 80, 2)
+        with self.assertRaises(AssertionError):
+            pty_render.assert_panel_background(raw.replace("\x1b[27m", ""), 80, 2)
+        for invalid in (raw.replace("\x1b[7m", ""),
+                        raw.replace("\x1b[7m", "\x1b[38;2;1;2;3m\x1b[7m"),
+                        raw.replace(" \x1b[7m", "\x1b[7m ")):
+            with self.subTest(raw=invalid), self.assertRaises(AssertionError):
+                pty_render.assert_panel_background(invalid, 80, 2)
+
+
 class TerminalRestorationDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         pendin = patch.object(termios, "PENDIN", DARWIN_PENDIN, create=True)
@@ -172,6 +214,7 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
 class SearchCursorFrameTests(unittest.TestCase):
     @staticmethod
     def draw(width, mode, text, cursor_x):
+        mode = f"MODE: {mode.upper()}"
         row = "  Search: " + text
         row += " " * (width - 2 - len(mode) - sum(2 if c == "界" else 1 for c in row)) + mode
         return f"\x1b[H\x1b[J{row}\x1b[1;{cursor_x + 1}H\x1b[?25h".encode()
@@ -212,7 +255,7 @@ class SearchCursorFrameTests(unittest.TestCase):
             popup = popups[-1]
             query = "" if data == b"\x7f" else data.decode()
             popup.query = query
-            budget = popup.width - 4 - len(popup.mode) - 1
+            budget = popup.width - 4 - len(f"MODE: {popup.mode.upper()}") - 1
             if len(query) < 10:
                 text, x = query, 10 + len(query)
             elif query.startswith("界"):
@@ -277,7 +320,7 @@ class SearchCursorFrameTests(unittest.TestCase):
     def test_wrong_query_or_cursor_cannot_satisfy_final_state(self):
         for invalid in (
             lambda final: final.replace(b"xxxxx", b"yyyyy", 1),
-            lambda final: final.replace(b"\x1b[1;133H", b"\x1b[1;132H"),
+            lambda final: final.replace(b"\x1b[1;127H", b"\x1b[1;126H"),
         ):
             with self.subTest(invalid=invalid):
                 self.run_cases(lambda now, intermediate, final: [(now, invalid(final))], times_out=True)

@@ -7,10 +7,10 @@ use crate::selection::{Hit, Mode, Ui};
 impl Ui {
     pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
         let badge = match self.mode {
-            Mode::Select => "Select",
-            Mode::Search => "Search",
-            Mode::Help => "Help",
-            Mode::Themes => "Themes",
+            Mode::Select => "MODE: SELECT",
+            Mode::Search => "MODE: SEARCH",
+            Mode::Help => "MODE: HELP",
+            Mode::Themes => "MODE: THEMES",
         };
         (badge, width.saturating_sub(4 + badge.len() + 1))
     }
@@ -21,6 +21,7 @@ impl Ui {
         query: &str,
         searching: bool,
         width: usize,
+        ansi: bool,
     ) -> String {
         let (badge, available) = self.search_prompt_geometry(width);
         let text = if !query.is_empty() || searching {
@@ -37,8 +38,10 @@ impl Ui {
             clipped(&pages[self.hint_scroll.get() % pages.len()], available)
         };
         format!(
-            "{text}{}{badge}",
-            " ".repeat(available.saturating_sub(text.cell_width() as usize) + 1)
+            "{text}{}{}{badge}{}",
+            " ".repeat(available.saturating_sub(text.cell_width() as usize) + 1),
+            if ansi { "\x1b[7m" } else { "" },
+            if ansi { "\x1b[27m" } else { "" }
         )
     }
 

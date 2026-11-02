@@ -46,6 +46,7 @@ impl Ui {
             &self.query,
             self.mode != Mode::Select,
             width,
+            ansi,
         );
         if preview {
             lines.push(aligned(&format!(

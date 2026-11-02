@@ -140,7 +140,8 @@ class ConsoleTableTests(unittest.TestCase):
     def paint(self, *, mode="Select", query="f to search", panes=None, selected=0, capture=False):
         panes = self.panes if panes is None else panes
         left = f"  Search: {query}"
-        lines = [left + " " * (118 - len(left) - len(mode)) + mode,
+        badge = f"MODE: {mode.upper()}"
+        lines = [left + " " * (118 - len(left) - len(badge)) + badge,
                  "  " + "─" * 116,
                  f"    {'Workspace':12} {'Tab':8} {'Agent/Pane Name':24} Status",
                  "  " + "─" * 116]

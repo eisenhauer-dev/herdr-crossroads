@@ -74,10 +74,10 @@ class WindowsAcceptanceTests(unittest.TestCase):
     def test_search_help_themes_navigation_resize_and_close(self):
         console = self.console()
         console.until(b"Claude")
-        for key, expected in [(b"?", b"Help"), (b"q", b"Claude"),
+        for key, expected in [(b"?", b"MODE: HELP"), (b"q", b"Claude"),
                               (b"t", b"Themes"), (b"j", b"preview"),
                               (b" ", b"Themes"), (b"q", b"Claude"),
-                              (b"fcod", b"Search"), (b"\r", b"codex"),
+                              (b"fcod", b"MODE: SEARCH"), (b"\r", b"codex"),
                               (b"r\x1b[B\x1b[C\t\x1b[Z", b"Claude")]:
             console.reset_output()
             console.send(key)

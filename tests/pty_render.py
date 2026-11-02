@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -38,12 +39,11 @@ def frame(master, marker):
     return data.decode("utf-8", "replace")
 
 
-def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False):
+def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False, track_colors=False):
     cells = [[" "] * width for _ in range(height)]
-    backgrounds = [[False] * width for _ in range(height)]
-    panel_backgrounds = [[False] * width for _ in range(height)]
-    selected_bg = False
-    panel_bg = False
+    foreground, background = "default-fg", "default-bg"
+    reverse = False
+    colors = [[(foreground, background)] * width for _ in range(height)]
     cursor_visible = True
     x = y = 0
     wraps = 0
@@ -70,8 +70,8 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
             elif command == "J":
                 assert params == "", params
                 cells = [[" "] * width for _ in range(height)]
-                backgrounds = [[False] * width for _ in range(height)]
-                panel_backgrounds = [[False] * width for _ in range(height)]
+                effective = (background, foreground) if reverse else (foreground, background)
+                colors = [[effective] * width for _ in range(height)]
                 # Timed hint pages may precede a resize frame at the previous dimensions.
                 # Check wraps in the final full repaint, just like the cells below.
                 wraps = 0
@@ -81,18 +81,35 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                 # final cell, not beyond it. EL still erases that occupied cell.
                 for at in range(min(x, width - 1), width):
                     cells[y][at] = " "
-                    backgrounds[y][at] = False
-                    panel_backgrounds[y][at] = panel_bg
+                    colors[y][at] = (background, foreground) if reverse else (foreground, background)
             elif command == "m":
-                sgr = params
-                if sgr == "48;5;236":
-                    selected_bg = True
-                elif sgr in ("0", "49", "48;2;24;24;37"):
-                    selected_bg = False
-                if sgr in ("0", "49", "48;5;236"):
-                    panel_bg = False
-                elif sgr == "48;2;24;24;37":
-                    panel_bg = True
+                codes = [int(code or 0) for code in params.split(";")]
+                at = 0
+                while at < len(codes):
+                    code = codes[at]
+                    at += 1
+                    if code == 0:
+                        foreground, background, reverse = "default-fg", "default-bg", False
+                    elif code in (7, 27):
+                        reverse = code == 7
+                    elif code == 39:
+                        foreground = "default-fg"
+                    elif code == 49:
+                        background = "default-bg"
+                    elif 30 <= code <= 37 or 90 <= code <= 97:
+                        foreground = code - (30 if code < 90 else 82)
+                    elif 40 <= code <= 47 or 100 <= code <= 107:
+                        background = code - (40 if code < 100 else 92)
+                    elif code in (38, 48):
+                        kind = codes[at]
+                        assert kind in (2, 5), codes
+                        count = 3 if kind == 2 else 1
+                        color = tuple(codes[at + 1:at + 1 + count]) if kind == 2 else codes[at + 1]
+                        at += 1 + count
+                        if code == 38:
+                            foreground = color
+                        else:
+                            background = color
             else:
                 assert params in ("?25", "?1000", "?1006"), (params, command)
                 if params == "?25":
@@ -111,15 +128,17 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                 y = min(y + 1, height - 1)
             if char_width:
                 cells[y][x] = c
-                backgrounds[y][x] = selected_bg
-                panel_backgrounds[y][x] = panel_bg
+                for col in range(x, min(width, x + char_width)):
+                    colors[y][col] = (background, foreground) if reverse else (foreground, background)
                 x += char_width
         i += 1
     result = (["".join(line).rstrip() for line in cells], wraps)
+    if track_colors:
+        return (*result, colors)
     if track_bg:
-        return (*result, backgrounds)
+        return (*result, [[bg == 236 for _, bg in row] for row in colors])
     if track_panel_bg:
-        return (*result, panel_backgrounds)
+        return (*result, [[bg == (24, 24, 37) for _, bg in row] for row in colors])
     return (*result, (cursor_visible, x, y)) if track_cursor else result
 
 
@@ -135,32 +154,53 @@ def assert_selected_background(raw, width, height):
     painted = [x for x, enabled in enumerate(backgrounds[selected[0]]) if enabled]
     assert painted == border, (width, selected, painted, border)
     assert all(not any(row) for at, row in enumerate(backgrounds) if at != selected[0]), backgrounds
+    assert_mode_badge_colors(raw, width, height)
     return lines
 
 
 def assert_panel_background(raw, width, height):
-    lines, wraps, backgrounds = screen(raw, width, height, track_panel_bg=True)
+    lines, wraps, colors = screen(raw, width, height, track_colors=True)
     assert wraps == 0, (width, height, wraps, lines)
-    assert all(all(row) for row in backgrounds), (width, height, [at for at, row in enumerate(backgrounds) if not all(row)], lines)
+    assert_mode_badge_colors(raw, width, height)
+    for y, row in enumerate(colors):
+        badge = re.search(r"MODE: (SELECT|SEARCH|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
+        for x, (_, bg) in enumerate(row):
+            expected = (205, 214, 244) if badge and badge.start() <= x < badge.end() else (24, 24, 37)
+            assert bg == expected, (x, y, bg, expected, lines)
     return lines
+
+
+def assert_mode_badge_colors(raw, width, height, foreground=(205, 214, 244), background=(24, 24, 37)):
+    lines, wraps, colors = screen(raw, width, height, track_colors=True)
+    assert wraps == 0, (width, height, wraps, lines)
+    for y, line in enumerate(lines):
+        if not line.startswith("  Search:"):
+            continue
+        badge = re.search(r"MODE: (SELECT|SEARCH|HELP|THEMES)$", line)
+        assert badge and badge.end() == width - 2, line
+        for x, color in enumerate(colors[y]):
+            expected = (background, foreground) if badge.start() <= x < badge.end() else (foreground, background)
+            assert color == expected, (x, y, color, expected, line)
 
 
 def expected_search_row(width, text, mode):
     # These ASCII queries fit without clipping; reserve the renderer's two-cell
     # right margin and assert the entire row, not just the query or badge.
     left = f"  Search: {text}"
+    mode = f"MODE: {mode.upper()}"
     assert left.isascii() and len(left) + len(mode) + 1 <= width - 2
     return left + " " * (width - 2 - len(left) - len(mode)) + mode
 
 
 def assert_help_frame(raw, width=80, height=15, searching=False):
+    assert_mode_badge_colors(raw, width, height)
     lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
     assert wraps == 0 and cursor[0] == searching, (lines, wraps, cursor)
     border = "  " + "─" * (width - 4)
     footer = ["  Enter/Esc: return to keys · Backspace: erase"] if searching else default_footer_lines(width, "help")
     assert lines[2] == border and lines[-len(footer) - 1] == border, lines
     assert lines[1] == "  Keys — Select", lines
-    assert lines[0].startswith("  Search: ") and lines[0].endswith("Help") and len(lines[0]) == width - 2, lines
+    assert lines[0].startswith("  Search: ") and lines[0].endswith("MODE: HELP") and len(lines[0]) == width - 2, lines
     assert not any("Keys ·" in line or "Meaning" in line or "Agent/Pane Name" in line for line in lines), lines
     if searching:
         assert lines[-1] == "  Enter/Esc: return to keys · Backspace: erase", lines
@@ -257,7 +297,8 @@ def search_cursor_cases(binary):
         fake.chmod(0o700)
         for width, height in ((80, 15), (142, 30)):
             for mode in ("Help", "Search"):
-                budget = width - 4 - len(mode) - 1
+                badge = f"MODE: {mode.upper()}"
+                budget = width - 4 - len(badge) - 1
                 wide_count = (budget - 2 - 8) // 2
                 # screen() retains a blank continuation cell after wide glyphs.
                 for query, expected_x, visible_query in (
@@ -270,7 +311,7 @@ def search_cursor_cases(binary):
                         if mode == "Help":
                             popup.send(b"?")
                         popup.send(b"f")
-                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(mode)) + mode
+                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(badge)) + badge
                         latest = None
 
                         def final_query(raw):
@@ -293,7 +334,7 @@ def search_cursor_cases(binary):
                             error.add_note(f"width={width} mode={mode} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
                             raise
                         lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
-                        assert wraps == 0 and lines[0].endswith(mode), (lines, wraps)
+                        assert wraps == 0 and lines[0].endswith(badge), (lines, wraps)
                         assert cursor == (True, expected_x, 0), (width, mode, query, cursor, expected_x, lines[0])
                         assert lines[0] == expected_row, lines
                         if len(query) < 10:
@@ -306,6 +347,48 @@ def search_cursor_cases(binary):
                         popup.finish(b"q")
                     finally:
                         popup.abort()
+
+
+def mode_color_cases(binary):
+    from pty_keymaps import Popup, read_frame
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-mode-colors-") as temporary:
+        directory = Path(temporary)
+        fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        for theme, foreground, background in (
+            ("catppuccin", (205, 214, 244), (24, 24, 37)),
+            ("catppuccin-latte", (76, 79, 105), (239, 241, 245)),
+            ("terminal", "default-fg", "default-bg"),
+        ):
+            (directory / "theme.jsonc").write_text(json.dumps({"theme": theme}))
+            for width, height in ((80, 15), (142, 30)):
+                popup = Popup(binary, directory, width=width, height=height)
+                try:
+                    assert_mode_badge_colors(popup.initial, width, height, foreground, background)
+                    for key, mode, y in (
+                        (b"f", "SEARCH", 0), (b"\r", "SELECT", 0),
+                        (b"?", "HELP", 0), (b"f", "HELP", 0),
+                        (b"\r", "HELP", 0), (b"q", "SELECT", 0),
+                        (b"t", None, 0), (b" ", "THEMES", 1),
+                        (b"?", "HELP", 0), (b"f", "HELP", 0),
+                        (b"\r", "HELP", 0), (b"q", "THEMES", 1),
+                        (b"q", "SELECT", 0),
+                    ):
+                        os.write(popup.master, key)
+                        raw = read_frame(popup.output)
+                        lines, wraps = screen(raw, width, height)
+                        assert wraps == 0, lines
+                        if mode is None:
+                            assert lines[0].startswith("  Themes · selected:") and not any("Search:" in line for line in lines), lines
+                        else:
+                            assert lines[y].endswith(f"MODE: {mode}"), lines
+                            assert_mode_badge_colors(raw, width, height, foreground, background)
+                    popup.finish(b"q")
+                finally:
+                    popup.abort()
 
 
 def launch_selection_cases(binary):
@@ -357,6 +440,7 @@ def launch_selection_cases(binary):
 def main(binary):
     launch_selection_cases(binary)
     search_cursor_cases(binary)
+    mode_color_cases(binary)
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)
         fixture = Path(__file__).parent / "fixtures" / "topology.json"

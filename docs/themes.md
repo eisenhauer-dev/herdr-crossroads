@@ -24,9 +24,11 @@ the same location to save. The theme-list heading's `keys` control opens Help;
 footer controls work on one click. Clicking the table-preview search bar edits
 the pane filter; Enter/Esc returns to the pending preview without saving.
 See [mouse controls and opt-out](keymaps.md#mouse-controls) for the full contract.
-The table preview's search row has a right-aligned `Themes` mode label; help's
-search row shows `Help`, separately from `Keys — Themes`. The theme list has no
-search row and shows `Themes · selected: … · preview: … · keys`.
+The table preview's search row has a right-aligned `MODE: THEMES` badge; help's
+search row shows `MODE: HELP`, separately from `Keys — Themes`. These informational,
+non-clickable badges reverse the active foreground/background colors, including
+terminal defaults. The theme list has no search row and shows
+`Themes · selected: … · preview: … · keys`.
 
 The picker offers Auto (Herdr) plus Herdr v0.9.1's 18 built-ins: `catppuccin`, `catppuccin-latte`, `terminal`, `tokyo-night`, `tokyo-night-day`, `dracula`, `nord`, `gruvbox`, `gruvbox-light`, `one-dark`, `one-light`, `solarized`, `solarized-light`, `kanagawa`, `kanagawa-lotus`, `rose-pine`, `rose-pine-dawn`, and `vesper`. `terminal` uses terminal default foreground and background and ANSI palette colors, not a fixed RGB approximation.
 

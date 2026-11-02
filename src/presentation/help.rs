@@ -25,8 +25,13 @@ impl Ui {
         };
         let table_width = width.saturating_sub(4);
         let aligned = |text: &str| format!("  {}", clipped(text, table_width));
-        let search =
-            self.search_prompt(Context::Help, &self.help.query, self.help.searching, width);
+        let search = self.search_prompt(
+            Context::Help,
+            &self.help.query,
+            self.help.searching,
+            width,
+            ansi,
+        );
         let rule = format!("  {}", "─".repeat(table_width));
         let visible = self.help.visible();
         let selected = self.help.selected_index(&visible);
@@ -285,7 +290,13 @@ impl Ui {
         let mut lines = vec![
             format!(
                 "  {}",
-                self.search_prompt(Context::Help, &self.help.query, self.help.searching, width)
+                self.search_prompt(
+                    Context::Help,
+                    &self.help.query,
+                    self.help.searching,
+                    width,
+                    ansi
+                )
             ),
             format!("  Keys — {}", self.help.context.name()),
             rule.clone(),

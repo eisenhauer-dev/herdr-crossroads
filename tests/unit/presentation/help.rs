@@ -43,7 +43,10 @@ fn help_category_spacing_tracks_only_visible_groups() {
             }
             let lines = state.layout(width, height, true);
             assert_eq!(lines.len(), height);
-            assert_eq!(lines[0], full[0]);
+            assert_eq!(
+                lines[0].replace("\x1b[7m", "").replace("\x1b[27m", ""),
+                full[0]
+            );
             assert_eq!(lines[1], full[1]);
             assert_eq!(lines[2], full[2]);
             let budget = state.hint_rows(crate::keymap::Context::Help, width, height);
@@ -171,7 +174,10 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 assert_eq!(lines.len(), height, "{lines:?}");
                 assert_eq!(
                     lines[0],
-                    format!("  Search: f to search{}Help", " ".repeat(width - 27))
+                    format!(
+                        "  Search: f to search{}\x1b[7mMODE: HELP\x1b[27m",
+                        " ".repeat(width - 33)
+                    )
                 );
                 assert_eq!(lines[1], "  Keys — Select");
                 assert_eq!(lines[2], "  ".to_owned() + &"─".repeat(width - 4));

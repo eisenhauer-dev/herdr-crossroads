@@ -257,10 +257,10 @@ def mouse_cases(binary, directory):
             lines, _ = screen(popup.initial, 120, 30)
             # A visible search bar activates editing, not just an inert highlight.
             lines = popup.send(mouse_report(*point(lines, "Search:")))
-            assert lines[0].endswith("Search") and "Backspace: erase" in lines[-1], lines
+            assert lines[0].endswith("MODE: SEARCH") and "Backspace: erase" in lines[-1], lines
             lines = popup.send(b"codex")
             lines = popup.send(mouse_report(*point(lines, "Enter/Esc: select")))
-            assert lines[0].endswith("Select"), lines
+            assert lines[0].endswith("MODE: SELECT"), lines
             # Help remains reachable from the footer; search and execute Reset Search
             # in its actual caller, without synthesizing remapped keyboard keys.
             lines = popup.send(mouse_report(*point(lines, "?: keys")))
@@ -288,14 +288,14 @@ def mouse_cases(binary, directory):
             assert any("Agent/Pane Name" in line for line in lines), lines
             lines = popup.send(mouse_report(*point(lines, "Space: list")))
             at = point(lines, "terminal", start=1)
-            lines = popup.send(mouse_report(*at) + mouse_report(*at, release=True) + mouse_report(*at), expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("Select"))
-            assert lines[0].endswith("Select"), lines
+            lines = popup.send(mouse_report(*at) + mouse_report(*at, release=True) + mouse_report(*at), expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("MODE: SELECT"))
+            assert lines[0].endswith("MODE: SELECT"), lines
             assert json.loads((directory / "theme.jsonc").read_text())["theme"] == "terminal"
             # Keyboard Help Enter follows the same origin/action path.
             lines = popup.send(b"?")
             lines = popup.send(mouse_report(*point(lines, "Search:")))
             lines = popup.send(b"reset search\r")
-            lines = popup.send(b"\r", expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("Select"))
+            lines = popup.send(b"\r", expected=lambda raw: screen(raw, 120, 30)[0][0].endswith("MODE: SELECT"))
             assert "Search: f to search" in lines[0], lines
             before = [line for line in lines if line.startswith("  >")]
             lines = popup.send(mouse_report(5, 5, button=65))

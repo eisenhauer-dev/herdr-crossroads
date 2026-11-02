@@ -401,14 +401,14 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
             pane_ids = {p["pane_id"] for p in snapshot()["panes"]}
             open_popup()
             wait_for(lambda: "Origin" in screen.popup_view() and "Arrival" in screen.popup_view()
-                     and "Select" in screen.popup_view(), "unfiltered native popup table")
+                     and "MODE: SELECT" in screen.popup_view(), "unfiltered native popup table")
             assert {p["pane_id"] for p in snapshot()["panes"]} == pane_ids, "popup entered ordinary pane topology"
             os.write(master, b"fArrival")
 
             def filtered(mode):
                 text = screen.popup_view()
                 lines = [line for line in text.splitlines() if "Arrival" in line]
-                return bool(re.search(r'Search: Arrival\s+' + mode + r'\b', text)) and len(lines) == 2 and "Origin" not in text
+                return bool(re.search(r'Search: Arrival\s+MODE: ' + mode.upper() + r'\b', text)) and len(lines) == 2 and "Origin" not in text
 
             wait_for(lambda: filtered("Search"), "fresh search query and sole Arrival row")
             assert snapshot()["focused_pane_id"] == origin
