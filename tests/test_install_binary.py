@@ -135,7 +135,7 @@ class InstallBinaryTests(unittest.TestCase):
 
     def test_manifest_supports_linux_and_macos(self):
         manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text())
-        self.assertEqual(manifest["platforms"], ["linux", "macos"])
+        self.assertEqual(manifest["platforms"], ["linux", "macos", "windows"])
 
     def test_darwin_process_architecture_selects_thin_matching_asset(self):
         for machine, target, cpu in [("arm64", "aarch64", 0x0100000c),
@@ -237,7 +237,13 @@ class InstallBinaryTests(unittest.TestCase):
         # multi-megabyte license fixture or reaching the network in tests.
         legacy = generator["generate_html"]().replace("\r\n", "\n").encode()
         self.assertEqual(hashlib.sha256(legacy).hexdigest(),
-                         "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174")
+                          "08b1ee55eea459afb4e0fe55c68ce91c2f1f815df9d1b9505ffecfdc9226b174")
+        # The historical checkout must retain its exact Markdown inventory too;
+        # the current Windows-expanded inventory is deliberately not equivalent.
+        historical_markdown = generator["generate"](windows=False).encode()
+        self.assertEqual(hashlib.sha256(historical_markdown).hexdigest(),
+                         "ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56")
+        (self.repo / "THIRD-PARTY-NOTICES.md").write_bytes(historical_markdown)
         checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
         members = [("herdr-crossroads", ELF, tarfile.REGTYPE),
                    ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
@@ -249,16 +255,29 @@ class InstallBinaryTests(unittest.TestCase):
         archive = ARCHIVE.replace("0.0.1", "0.1.0")
         with patch.dict(globals(), ARCHIVE=archive):
             self.package(members=members)
-            from test_distribution import prepare_fixture
+            import test_distribution as distribution
+            # Header-only synthetic identity is scoped to this test, never public proof.
+            archive_bytes = (self.assets / archive).read_bytes()
+            profile = dict(distribution.HISTORICAL_RELEASES["0.1.0"],
+                           archive=distribution.digest(archive_bytes),
+                           binary=distribution.digest(ELF))
+
+            def prepare_reference(base):
+                with patch.dict(distribution.HISTORICAL_RELEASES, {"0.1.0": profile}), patch.dict(
+                        distribution.prepare_fixture.__globals__, ROOT=self.repo):
+                    return distribution.prepare_fixture(
+                        base, self.assets, public="0.1.0",
+                        public_commits={"0.1.0": profile["commits"][0]})
+
             fixture = self.base / "distribution-reference"
             fixture.mkdir()
-            _, _, payloads = prepare_fixture(fixture, self.assets, public="0.1.0")
+            _, _, payloads = prepare_reference(fixture)
             self.assertEqual(payloads, {"0.1.0": ELF})
 
             def reject_reference():
                 with tempfile.TemporaryDirectory(dir=self.base, prefix="bad-reference-") as temporary:
-                    with patch.dict(prepare_fixture.__globals__, ROOT=self.repo), self.assertRaises(AssertionError):
-                        prepare_fixture(Path(temporary), self.assets, public="0.1.0")
+                    with self.assertRaises(AssertionError):
+                        prepare_reference(Path(temporary))
 
             result = self.install()
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -280,11 +299,17 @@ class InstallBinaryTests(unittest.TestCase):
                 self.package(members=bad)
                 self.reject()
                 reject_reference()
-            self.package(members=members)
+            (self.assets / archive).write_bytes(archive_bytes)
+            self.archive_checksum()
             notice = self.repo / "THIRD-PARTY-NOTICES.md"
             notice.write_bytes(notice.read_bytes() + b"changed")
             self.reject()
-            reject_reference()
+            # Historical references pin the archived notice, not today's inventory;
+            # the production installer still requires its equivalent trusted checkout.
+            with tempfile.TemporaryDirectory(dir=self.base, prefix="changed-reference-") as temporary:
+                reference, _, payloads = prepare_reference(Path(temporary))
+                self.assertEqual(payloads, {"0.1.0": ELF})
+                self.assertEqual((reference / notice.name).read_bytes(), historical_markdown + b"changed")
             shutil.copy2(ROOT / notice.name, notice)
             # New Markdown builds use the unchanged version too.
             self.package()
@@ -298,6 +323,83 @@ class InstallBinaryTests(unittest.TestCase):
             path.write_text(path.read_text().replace('version = "0.1.0"', 'version = "0.0.1"'))
         self.package(members=members)
         self.reject()
+
+    def check_published_markdown_with_windows_expanded_checkout(self):
+        generator = runpy.run_path(str(ROOT / "scripts/third-party-notices.py"))
+        # Freeze the v0.2.0 inventory by digest, independently of today's default
+        # generator output; reproduce its verbatim sources without a duplicate fixture.
+        released = generator["generate"](windows=False).encode()
+        self.assertEqual(hashlib.sha256(released).hexdigest(),
+                         "ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56")
+        # Freeze the earlier Windows-expanded checkout too: today's added root
+        # licenses must not change the installer's historical identity exception.
+        windows = generator["windows_notices"]()
+        historical_windows = windows[:2] + windows[6:]
+        historical_windows[1] = (
+            "<p>Preparation target x86_64-pc-windows-gnu: MinGW-w64 13.0.0 POSIX/SEH/UCRT, "
+            "GCC 15.2.0 and Binutils 2.46. No compiler or runtime DLL is bundled. "
+            "This is conservative upstream attribution, not proof of the runner archive identity "
+            "or final symbol contributions. Actual input hashes and member evidence require native GNU preparation. "
+            "Review applicable component notices against that evidence before distribution.</p>")
+        expanded = (self.repo / "THIRD-PARTY-NOTICES.md").read_bytes().replace(
+            generator["markdown"]("\n".join(windows)).strip().encode(),
+            generator["markdown"]("\n".join(historical_windows)).strip().encode())
+        self.assertEqual(hashlib.sha256(expanded).hexdigest(),
+                         "293f66533f38f1e442c5ca1204f57ab8dce86c4864602c75066c2dd9b2a96e4e")
+        (self.repo / "THIRD-PARTY-NOTICES.md").write_bytes(expanded)
+        self.assertNotEqual(released, expanded)
+        checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
+        members = [("herdr-crossroads", ELF, tarfile.REGTYPE),
+                   ("herdr-crossroads.sha256", checksum, tarfile.REGTYPE),
+                   ("LICENSE", (self.repo / "LICENSE").read_bytes(), tarfile.REGTYPE),
+                   ("THIRD-PARTY-NOTICES.md", released, tarfile.REGTYPE)]
+        for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+            path = self.repo / name
+            path.write_text(path.read_text().replace('version = "0.0.1"', 'version = "0.2.0"'))
+        hosts = [("x86_64-unknown-linux-gnu", ELF, ""),
+                 ("aarch64-apple-darwin", macho(), darwin_host()),
+                 ("x86_64-apple-darwin", macho(0x01000007), darwin_host("x86_64"))]
+        for target, binary, host in hosts:
+            with self.subTest(target=target), patch.dict(
+                    globals(), ARCHIVE=f"herdr-crossroads-0.2.0-{target}.tar.gz"):
+                payload = [("herdr-crossroads", binary, tarfile.REGTYPE),
+                           ("herdr-crossroads.sha256",
+                            f"{hashlib.sha256(binary).hexdigest()}  herdr-crossroads\n".encode(),
+                            tarfile.REGTYPE), *members[2:]]
+                self.package(members=payload)
+                result = self.install(host)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.binary.read_bytes(), binary)
+                self.assertEqual((self.binary.parent / "THIRD-PARTY-NOTICES.md").read_bytes(), released)
+                self.binary.write_bytes(b"previous binary")
+                self.binary.chmod(0o751)
+                for notice in [released + b"changed", expanded + b"changed"]:
+                    self.package(members=payload[:-1] + [(members[-1][0], notice, tarfile.REGTYPE)])
+                    self.assertIn("trusted checkout", self.reject(host).stderr)
+                self.package(members=payload)
+                (self.repo / "THIRD-PARTY-NOTICES.md").write_bytes(expanded + b"changed")
+                self.assertIn("trusted checkout", self.reject(host).stderr)
+                (self.repo / "THIRD-PARTY-NOTICES.md").write_bytes(expanded)
+                self.package(members=payload)
+                (self.assets / (ARCHIVE + ".sha256")).write_bytes(b"0" * 64 + f"  {ARCHIVE}\n".encode())
+                self.assertIn("SHA256 mismatch", self.reject(host).stderr)
+        # No unpublished Windows asset may use the old Unix-only inventory.
+        with patch.dict(globals(), ARCHIVE="herdr-crossroads-0.2.0-x86_64-pc-windows-gnu.tar.gz"):
+            self.package(members=[(name.replace("herdr-crossroads", "herdr-crossroads.exe"), data, kind)
+                                  for name, data, kind in members])
+            host = ("platform.system=lambda: 'Windows'; platform.machine=lambda: 'AMD64'; "
+                    "platform.win32_ver=lambda: ('10', '10.0.19045', '', ''); ")
+            self.assertIn("trusted checkout", self.reject(host).stderr)
+        # The pinned inventory is not an alternate notice for other versions.
+        previous = "0.2.0"
+        for version in ["0.0.1", "0.1.0", "0.3.0"]:
+            for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
+                path = self.repo / name
+                path.write_text(path.read_text().replace(f'version = "{previous}"', f'version = "{version}"'))
+            with patch.dict(globals(), ARCHIVE=f"herdr-crossroads-{version}-x86_64-unknown-linux-gnu.tar.gz"):
+                self.package(members=members)
+                self.assertIn("trusted checkout", self.reject().stderr)
+            previous = version
 
     def test_missing_tampered_or_nonregular_notices_preserve_binary(self):
         checksum = f"{hashlib.sha256(ELF).hexdigest()}  herdr-crossroads\n".encode()
@@ -335,7 +437,10 @@ class InstallBinaryTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), ELF)
         import tomllib
         manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text())
-        self.assertEqual(manifest["build"], [{"command": ["python3", "scripts/install-binary.py"]}])
+        self.assertEqual(manifest["build"], [
+            {"platforms": ["linux", "macos"], "command": ["python3", "scripts/install-binary.py"]},
+            {"platforms": ["windows"], "command": ["python", "scripts/install-binary.py"]},
+        ])
         self.assertEqual(manifest["panes"][0]["command"], ["./target/release/herdr-crossroads"])
 
     def test_relative_asset_directory_rejected(self):

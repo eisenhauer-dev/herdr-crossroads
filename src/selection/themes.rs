@@ -7,6 +7,10 @@ use super::{Help, HelpContext, Mode, Ui};
 impl Ui {
     pub(super) fn themes_key(&mut self, key: Key) -> Option<String> {
         let action = self.keymap.action(Context::Themes, key)?;
+        self.themes_action(action)
+    }
+
+    pub(super) fn themes_action(&mut self, action: Action) -> Option<String> {
         let previous = self.theme_cursor;
         match action {
             Action::OpenHelp => {
@@ -29,12 +33,16 @@ impl Ui {
             },
             _ => {}
         }
+        self.theme_cursor_changed(previous);
+        None
+    }
+
+    pub(super) fn theme_cursor_changed(&mut self, previous: usize) {
         if previous != 0 && self.theme_cursor == 0 && !self.theme_invalid {
             self.auto_toast = self
                 .auto_unsupported
                 .as_ref()
                 .map(|name| format!("Herdr theme {name} not yet supported; using Mocha"));
         }
-        None
     }
 }

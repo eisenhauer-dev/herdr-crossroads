@@ -54,10 +54,15 @@ class SetupKeybindTests(unittest.TestCase):
             "id": "setup-keybind",
             "title": "Set up prefix+f launch binding",
             "contexts": ["global"],
+            "platforms": ["linux", "macos"],
             "command": ["python3", "scripts/setup-keybind.py"],
         }])
         self.assertEqual(manifest["build"], [{
+            "platforms": ["linux", "macos"],
             "command": ["python3", "scripts/install-binary.py"],
+        }, {
+            "platforms": ["windows"],
+            "command": ["python", "scripts/install-binary.py"],
         }])
         self.assertNotIn("startup", manifest)
 

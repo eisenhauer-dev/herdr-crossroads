@@ -45,7 +45,7 @@ class PrSourcePolicyTests(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["event.json"])
 
     def test_trusted_event_and_least_privilege_public_job(self):
-        self.assertEqual(self.workflow.split("    steps:\n", 1)[0], """name: PR source policy
+        self.assertEqual(self.workflow.split("    steps:\n", 1)[0], """name: PR
 
 on:
   pull_request_target:
@@ -56,7 +56,7 @@ permissions: {}
 
 jobs:
   source-policy:
-    name: PR source policy
+    name: PR · Branch Rules
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 5

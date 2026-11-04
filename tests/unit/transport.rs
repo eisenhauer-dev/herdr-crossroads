@@ -16,9 +16,14 @@ fn reconnect_cli_kills_a_stalled_command_at_its_deadline() {
 #[cfg(unix)]
 #[test]
 fn pane_list_preserves_ids_and_exact_validation_errors() {
-    use std::os::unix::fs::PermissionsExt;
     let path = std::path::Path::new("/tmp/opencode")
         .join(format!("crossroads-pane-list-{}", std::process::id()));
+    let response_path = path.with_extension("response");
+    std::os::unix::fs::symlink(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pane_list.sh"),
+        &path,
+    )
+    .unwrap();
     for (body, expected) in [
         (
             r#"{"result":{"type":"pane_list","panes":[{"pane_id":"b"},{"pane_id":"a"},{"pane_id":"b"},{"pane_id":""}]}}"#,
@@ -37,8 +42,12 @@ fn pane_list_preserves_ids_and_exact_validation_errors() {
             Err((io::ErrorKind::InvalidData, "missing pane_id in snapshot")),
         ),
     ] {
-        std::fs::write(&path, format!("#!/bin/sh\nprintf '%s\\n' '{body}'\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(&response_path, format!("printf '%s\\n' '{body}'\n")).unwrap();
+        // Model a concurrent child retaining a writer inherited before exec.
+        let writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&response_path)
+            .unwrap();
         match (
             crate::transport::pane_ids(path.as_os_str(), false),
             expected,
@@ -48,14 +57,17 @@ fn pane_list_preserves_ids_and_exact_validation_errors() {
                 assert_eq!(error.kind(), kind);
                 assert_eq!(error.to_string(), message);
             }
-            _ => panic!("unexpected pane-list result for {body}"),
+            (actual, expected) => {
+                panic!("unexpected pane-list result for {body}: {actual:?}, expected {expected:?}")
+            }
         }
+        drop(writer);
     }
-    std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::write(&response_path, "exit 1\n").unwrap();
     let error = crate::transport::pane_ids(path.as_os_str(), false).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "herdr pane list failed");
-    std::fs::write(&path, "#!/bin/sh\nprintf 'invalid'\n").unwrap();
+    std::fs::write(&response_path, "printf 'invalid'\n").unwrap();
     assert_eq!(
         crate::transport::pane_ids(path.as_os_str(), false)
             .unwrap_err()
@@ -63,4 +75,5 @@ fn pane_list_preserves_ids_and_exact_validation_errors() {
         io::ErrorKind::Other
     );
     std::fs::remove_file(path).unwrap();
+    std::fs::remove_file(response_path).unwrap();
 }

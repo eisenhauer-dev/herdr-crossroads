@@ -125,7 +125,7 @@ fn theme_picker_replaces_panes_without_changing_navigation() {
 #[test]
 fn theme_picker_preview_cancel_and_search_t_preserve_pane_state() {
     let mut state = ui();
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(Key::Char('t'));
     assert_eq!(state.query, "t");
     assert_eq!(state.mode, Mode::Search);
