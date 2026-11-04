@@ -291,7 +291,10 @@ fn search_and_keyboard_footer_share_table_extent_in_both_modes() {
             let border = lines[1].cell_width() as usize;
             for line in [lines[0], lines[14]] {
                 assert!(line.starts_with("  "), "{frame}");
-                assert!(line.cell_width() as usize <= border, "{frame}");
+                assert!(
+                    without_status_ansi(line).cell_width() as usize <= border,
+                    "{frame}"
+                );
             }
             if width >= 20 {
                 assert!(lines[0].starts_with("  Search:"), "{frame}");
@@ -302,7 +305,7 @@ fn search_and_keyboard_footer_share_table_extent_in_both_modes() {
         state.query.clear();
         let frame = state.terminal_frame(width, 15);
         if width >= 24 {
-            assert!(frame.starts_with("  Search: / to search"), "{frame}");
+            assert!(frame.starts_with("  Search: f to search"), "{frame}");
         }
         assert!(!frame.contains("Filter:"), "{frame}");
     }
@@ -686,12 +689,15 @@ fn compact_pipe_is_dim_only_between_unstyled_spaces() {
         idle.contains("co… \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[39m"),
         "{idle}"
     );
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.query = "Claude".into();
     let filtered = state.terminal_frame(60, 15);
     assert_eq!(
         filtered.lines().next().unwrap(),
-        format!("  Search: Claude{}Search", " ".repeat(36))
+        format!(
+            "  Search: Claude{}\x1b[7mMODE: SELECT\x1b[27m",
+            " ".repeat(30)
+        )
     );
     assert!(
         without_match_marks(&filtered).contains("C \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking")
@@ -1601,7 +1607,10 @@ fn table_block_uses_nearly_full_width_without_moving_chrome() {
         let lines: Vec<_> = frame.split("\r\n").collect();
         assert_eq!(
             lines[0],
-            format!("  Search: / to search{}Select", " ".repeat(width - 29))
+            format!(
+                "  Search: f to search{}\x1b[7mMODE: SELECT\x1b[27m",
+                " ".repeat(width - 35)
+            )
         );
         assert!(
             lines[15]
@@ -1981,6 +1990,8 @@ fn hidden_pane_match_reveals_name_and_tiny_width_keeps_marker() {
     assert!(tiny.contains("> ") && !tiny.contains("p-b"), "{tiny}");
     assert!(
         tiny.split("\r\n").all(|line| line
+            .replace("\x1b[7m", "")
+            .replace("\x1b[27m", "")
             .replace("\x1b[48;5;236m", "")
             .replace("\x1b[0m", "")
             .replace("\x1b[2m", "")

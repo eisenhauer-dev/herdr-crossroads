@@ -12,7 +12,6 @@ Never uses a personal session.
 """
 
 import argparse
-import codecs
 import errno
 import fcntl
 import hashlib
@@ -36,13 +35,76 @@ import tempfile
 import termios
 import time
 import tomllib
-import unicodedata
+from terminal_screen import Screen
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "eisenhauer-dev/herdr-crossroads"
 ARCHIVE = "herdr-crossroads-{}-x86_64-unknown-linux-gnu.tar.gz"
 INSTALLER = runpy.run_path(str(ROOT / "scripts/install-binary.py"))
+
+# Immutable Linux public candidates; source contracts: presentation/footer.rs,
+# keymap.rs and selection.rs at these commits. Receipts: docs/installation.md
+# (public cycle/regular release) and target/release-0.2.0-public-pinned-receipt.json.
+HISTORICAL_RELEASES = {
+    "0.0.1": {
+        "commits": ("1610de9c969a487bb639881cd0c71fe1ee0e3ee2", "24e60502de675ca1d6d501ae1cc03421276a03c4"),
+        "archive": "5750e503cfff7447538f92d3b96f4d60f211a1f3788d0420246cd0bc7b76d31e",
+        "binary": "145898e7e925df0576af9b124afd8c76c2241f2d5ad64691164ec2eb3a029b41",
+        "notice": "THIRD-PARTY-NOTICES.html",
+    },
+    "0.0.2": {
+        "commits": ("c24df0876dae2a219bb833695829f7dc99433ae2", "80a15b34bbfc247b26f8f9737e8d84ba76a71e1d"),
+        "archive": "12b0aec9b8370b5cd30c70733d788034fb6f7c38e2b77f026f6b81d4bdec2a16",
+        "binary": "588f25fef39752bfaab8218768e8587afcc067a71fca2dfff5d6af27b103f015",
+        "notice": "THIRD-PARTY-NOTICES.html",
+    },
+    "0.1.0": {
+        "commits": ("490b0d74dc866b6ed83786f7aaa5657c35db5c51",),
+        "archive": "d55b5bc611f74a7f1a61de789428e01fcf9b414640153c796f10a6a8a049304e",
+        "binary": "63857e066f8e4c7821114107292e5e973aaab0b12144ab13b1a63e59611bace1",
+        "notice": "THIRD-PARTY-NOTICES.html",
+    },
+    "0.2.0": {
+        "commits": ("e928b5735e511fd1204ccbe4ae19b5f5fce31791",),
+        "archive": "94aed6036ed0f06ef57c3af30569e78a3daa7bf59a9b56a920a02e0593db771c",
+        "binary": "789c7db6cd33df074205dc66fa7cf96996b9bca50899348996f9a45ccdb09907",
+        "notice": "THIRD-PARTY-NOTICES.md",
+    },
+}
+
+
+def historical_profile(version, commit, archive_sha256, binary_sha256):
+    """No version/UI/env heuristic: only the complete reviewed identity opts in."""
+    profile = HISTORICAL_RELEASES.get(version)
+    if profile and (archive_sha256 == profile["archive"] or binary_sha256 == profile["binary"]):
+        assert (commit in profile["commits"] and archive_sha256 == profile["archive"]
+                and binary_sha256 == profile["binary"]), "unverified historical candidate identity"
+        return profile
+    return None  # All other candidates retain today's strict contract.
+
+
+def pinned_notice(profile, data):
+    expected = (INSTALLER["LEGACY_NOTICE_SHA256"] if profile["notice"].endswith(".html")
+                else INSTALLER["LEGACY_MARKDOWN_SHA256"])
+    assert digest(data) == expected, "historical notice hash mismatch"
+
+
+def popup_view(screen, profile=None):
+    return screen.popup_view(profile="historical" if profile else "current")
+
+
+def search_input(profile=None):
+    return b"/Arrival" if profile else b"fArrival"
+
+
+def filtered_popup(screen, searching, profile=None):
+    text = popup_view(screen, profile)
+    lines = [line for line in text.splitlines() if "Arrival" in line]
+    badge = ("Search" if searching else "Select") if profile else "MODE: SELECT"
+    editing = "Enter/Esc: select  Backspace: erase" in screen.text()
+    return (bool(re.search(r'Search: Arrival\s+' + badge + r'\b', text))
+            and len(lines) == 2 and "Origin" not in text and editing == searching)
 
 
 def digest(data):
@@ -149,22 +211,24 @@ def public_cycle_step(command, herdr_argv, operation, ref, commit, main_commit=N
     return result, main_commit
 
 
-def expected_notices(managed, reference, public):
+def expected_notices(managed, reference, public, profile=None):
     """Keep pinned historical checkout assertions distinct from new installs."""
     notices = {"LICENSE": (reference / "LICENSE").read_bytes()}
-    markdown = (reference / "THIRD-PARTY-NOTICES.md").read_bytes()
-    if (managed / "THIRD-PARTY-NOTICES.md").is_file():
-        notices["THIRD-PARTY-NOTICES.md"] = markdown
-    else:
+    if profile:
         assert public
-        historical = (managed / "THIRD-PARTY-NOTICES.html").read_bytes()
-        assert digest(historical) == INSTALLER["LEGACY_NOTICE_SHA256"]
-        assert digest(markdown) == INSTALLER["LEGACY_MARKDOWN_SHA256"]
-        notices["THIRD-PARTY-NOTICES.html"] = historical
+        name = profile["notice"]
+        historical = (managed / name).read_bytes()
+        pinned_notice(profile, historical)
+        assert not (managed / ("THIRD-PARTY-NOTICES.md" if name.endswith(".html")
+                               else "THIRD-PARTY-NOTICES.html")).exists()
+        notices[name] = historical
+    else:
+        assert (managed / "THIRD-PARTY-NOTICES.md").is_file()
+        notices["THIRD-PARTY-NOTICES.md"] = (reference / "THIRD-PARTY-NOTICES.md").read_bytes()
     return notices
 
 
-def prepare_fixture(base, asset_dir, public=None, update=None):
+def prepare_fixture(base, asset_dir, public=None, update=None, public_commits=None):
     """Copy reference artifacts unchanged; add a trailer variant only offline."""
     repo, assets = base / "source", base / "assets"
     (repo / "scripts").mkdir(parents=True)
@@ -182,7 +246,9 @@ def prepare_fixture(base, asset_dir, public=None, update=None):
             prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
             path.write_text(path.read_text().replace(
                 prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
-        manifest.write_text(manifest.read_text() + '\nwidth = "90%"\nheight = "90%"\n')
+        manifest.write_text(manifest.read_text().replace(
+            'id = "crossroads"\n',
+            'id = "crossroads"\nwidth = "90%"\nheight = "90%"\n', 1))
     payloads = {}
     for version in ([public, update] if update else [public or "0.0.1"]):
         name = ARCHIVE.format(version)
@@ -192,24 +258,24 @@ def prepare_fixture(base, asset_dir, public=None, update=None):
         assert (assets / (name + ".sha256")).read_text() == f"{digest(archive.read_bytes())}  {name}\n"
         with tarfile.open(archive) as package:
             members = package.getmembers()
-            notice_name = "THIRD-PARTY-NOTICES.md"
-            # Public reference assets may belong to an old pinned checkout;
-            # this does not extend the current installer's version exception.
-            if public is not None and {m.name for m in members} == {
-                    "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", "THIRD-PARTY-NOTICES.html"}:
-                notice_name = "THIRD-PARTY-NOTICES.html"
+            notice_name = ("THIRD-PARTY-NOTICES.html" if public is not None
+                           and any(m.name == "THIRD-PARTY-NOTICES.html" for m in members)
+                           else "THIRD-PARTY-NOTICES.md")
             assert len(members) == 4 and {m.name for m in members} == {
                 "herdr-crossroads", "herdr-crossroads.sha256", "LICENSE", notice_name}
             assert all(m.isfile() and not m.sparse for m in members)
+            original = package.extractfile("herdr-crossroads").read()
+            profile = (historical_profile(version, (public_commits or {}).get(version),
+                                          digest(archive.read_bytes()), digest(original))
+                       if public is not None else None)
+            assert notice_name == (profile["notice"] if profile else "THIRD-PARTY-NOTICES.md")
             notices = {name: package.extractfile(name).read()
                        for name in ["LICENSE", notice_name]}
             for name, data in notices.items():
-                if name == "THIRD-PARTY-NOTICES.html":
-                    assert digest(data) == INSTALLER["LEGACY_NOTICE_SHA256"]
-                    assert digest((repo / "THIRD-PARTY-NOTICES.md").read_bytes()) == INSTALLER["LEGACY_MARKDOWN_SHA256"]
+                if profile and name == notice_name:
+                    pinned_notice(profile, data)
                 else:
                     assert data == (repo / name).read_bytes()
-            original = package.extractfile("herdr-crossroads").read()
             assert package.extractfile("herdr-crossroads.sha256").read() == (
                 f"{digest(original)}  herdr-crossroads\n".encode())
         assert original[:4] == b"\x7fELF"
@@ -247,116 +313,6 @@ def fixture_next_version(repo):
     path.write_text(text)
 
 
-class Screen:
-    """Small current-cell reader for native cursor/erase output, not a transcript.
-
-    Only ASCII assertion labels are used. Unsupported screen-changing controls
-    fail rather than silently producing evidence from historical output.
-    """
-
-    def __init__(self, rows=40, cols=160):
-        self.rows, self.cols = rows, cols
-        self.cells = [[" "] * cols for _ in range(rows)]
-        self.y = self.x = 0
-        self.pending = ""
-        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
-
-    def feed(self, data):
-        self.pending += self.decoder.decode(data)
-        while self.pending:
-            text = self.pending
-            if text.startswith("\x1b["):
-                match = re.match(r'\x1b\[([0-?]*)([ -/]*)([@-~])', text)
-                if not match:
-                    break
-                raw, intermediate, code = match.groups()
-                self.pending = text[match.end():]
-                if code == "c" and not intermediate and raw in ["", "0", ">", ">0"]:
-                    continue  # Device-attribute queries do not paint cells.
-                if code == "n" and not intermediate and raw in ["5", "6", "?996"]:
-                    continue  # Status/cursor/theme queries do not paint cells.
-                if code == "t" and not intermediate and raw in ["14", "16", "18", "19"]:
-                    continue  # Terminal-size queries do not paint cells.
-                if code == "u" and not intermediate and re.fullmatch(r"[?<>=][0-9;]*", raw):
-                    continue  # Kitty keyboard negotiation does not paint cells.
-                if code == "p" and intermediate == "$" and raw == "?1016":
-                    continue  # Pixel-mouse mode query does not paint cells.
-                if code in "mhl" or code == "q" and intermediate == " ":
-                    continue  # Colors, terminal modes, cursor style do not paint cells.
-                assert not intermediate and not raw.startswith(("?", ">", "=")), match.group()
-                args = [int(part or "0") for part in raw.split(";")]
-                n = args[0] or 1
-                if code in "Hf":
-                    self.y = min(self.rows - 1, (args[0] or 1) - 1)
-                    self.x = min(self.cols - 1, ((args[1] or 1) if len(args) > 1 else 1) - 1)
-                elif code == "G":
-                    self.x = min(self.cols - 1, n - 1)
-                elif code in "ABCD":
-                    self.y = max(0, min(self.rows - 1, self.y + (n if code == "B" else -n if code == "A" else 0)))
-                    self.x = max(0, min(self.cols - 1, self.x + (n if code == "C" else -n if code == "D" else 0)))
-                elif code == "J":
-                    assert args[0] in [0, 1, 2, 3]
-                    for row in range(self.rows):
-                        for col in range(self.cols):
-                            if args[0] in [2, 3] or (row, col) >= (self.y, self.x) and args[0] == 0 or (row, col) <= (self.y, self.x) and args[0] == 1:
-                                self.cells[row][col] = " "
-                elif code == "K":
-                    assert args[0] in [0, 1, 2]
-                    for col in range(self.cols):
-                        if args[0] == 2 or col >= self.x and args[0] == 0 or col <= self.x and args[0] == 1:
-                            self.cells[self.y][col] = " "
-                else:
-                    raise AssertionError(f"unsupported native CSI: {match.group()!r}")
-            elif text.startswith("\x1b]"):
-                end = re.search(r'\x07|\x1b\\', text)
-                if not end:
-                    break
-                self.pending = text[end.end():]  # OSC titles/colors, not screen cells.
-            elif text[0] == "\x1b":
-                if len(text) == 1:
-                    break
-                assert text[1] in "=>", f"unsupported native escape {text[:2]!r}"
-                self.pending = text[2:]
-            else:
-                char = text[0]
-                self.pending = text[1:]
-                if char == "\r":
-                    self.x = 0
-                elif char == "\n":
-                    if self.y == self.rows - 1:
-                        self.cells.pop(0)
-                        self.cells.append([" "] * self.cols)
-                    else:
-                        self.y += 1
-                elif char == "\b":
-                    self.x = max(0, self.x - 1)
-                elif char == "\t":
-                    self.x = min(self.cols - 1, (self.x // 8 + 1) * 8)
-                elif ord(char) >= 32 and not unicodedata.combining(char):
-                    if self.x >= self.cols:
-                        self.x = 0
-                        self.y = min(self.rows - 1, self.y + 1)
-                    self.cells[self.y][self.x] = char
-                    self.x += 2 if unicodedata.east_asian_width(char) in "WF" else 1
-
-    def text(self):
-        return "\n".join("".join(row) for row in self.cells)
-
-    def popup_view(self):
-        # The fixture has only three root shells (including the host's initial
-        # workspace), so its complete pane rows fit in these first 12 table lines.
-        # Crop by the actual query/badge coordinates, excluding underlying host
-        # chrome and labels rather than claiming their text belongs to the popup.
-        lines = self.text().splitlines()
-        prompts = [(y, re.search(r'Search: .*?\s+(Select|Search)\b', line))
-                   for y, line in enumerate(lines)]
-        prompts = [(y, match) for y, match in prompts if match]
-        if len(prompts) != 1:
-            return ""
-        y, match = prompts[0]
-        return "\n".join(line[match.start():match.end()] for line in lines[y:y + 12])
-
-
 def stop_owned(process):
     if process is None:
         return
@@ -384,7 +340,8 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                     update: public_update_main_commit}
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-native-") as temporary:
         base = Path(temporary)
-        repo, assets, payloads = prepare_fixture(base, asset_dir, public, update)
+        repo, assets, payloads = prepare_fixture(base, asset_dir, public, update,
+                                               {public: public_commit, update: public_update_commit})
         tools = base / "bin"
         tools.mkdir()
         for name, executable in [("herdr", herdr), ("python3", Path(sys.executable)),
@@ -504,25 +461,21 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
             reply = rpc("popup.close")
             assert reply.get("error", {}).get("code") == "popup_not_open", reply
 
-        def navigate(origin, arrival):
+        def navigate(origin, arrival, profile=None):
             result("pane.focus", {"pane_id": origin})
             wait_for(lambda: snapshot()["focused_pane_id"] == origin, "baseline focus")
             pane_ids = {p["pane_id"] for p in snapshot()["panes"]}
             open_popup()
-            wait_for(lambda: "Origin" in screen.popup_view() and "Arrival" in screen.popup_view()
-                     and "Select" in screen.popup_view(), "unfiltered native popup table")
+            view = lambda: popup_view(screen, profile)
+            wait_for(lambda: "Origin" in view() and "Arrival" in view()
+                     and ("Select" if profile else "MODE: SELECT") in view(), "unfiltered native popup table")
             assert {p["pane_id"] for p in snapshot()["panes"]} == pane_ids, "popup entered ordinary pane topology"
-            os.write(master, b"/Arrival")
+            os.write(master, search_input(profile))
 
-            def filtered(mode):
-                text = screen.popup_view()
-                lines = [line for line in text.splitlines() if "Arrival" in line]
-                return bool(re.search(r'Search: Arrival\s+' + mode + r'\b', text)) and len(lines) == 2 and "Origin" not in text
-
-            wait_for(lambda: filtered("Search"), "fresh search query and sole Arrival row")
+            wait_for(lambda: filtered_popup(screen, True, profile), "fresh search query and sole Arrival row")
             assert snapshot()["focused_pane_id"] == origin
             os.write(master, b"\r")
-            wait_for(lambda: filtered("Select"), "first Enter retains filter")
+            wait_for(lambda: filtered_popup(screen, False, profile), "first Enter retains filter")
             assert snapshot()["focused_pane_id"] == origin
             duplicate = command([*argv, "plugin", "pane", "open", "--plugin", "herdr-crossroads",
                                  "--entrypoint", "crossroads"])
@@ -534,8 +487,8 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
             drain(0.5)
             no_popup()
             open_popup()  # Independent repeatability/closure proof; fresh empty query.
-            wait_for(lambda: "Origin" in screen.popup_view() and "Arrival" in screen.popup_view()
-                     and "Search: / to search" in screen.popup_view(), "reopened unfiltered native table")
+            wait_for(lambda: "Origin" in view() and "Arrival" in view()
+                     and ("Search: / to search" if profile else "Search: f to search") in view(), "reopened unfiltered native table")
             os.write(master, b"q")
             drain(0.5)
             no_popup()
@@ -629,7 +582,10 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                     binary = managed / "target/release/herdr-crossroads"
                     assert not binary.is_symlink() and binary.resolve(strict=True).is_relative_to(managed)
                     assert binary.read_bytes() == payloads[version] and binary.stat().st_mode & 0o777 == 0o755
-                    installed_notices = expected_notices(managed, repo, public)
+                    profile = (historical_profile(version, source["resolved_commit"],
+                                                  digest((assets / ARCHIVE.format(version)).read_bytes()),
+                                                  digest(binary.read_bytes())) if public else None)
+                    installed_notices = expected_notices(managed, repo, public, profile)
                     for name, data in installed_notices.items():
                         notice = binary.parent / name
                         assert not notice.is_symlink() and notice.resolve(strict=True).is_relative_to(managed)
@@ -651,7 +607,7 @@ def run_case(herdr, asset_dir, public_ref=None, public_commit=None,
                             marker = directories[0] / "distribution-retained-marker"
                             marker.write_text("owned fixture data\n")
                             retained.append(marker)
-                    navigate(*roots)
+                    navigate(*roots, profile)
                     assert all(p.read_text() == "owned fixture data\n" for p in retained)
                     print(json.dumps({"version": version, "ref": source.get("requested_ref"),
                                       "commit": source["resolved_commit"], "binary_sha256": digest(binary.read_bytes()),

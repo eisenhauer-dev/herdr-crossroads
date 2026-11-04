@@ -45,6 +45,8 @@ pub(super) fn without_status_ansi(line: &str) -> String {
     line.replace("\x1b[38;2;249;226;175m", "")
         .replace("\x1b[38;2;166;227;161m", "")
         .replace("\x1b[39m", "")
+        .replace("\x1b[7m", "")
+        .replace("\x1b[27m", "")
 }
 
 pub(super) fn selected_prefix(line: &str) -> bool {

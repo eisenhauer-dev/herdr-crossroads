@@ -22,7 +22,8 @@ import tempfile
 import threading
 import tomllib
 
-from test_distribution import SOURCE, digest, enable_public_downloads, expected_notices, install_public, public_version
+from test_distribution import (SOURCE, digest, enable_public_downloads, expected_notices,
+                               historical_profile, install_public, public_version)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -242,9 +243,12 @@ def run_case(herdr, asset_dir, archive_name, case, public_ref=None, public_commi
                 assert managed.is_relative_to(Path(env["XDG_CONFIG_HOME"])) and managed.is_relative_to(base)
                 assert Path(plugin["plugin_root"]).resolve(strict=True) == managed
                 assert Path(plugin["manifest_path"]).resolve(strict=True) == managed / "herdr-plugin.toml"
+                profile = (historical_profile(version_number, source["resolved_commit"],
+                                              digest(archive.read_bytes()), digest(expected))
+                           if public_ref else None)
                 for name, data, mode in [("herdr-crossroads", expected, 0o755),
                                         *((name, data, 0o644) for name, data in
-                                          expected_notices(managed, repo, public_ref).items())]:
+                                          expected_notices(managed, repo, public_ref, profile).items())]:
                     installed = managed / "target/release" / name
                     assert not installed.is_symlink() and installed.resolve(strict=True).is_relative_to(managed)
                     assert installed.read_bytes() == data and installed.stat().st_mode & 0o777 == mode
