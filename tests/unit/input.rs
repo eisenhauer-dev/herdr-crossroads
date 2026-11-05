@@ -8,6 +8,101 @@ pub(crate) fn decode(bytes: &[u8]) -> Vec<Key> {
 }
 
 #[test]
+fn sgr_mouse_press_is_an_event_not_search_text() {
+    assert_eq!(decode(b"\x1b[<0;7;5M").len(), 1);
+}
+
+#[test]
+fn windows_mouse_input_policy_preserves_vt_bytes_and_disables_quick_edit() {
+    use crate::terminal::windows_input::input_mode;
+    for saved in [0, 0xffff, 0x17, 0x200] {
+        let disabled = input_mode(saved, false);
+        assert_eq!(
+            disabled & 0x57,
+            0,
+            "no cooked/echo/Ctrl-C/legacy mouse/Quick Edit"
+        );
+        assert_eq!(disabled & 0x280, 0x280, "VT input and extended modes");
+        let enabled = input_mode(saved, true);
+        assert_eq!(
+            enabled & 0x210,
+            0x210,
+            "ConPTY mouse delivery plus VT byte input, not legacy-only records"
+        );
+        assert_eq!(
+            enabled & 0x47,
+            0,
+            "cooked/echo/Ctrl-C/Quick Edit remain off"
+        );
+        assert_eq!(
+            enabled & !0x2d7,
+            saved & !0x2d7,
+            "unrelated console flags preserved"
+        );
+    }
+}
+
+#[test]
+fn oversized_mouse_report_is_consumed_through_its_terminator() {
+    let mut report = b"\x1b[<0;".to_vec();
+    report.extend(vec![b'9'; 256]);
+    report.extend_from_slice(b";5Mx");
+    assert_eq!(decode(&report), [Key::Char('x')]);
+}
+
+#[test]
+fn mouse_reports_decode_fragmented_coordinates_release_and_wheel_without_key_leaks() {
+    use crate::input::{Mouse, MouseButton};
+    for (bytes, button) in [
+        (b"\x1b[<0;65535;1M".as_slice(), MouseButton::Left),
+        (b"\x1b[<0;65535;1m", MouseButton::Release),
+        (b"\x1b[<64;65535;1M", MouseButton::WheelUp),
+        (b"\x1b[<65;65535;1M", MouseButton::WheelDown),
+    ] {
+        let mut decoder = Keys::new();
+        for byte in &bytes[..bytes.len() - 1] {
+            assert_eq!(decoder.feed(*byte), None);
+        }
+        assert_eq!(
+            decoder.feed(*bytes.last().unwrap()),
+            Some(Key::Mouse(Mouse {
+                button,
+                x: 65534,
+                y: 0
+            }))
+        );
+        assert_eq!(decoder.feed(b'x'), Some(Key::Char('x')));
+    }
+    for report in [
+        "<0;0;1M",
+        "<0;1;0M",
+        "<0;65536;1M",
+        "<0;+1;1M",
+        "<a;1;1M",
+        "<0;;1M",
+        "<0;1;1;1M",
+        "<4;1;1M",
+        "<8;1;1M",
+        "<16;1;1M",
+        "<1;1;1M",
+        "<2;1;1M",
+        "<32;1;1M",
+        "<66;1;1M",
+        "<65;1;1m",
+    ] {
+        assert_eq!(
+            decode(format!("\x1b[{report}x").as_bytes()),
+            [Key::Char('x')],
+            "{report}"
+        );
+    }
+    assert_eq!(
+        decode(b"\x1b[<0;12\x1b[?1u\x1b[A\x1b[106u"),
+        [Key::Up, Key::Char('j')]
+    );
+}
+
+#[test]
 fn raw_ht_cr_aliases_remain_physical_byte_limits_not_configured_chords() {
     assert_eq!(decode(b"\t\r"), [Key::Tab, Key::Enter]);
     let map = Keymap::default();
@@ -103,7 +198,7 @@ fn repeated_escape_keeps_csi_and_ss3_sequences_out_of_search_text() {
         if help {
             state.key(Key::Char('?'));
         }
-        state.key(Key::Char('/'));
+        state.key(Key::Char('f'));
         state.key(Key::Char('x'));
         for key in decode(b"\x1b\x1b[A") {
             state.key(key);

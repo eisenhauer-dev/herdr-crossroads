@@ -261,6 +261,12 @@ fn conservative_allowed_characters_and_specials_roundtrip() {
         let key = Key::parse(text).unwrap();
         assert_eq!(Key::parse(&key.label()), Some(key), "{text}");
         let (map, errors) = Keymap::parse(&serde_json::json!({"themes": {"toggle_preview": [text], "next_theme": ["A"], "previous_theme": ["B"], "save": ["C"], "cancel": ["D"], "open_help": ["E"]}}).to_string());
+        if key == Key::Enter {
+            assert!(errors
+                .iter()
+                .any(|error| error.contains("Enter is reserved")));
+            continue;
+        }
         assert!(errors.is_empty(), "{text}: {errors:?}");
         assert_eq!(
             map.action(Context::Themes, key),
@@ -1419,7 +1425,7 @@ fn defaults_quit_and_search_q_are_context_specific() {
             if help {
                 state.key(Key::Char('?'));
             }
-            state.key(Key::Char('/'));
+            state.key(Key::Char('f'));
             state.key(Key::Char('q'));
             state.key(end);
             assert!(!state.closed);
@@ -1704,7 +1710,7 @@ fn fixed_search_ignores_all_modifiers_despite_mappings() {
         if help {
             state.key(Key::Char('?'));
         }
-        state.key(Key::Char('/'));
+        state.key(Key::Char('f'));
         state.key(Key::Char('x'));
         for key in [
             Key::Ctrl('j'),
@@ -1876,6 +1882,16 @@ fn documented_jsonc_examples_use_the_production_parser_and_schema() {
     let (map, errors) = Keymap::parse(keymap);
     assert!(errors.is_empty(), "{errors:?}");
     assert_eq!(map.labels(Context::Select, "next_row"), "J/Down");
+    let mouse_example = include_str!("../../docs/keymaps.md")
+        .split("```jsonc\n")
+        .nth(2)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap();
+    let (mouse, errors) = Keymap::parse(mouse_example);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(!mouse.mouse_enabled);
     let status = include_str!("../../docs/status-colors.md")
         .split("```jsonc\n")
         .nth(1)
@@ -2076,4 +2092,92 @@ fn themes_help_default_remap_and_collisions_follow_existing_validation() {
         .iter()
         .any(|(heading, details)| heading.contains("Duplicate")
             && details.iter().any(|d| d.contains("open_help"))));
+}
+#[test]
+fn mouse_opt_out_is_a_boolean_setting_not_a_keymap_context() {
+    let (map, errors) = crate::keymap::Keymap::parse(r#"{"mouse_enabled": false}"#);
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(!map.mouse_enabled);
+    assert!(crate::keymap::Keymap::default().mouse_enabled);
+    for text in [
+        r#"{"mouse_enabled":0}"#,
+        r#"{"mouse_enabled":"false"}"#,
+        r#"{"mouse_enabled":true,"mouse_enabled":false}"#,
+    ] {
+        assert!(!crate::keymap::Keymap::parse(text).1.is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn enter_is_reserved_in_every_custom_binding_not_builtin_defaults() {
+    for binding in Keymap::default().bindings {
+        let context = binding.context.name();
+        let action = binding.action.name();
+        for spelling in [r#""Enter""#, r#""Ent\u0065r""#] {
+            for keys in [
+                format!("[{spelling}]"),
+                format!("[{spelling},\"X\"]"),
+                format!("[\"X\",{spelling}]"),
+            ] {
+                let (map, errors) =
+                    Keymap::parse(&format!("{{\"{context}\":{{\"{action}\":{keys}}}}}"));
+                assert!(
+                    errors.iter().any(|error| error.contains("reserved")),
+                    "{context}.{action}: {errors:?}"
+                );
+                assert!(map
+                    .diagnostic_blocks()
+                    .iter()
+                    .any(|(heading, lines)| heading
+                        == &format!("Unsupported keymap keys - {context} mode")
+                        && lines
+                            .iter()
+                            .any(|line| line.starts_with(action)
+                                && line.contains("Enter is reserved"))));
+            }
+        }
+    }
+    for unknown in ["Return", "enter", "ENTER"] {
+        assert_eq!(Key::parse(unknown), None);
+    }
+    assert!(Keymap::parse("{}").1.is_empty());
+    assert!(
+        Keymap::parse(r#"{"select":{"next_row":["J"]},"themes":{"save":["s"]}}"#)
+            .1
+            .is_empty()
+    );
+    assert_eq!(
+        Keymap::default().action(Context::Select, Key::Enter),
+        Some(Action::FocusPane)
+    );
+    assert_eq!(
+        Keymap::default().action(Context::Themes, Key::Enter),
+        Some(Action::Save)
+    );
+}
+
+#[test]
+fn lowercase_f_is_default_search_in_select_and_help_not_slash() {
+    let map = Keymap::default();
+    for context in [Context::Select, Context::Help] {
+        assert_eq!(
+            map.action(context, Key::Char('f')),
+            Some(Action::OpenSearch)
+        );
+        assert_eq!(map.action(context, Key::Char('/')), None);
+    }
+    assert!(Keymap::parse("{}").1.is_empty());
+    let (custom, errors) =
+        Keymap::parse(r#"{"select":{"open_search":["/"]},"help":{"open_search":["s"]}}"#);
+    assert!(errors.is_empty());
+    assert_eq!(
+        custom.action(Context::Select, Key::Char('/')),
+        Some(Action::OpenSearch)
+    );
+    assert_eq!(
+        custom.action(Context::Help, Key::Char('s')),
+        Some(Action::OpenSearch)
+    );
+    assert_eq!(custom.action(Context::Select, Key::Char('f')), None);
+    assert_eq!(custom.action(Context::Help, Key::Char('f')), None);
 }

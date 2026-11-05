@@ -1,9 +1,14 @@
 # Binary installation
 
-The checkout prepares **0.2.0, not yet released**, retaining Linux x86_64 glibc
-and adding Apple Silicon/Intel **macOS 15.0+**. Published **0.1.0 remains
-Linux-only and immutable**. Native packaging and isolated real-Herdr installation
-CI passed on all three targets; see [candidate evidence and remaining limits](builds.md#current-020-three-platform-ci-evidence).
+Released **0.2.0** retains Linux x86_64 glibc and adds Apple Silicon/Intel
+**macOS 15.0+**. Native Windows 10/11 x86_64 is intended for **0.3.0**, currently
+**PREPARATION only**. The local package is **0.3.0**, unpublished on all four
+targets; use the published `--ref v0.2.0` Linux/macOS fallback, not a nonexistent
+0.3.0 release route. Published **0.1.0 remains
+Linux-only and immutable**. Historical 0.2.0 native packaging and isolated real-Herdr
+installation CI passed on all three Linux/macOS targets. Separate
+[0.3.0 candidate receipts](releases.md#fresh-030-ci-preparation) record later native
+gates; they are not public-install proof or final-tree release approval.
 
 Crossroads `0.1.0` is the first regular Linux release, for
 `x86_64-unknown-linux-gnu` only, published as
@@ -40,6 +45,76 @@ the local binary with personal build paths. The real public
 test cycle is not approval for a regular 0.1.0 release.
 There is no short-name registry.
 
+## Windows preparation limitations
+
+There is no approved Windows release/install route yet. The WIP manifest uses
+`python scripts/install-binary.py` on Windows (not `python3`) and a separate
+`crossroads-windows` pane pointing to `./target/release/herdr-crossroads.exe`.
+The `crossroads` pane and `setup-keybind` action remain **Linux/macOS-only**.
+Do not invoke setup or copy the Unix quickstart's launch entry unchanged on Windows.
+The source-declared Windows launch command is:
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
+```
+
+On 2026-10-28 the user reported successful basic source-build/link/live-popup use
+on a physical Windows 11 PC ("latest version", exact build unrecorded), using
+Herdr 0.9.5 and local `develop` head `6c464a799e826d246e83357c01ab4298f406c79d`.
+The initial `platform_unsupported` error came from opening the Unix `crossroads`
+entrypoint; the user confirmed success after switching to `crossroads-windows`.
+This is user-reported manual evidence, not an automated hardware test, a recorded
+per-function checklist, Windows 10 coverage or managed-install acceptance.
+On 2026-11-04 the user accepted the existing Windows tests as sufficient and waived
+additional Windows 10/11 managed-install/live-popup testing. This records acceptance
+of the testing scope, not execution of those tests or Windows 10 certification;
+GNU linked-input attribution, native GNU CI, independent review and release approval remain separate.
+Source preparation needs Git, Python 3.11+, Rust `1.99.0-x86_64-pc-windows-gnu`
+and the [approved MinGW-w64 builder](builds.md#windows-gnu-toolchain-and-attribution);
+historical MSVC success does not validate the GNU migration. This does not
+establish a supported Windows installation route. Windows host keybinding setup
+remains manual and unverified; no native host-config path or shortcut sequence is
+certified here.
+
+The installer selects `x86_64-pc-windows-gnu` for an AMD64/x86_64 host reporting
+Windows version 10 or newer; old/unknown versions and other architectures fail.
+It expects the current version's `.tar.gz` plus checksum, currently
+`herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.tar.gz[.sha256]`, with exactly
+`herdr-crossroads.exe`, `herdr-crossroads.exe.sha256`, `LICENSE`, and
+`THIRD-PARTY-NOTICES.md`. Common checksum/notice/member checks precede native
+writes; the binary must pass AMD64 PE32+ console-executable header checks, not
+be a DLL. Header checks do not prove execution or OS compatibility.
+
+Windows installation uses `scripts/windows-files.py`, not Unix directory-FD or
+mode semantics: it requires a local absolute drive path, pins directory ancestors
+against rename, rejects reparse-point ancestors/destinations, and stages/syncs
+individual replacements in `target/release/`. This is not a three-file transaction.
+The pin requests `FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES` and shares read/write
+but not delete access; installation fails closed if those directory permissions or
+sharing requirements cannot be met. Attribute-only handles did not block rename
+in native run `39617733551`; the corrected access mask and all ten distribution
+checks passed in [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130),
+including pinned-parent rename, junction swap and existing DELETE-handle rejection.
+See Microsoft's
+[CreateFileW sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+(updated 2025-07-01) and
+[directory access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants)
+(updated 2021-01-07), checked 2026-10-21.
+Close the popup before replacing the executable: Windows can reject replacement
+of a running binary. Nothing here proves an actual Herdr managed installation.
+See [preparation evidence and remaining gates](builds.md#windows-preparation-not-certification).
+
+Release notices are checked byte-for-byte against the trusted checkout.
+`.gitattributes` pins `LICENSE` to LF for both `core.autocrlf=true` and `false`;
+vendor notices retain their deliberate `-text` policy. Historical Windows
+preparation archives with CRLF `LICENSE` are rejected against this canonical
+checkout and require fresh packages, not installer normalization or edited
+archives. Existing clones with a stale CRLF `LICENSE` must refresh that file from
+the matching source after preserving any local edits.
+
+The remaining setup and Unix permission details below apply to Linux/macOS;
+dated installation receipts retain their original platform/version scope.
+
 ## Keyboard launch setup
 
 Install with `herdr plugin install eisenhauer-dev/herdr-crossroads`, then explicitly
@@ -55,7 +130,7 @@ plugin root. Python **3.11+** must still be available on the server's `PATH`.
 Installation/build hooks, startup and opening Crossroads never run this helper;
 only explicit invocation opts into the host-config write. Existing installs need
 a reviewed checkout/manifest containing the action and its matching binary assets.
-The entrypoint and optional binding remain unchanged for 0.2.0.
+The Unix entrypoint and optional binding remain unchanged for local 0.3.0 preparation.
 
 **Wait for completion before reloading.** A successful invoke response means the
 action started, not that setup succeeded. Repeat the log command and match the
@@ -178,12 +253,15 @@ For the current checkout, the installer requires the agreed version's archive
 and adjacent checksum for exactly one target:
 
 ```text
-herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz[.sha256]
-herdr-crossroads-0.2.0-aarch64-apple-darwin.tar.gz[.sha256]
-herdr-crossroads-0.2.0-x86_64-apple-darwin.tar.gz[.sha256]
+herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz[.sha256]
+herdr-crossroads-0.3.0-aarch64-apple-darwin.tar.gz[.sha256]
+herdr-crossroads-0.3.0-x86_64-apple-darwin.tar.gz[.sha256]
 ```
 
 `[.sha256]` denotes the additional checksum file, not a literal filename.
+These are local preparation names, not available public 0.3.0 assets. Use trusted
+fresh local assets with the explicit override below; absent that override, this
+checkout requests unpublished 0.3.0 assets and fails rather than selecting 0.2.0.
 Selection uses the **running Python process architecture**, not physical hardware:
 ARM64 selects `aarch64-apple-darwin`; an x86_64 process under Rosetta selects the
 Intel asset. Actual Rosetta execution has **not** been proven. Older or unknown
@@ -261,7 +339,8 @@ installation: opening/searching the runtime does not download or update anything
 The gzip tar must contain exactly four regular, non-sparse members named
 `herdr-crossroads`, `herdr-crossroads.sha256`, `LICENSE`, and
 `THIRD-PARTY-NOTICES.md`. Both notice files must match the trusted checkout's
-bytes exactly; missing, tampered or malformed notice payloads fail even if the
+bytes exactly except for the narrowly pinned historical inventories below;
+missing, tampered or malformed notice payloads fail even if the
 outer checksum was recomputed. Older two-member assets are no longer accepted.
 Duplicates, unexpected members,
 path traversal, absolute names, directories, symlinks, and hardlinks fail. No tar
@@ -286,6 +365,17 @@ The old source-SHA-pinned checkout continues using its own HTML installer and
 trusted HTML notices unchanged. The earlier format conversion did not replace
 the public asset. A 0.2.0 checkout instead requires 0.2.0 assets; it cannot silently
 fall back to the public `v0.1.0` archive.
+
+The released `v0.2.0` Linux/macOS archives retain the 78-package Markdown inventory
+with SHA256 `ba243d492753e7d6ce0832a14827d635c9066b354ed715456a492c46bde43e56`.
+For those three Unix targets and version `0.2.0` only, the installer also accepts
+that exact notice when the trusted checkout contains the Windows-expanded
+82-package inventory with SHA256
+`293f66533f38f1e442c5ca1204f57ab8dce86c4864602c75066c2dd9b2a96e4e`.
+It installs the released notice bytes beside the released binary, not the expanded
+inventory. `LICENSE` still requires exact checkout equality; all other checks
+remain unchanged. This exception does not accept modified inventories, other
+versions, or Windows archives, and does not change any published asset.
 
 After validation, all three payload files are staged in exclusive temporary
 files in `target/release/`, flushed/synced, then individually atomically replaced:
@@ -326,12 +416,12 @@ was tested separately, as recorded below.
 See [README installation](../README.md#installation) for the explicit source
 clone/build/link alternative.
 
-**Publication order matters:** do not move the default branch to 0.2.0 without
+**Publication order matters:** do not move the default branch to a new version without
 matching approved assets available, unless a separately approved, controlled
 publication window explicitly handles that gap. Otherwise the normal install
-command fails closed. During preparation, the published Linux fallback is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.1.0`.
-There is no published macOS fallback. Close the popup before update/reinstall;
+command fails closed. The released Linux/macOS fallback is
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`;
+there is no released Windows fallback. Close the popup before update/reinstall;
 Herdr 0.9.5's `herdr plugin update herdr-crossroads` follows the installed source
 ref (an unpinned install follows default HEAD). To return to published Linux
 0.1.0, reinstall with `--ref v0.1.0` and its retained matching assets. Prefer a
@@ -421,6 +511,14 @@ Notice retention, missing/tampered/malformed notice members and notice-destinati
 symlinks are included. The historical 0.9.3 results below used earlier two-member
 assets. On 2026-10-15 both real-Herdr harnesses passed with Herdr 0.9.5 and the
 current four-member contract, checking delivered notice bytes and mode 0644.
+
+`python3 -B -m unittest discover -s tests -p 'test_distribution*.py'` additionally
+checks native-harness helpers without launching Herdr or downloading assets.
+Portable historical fixtures cover notice hash/identity rejection, unchanged
+archive bytes, slash search, Search/Select badges, retained filtering after the
+first Enter, reopening, and strict current badge/search/notice expectations. A
+mocked CLI boundary also checks the verified identity handoff to notice validation.
+Synthetic fixture hashes are not released-runtime acceptance evidence.
 
 The separate **main-owned, opt-in** harness requires approval and an explicit real
 Herdr **0.9.3 or 0.9.5** executable and actual trusted release assets; other
@@ -641,6 +739,36 @@ remain mandatory at every step, as do retained state, no Cargo/Rust, unchanged
 reference assets, uninstall and owned shutdown. Receipts distinguish `install`,
 `update`, and `return`, with reviewed release tag and archive/binary hashes;
 per-step receipts alone do not prove final cleanup or independent acceptance.
+
+#### Historical versus current native test contracts
+
+The native harness explicitly pins the Linux public candidates for `0.0.1`,
+`0.0.2`, `0.1.0`, and `0.2.0` in `tests/test_distribution.py`. Historical handling
+requires the complete recorded version, source commit, archive SHA256, and binary
+SHA256 identity, not just an old version, environment flag, or detected UI text.
+The CLI harness uses those same pins after verifying its installed source record
+and before checking delivered notices; it does not select a screen/input profile.
+The cycle admits only its recorded release/main commit identities above; a new
+main merge is not automatically a historical candidate. The single-version
+0.1.0 profile uses release source `490b0d74dc866b6ed83786f7aaa5657c35db5c51`;
+0.2.0 uses `e928b5735e511fd1204ccbe4ae19b5f5fce31791`, archive SHA256
+`94aed6036ed0f06ef57c3af30569e78a3daa7bf59a9b56a920a02e0593db771c`, and binary SHA256
+`789c7db6cd33df074205dc66fa7cf96996b9bca50899348996f9a45ccdb09907`.
+
+Those source trees use `/` to search and `Search`/`Select` badges. Their immutable
+notice bytes are validated against the pinned HTML hash (0.0.1–0.1.0) or Markdown
+hash (0.2.0) documented above, not
+against today's expanded GNU notice inventory. `LICENSE` still matches the
+original checkout bytes; archive structure/checksums, binary bytes, installed
+notice hashes/modes, source/path guards and focus/cleanup checks remain required.
+Unknown identities cannot opt into historical handling. Other candidates retain
+the current complete contract: current Markdown bytes, `f` search, and
+`MODE: SELECT` with the editing footer. The shared screen reader defaults to that
+strict current contract; it never auto-detects historical compatibility.
+
+These helper regressions and retained-archive checks do not rerun public
+installation/cycles, certify old releases as current 0.3.0 candidates, or change
+the production installer's notice exceptions or fallback route.
 
 **Execution evidence (2026-10-16):** the owning primary completed the full public
 cycle on Herdr 0.9.5, using a 200×50 PTY and the unmodified public manifest:

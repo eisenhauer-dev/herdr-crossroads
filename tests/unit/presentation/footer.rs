@@ -1,6 +1,65 @@
 use super::ui;
 
 #[test]
+fn paged_footer_hits_keep_unit_identity_and_help_enter_activation() {
+    use crate::input::Key;
+    use crate::keymap::{Action, Context, Keymap};
+    use crate::selection::Hit;
+    use ratatui::buffer::CellWidth;
+
+    let mut state = ui();
+    let (map, errors) = Keymap::parse(
+        r#"{"select":{"next_row":["Down"],"previous_tab":["↓"],"focus_pane":["F"]},"help":{"next_category":["Down"],"previous_category":["↓"]},"themes":{"next_theme":["Down"],"previous_theme":["↓"],"save":["S"]}}"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    state.keymap = map;
+    for (context, targets) in [
+        (
+            Context::Select,
+            vec![
+                ("↓: ↓pane", Hit::Action(Action::NextRow)),
+                ("↓: ↑tab", Hit::Action(Action::PreviousTab)),
+                ("F: focus", Hit::Action(Action::FocusPane)),
+            ],
+        ),
+        (
+            Context::Help,
+            vec![
+                ("↓: ↓move", Hit::Action(Action::NextCategory)),
+                ("↓: ↑move", Hit::Action(Action::PreviousCategory)),
+                ("Enter: run", Hit::Key(Key::Enter)),
+            ],
+        ),
+        (
+            Context::Themes,
+            vec![
+                ("↓: ↓theme", Hit::Action(Action::NextTheme)),
+                ("↓: ↑theme", Hit::Action(Action::PreviousTheme)),
+                ("S: save", Hit::Action(Action::Save)),
+            ],
+        ),
+    ] {
+        let pages = state.hints(context, 20, 1, false).len();
+        let mut seen = 0;
+        for page in 0..pages {
+            state.mouse.borrow_mut().hits.clear();
+            state.hint_scroll.set(page);
+            let lines = state.hints_at(context, 20, 1, true, 7);
+            assert_eq!(lines.len(), 1);
+            let hits = &state.mouse.borrow().hits;
+            assert_eq!(hits.len(), 1, "only the visible unit should be clickable");
+            for (label, hit) in &targets {
+                if lines[0] == format!("  {label}") {
+                    assert_eq!(hits[0], (2, 7, label.cell_width() as usize, hit.clone()));
+                    seen += 1;
+                }
+            }
+        }
+        assert_eq!(seen, targets.len(), "{context:?}");
+    }
+}
+
+#[test]
 fn select_footer_uses_dot_groups_without_right_padding() {
     use ratatui::buffer::CellWidth;
     for width in [60, 76, 109, 110, 111, 119, 120, 121, 137, 138, 139, 150] {
@@ -219,7 +278,7 @@ fn footer_keys_precede_actions_for_custom_bindings_in_every_context() {
     state.keymap = map;
     for (context, expected) in [
         (Context::Select, "J/↓: ↓pane K/↑: ↑pane H/←: ↑tab L/→: ↓tab N: ↓ws P: ↑ws Enter: focus Esc: exit ?: keys"),
-        (Context::Help, "J/↓: ↓move K/↑: ↑move Esc: close keys"),
+        (Context::Help, "J/↓: ↓move K/↑: ↑move Enter: run Esc: close keys"),
         (Context::Themes, "J/↓: ↓theme K/↑: ↑theme Space: table Enter: save Esc: cancel"),
     ] {
         let actual = state.hints(context, 80, 3, false).join(" ")
@@ -253,7 +312,7 @@ fn separator_characters_are_quoted_only_for_display() {
             state.theme_table_preview = preview;
             for (context, action, direction, separators) in [
                 (Context::Select, "next_row", "pane", 8),
-                (Context::Help, "next_category", "move", 2),
+                (Context::Help, "next_category", "move", 3),
                 (Context::Themes, "next_theme", "theme", 4),
             ] {
                 let hints = state
@@ -291,7 +350,7 @@ fn footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
     use crate::keymap::{Context, Keymap};
     let mut state = super::test_support::ui();
     let (map, errors) = Keymap::parse(
-        r#"{"select":{"next_row":["J","Left"],"previous_row":["Up","K"],"previous_tab":["H"],"next_tab":["L"],"next_workspace":["Tab","Right"],"focus_pane":["Enter","F"],"close":["Esc","X"]}}"#,
+        r#"{"select":{"next_row":["J","Left"],"previous_row":["Up","K"],"previous_tab":["H"],"next_tab":["L"],"next_workspace":["Tab","Right"],"focus_pane":["g","F"],"close":["Esc","X"]}}"#,
     );
     assert!(errors.is_empty(), "{errors:?}");
     state.keymap = map;
@@ -302,7 +361,7 @@ fn footer_units_are_atomic_and_only_navigation_shows_second_arrows() {
         "{wide}"
     );
     assert!(
-        wide.contains("Enter: focus") && wide.contains("Esc: exit"),
+        wide.contains("g: focus") && wide.contains("Esc: exit"),
         "{wide}"
     );
     assert!(

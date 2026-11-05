@@ -1,6 +1,21 @@
 use unicode_general_category::{get_general_category, GeneralCategory};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MouseButton {
+    Left,
+    Release,
+    WheelUp,
+    WheelDown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Mouse {
+    pub(super) button: MouseButton,
+    pub(super) x: usize,
+    pub(super) y: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Arrow {
     Up,
     Down,
@@ -10,6 +25,7 @@ pub(super) enum Arrow {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Key {
+    Mouse(Mouse),
     Char(char),
     Enter,
     Esc,
@@ -119,6 +135,7 @@ pub(super) struct Keys {
     utf8: Vec<u8>,
     sequence: Vec<u8>,
     alt: bool,
+    discarded: bool,
     pub(super) kitty_response: bool,
     pub(super) escape_started: Option<std::time::Instant>,
 }
@@ -129,6 +146,7 @@ impl Keys {
             utf8: Vec::new(),
             sequence: Vec::new(),
             alt: false,
+            discarded: false,
             kitty_response: false,
             escape_started: None,
         }
@@ -149,18 +167,43 @@ impl Keys {
             self.alt = true;
         }
         if self.escape >= 2 {
-            self.sequence.push(byte);
-            if !(0x40..=0x7e).contains(&byte) {
+            let mouse =
+                self.sequence.first() == Some(&b'<') || (self.discarded && self.escape == 4);
+            if mouse && byte == 27 {
+                self.sequence.clear();
+                self.discarded = false;
+                self.escape = 1;
+                self.escape_started = Some(std::time::Instant::now());
+                return None;
+            }
+            if !self.discarded {
+                self.sequence.push(byte);
+            }
+            if mouse || self.sequence.first() == Some(&b'<') {
+                self.escape = 4;
+                self.escape_started = None;
+            }
+            let complete = if self.escape == 4 {
+                matches!(byte, b'M' | b'm')
+            } else {
+                (0x40..=0x7e).contains(&byte)
+            };
+            if !complete {
                 if self.sequence.len() > 128 {
-                    self.escape = 0;
+                    self.discarded = true;
                     self.sequence.clear();
-                    self.escape_started = None;
                 }
                 return None;
             }
             self.escape = 0;
             self.escape_started = None;
+            if std::mem::take(&mut self.discarded) {
+                return None;
+            }
             let sequence = String::from_utf8(std::mem::take(&mut self.sequence)).ok()?;
+            if sequence.starts_with('<') {
+                return decode_mouse(&sequence).map(Key::Mouse);
+            }
             if byte == b'u' && sequence.starts_with('?') {
                 self.kitty_response = sequence[1..sequence.len() - 1].parse::<u32>().is_ok();
                 return None;
@@ -212,6 +255,7 @@ impl Keys {
     }
     pub(super) fn flush(&mut self) -> Option<Key> {
         self.escape_started = None;
+        self.discarded = false;
         if self.escape == 1 {
             self.escape = 0;
             Some(Key::Esc)
@@ -221,6 +265,35 @@ impl Keys {
             None
         }
     }
+}
+
+fn decode_mouse(sequence: &str) -> Option<Mouse> {
+    let last = sequence.as_bytes().last()?;
+    if !matches!(last, b'M' | b'm') {
+        return None;
+    }
+    let body = &sequence[1..sequence.len() - 1];
+    if !body
+        .split(';')
+        .all(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let mut fields = body.split(';');
+    let button: u8 = fields.next()?.parse().ok()?;
+    let x = fields.next()?.parse::<u16>().ok()?.checked_sub(1)? as usize;
+    let y = fields.next()?.parse::<u16>().ok()?.checked_sub(1)? as usize;
+    if fields.next().is_some() {
+        return None;
+    }
+    let button = match (button, last) {
+        (0, b'M') => MouseButton::Left,
+        (0, b'm') => MouseButton::Release,
+        (64, b'M') => MouseButton::WheelUp,
+        (65, b'M') => MouseButton::WheelDown,
+        _ => return None,
+    };
+    Some(Mouse { button, x, y })
 }
 
 fn arrow_key(arrow: Arrow, modifier: u32) -> Option<Key> {

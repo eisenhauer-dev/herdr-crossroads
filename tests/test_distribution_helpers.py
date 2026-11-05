@@ -19,7 +19,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DistributionHelpers(unittest.TestCase):
-    def test_notice_expectations_distinguish_pinned_html_from_current_markdown(self):
+    def test_current_screen_applies_native_erase_character_runs(self):
+        screen = Screen(rows=2, cols=12)
+        screen.feed(b"abcdef\x1b[1;3H\x1b[2X")
+        self.assertEqual(screen.text().splitlines()[0].rstrip(), "ab  ef")
+        screen.feed(b"\x1b[1;12HZ\x1b[X")
+        self.assertEqual(screen.text().splitlines()[0].rstrip(), "ab  ef")
+
+    def test_notice_expectations_require_explicit_profile_for_pinned_html(self):
         with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="xrd-notice-helper-") as temporary:
             base = Path(temporary)
             managed, reference = base / "managed", base / "reference"
@@ -30,20 +37,22 @@ class DistributionHelpers(unittest.TestCase):
             old = managed / "THIRD-PARTY-NOTICES.html"
             old.write_bytes(b"historical fixture")
             expected = test_distribution.expected_notices
+            profile = test_distribution.HISTORICAL_RELEASES["0.0.1"]
             with patch.dict(test_distribution.INSTALLER,
                             LEGACY_NOTICE_SHA256=digest(old.read_bytes()),
                             LEGACY_MARKDOWN_SHA256=digest(b"Markdown fixture")):
-                self.assertEqual(expected(managed, reference, True), {
+                self.assertEqual(expected(managed, reference, True, profile), {
                     "LICENSE": b"MIT fixture", "THIRD-PARTY-NOTICES.html": b"historical fixture"})
                 with self.assertRaises(AssertionError):
-                    expected(managed, reference, False)
+                    expected(managed, reference, False, profile)
+                with self.assertRaises(AssertionError):
+                    expected(managed, reference, True)
                 old.write_bytes(b"tampered")
                 with self.assertRaises(AssertionError):
-                    expected(managed, reference, True)
+                    expected(managed, reference, True, profile)
                 old.write_bytes(b"historical fixture")
                 (reference / "THIRD-PARTY-NOTICES.md").write_bytes(b"changed inventory")
-                with self.assertRaises(AssertionError):
-                    expected(managed, reference, True)
+                self.assertEqual(expected(managed, reference, True, profile)[old.name], b"historical fixture")
             (managed / "THIRD-PARTY-NOTICES.md").write_bytes(b"Markdown source")
             self.assertEqual(expected(managed, reference, False), {
                 "LICENSE": b"MIT fixture", "THIRD-PARTY-NOTICES.md": b"changed inventory"})
@@ -455,15 +464,18 @@ class DistributionHelpers(unittest.TestCase):
 
     def test_current_cells_replace_old_query_and_rows(self):
         screen = Screen(rows=20, cols=80)
-        screen.feed(b"\x1b[2J\x1b[2;5HSearch: / to search       Select\x1b[4;5HOrigin\x1b[5;5HArrival")
+        screen.feed(b"\x1b[2J\x1b[2;5HSearch: f to search       MODE: SELECT\x1b[4;5HOrigin\x1b[5;5HArrival")
         self.assertIn("Origin", screen.popup_view())
         # Feed an incomplete CSI: no historical row can survive the erase.
         screen.feed(b"\x1b[2")
-        screen.feed(b"J\x1b[2;5HSearch: Arrival           Search\x1b[4;5HArrival")
+        screen.feed(b"J\x1b[2;5HSearch: Arrival           MODE: SELECT\x1b[4;5HArrival")
         self.assertNotIn("Origin", screen.popup_view())
         self.assertEqual(screen.popup_view().count("Arrival"), 2)
-        screen.feed(b"\x1b[2;30HSelect\x1b[0K")
-        self.assertRegex(screen.popup_view(), r"Search: Arrival\s+Select")
+        screen.feed(b"\x1b[2;37HHELP\x1b[0K")
+        self.assertRegex(screen.text(), r"Search: Arrival\s+MODE: HELP")
+        self.assertEqual(screen.popup_view(), "")
+        screen.feed(b"\x1b[2;37HSELECT\x1b[0K")
+        self.assertRegex(screen.popup_view(), r"Search: Arrival\s+MODE: SELECT")
         # Underlying host labels are not popup rows.
         screen.feed(b"\x1b[20;1HOrigin")
         self.assertIn("Origin", screen.text())
@@ -531,6 +543,9 @@ class DistributionHelpers(unittest.TestCase):
             manifest = tomllib.loads((repo / "herdr-plugin.toml").read_text())
             self.assertEqual(manifest["version"], "0.1.1")
             self.assertEqual(manifest["panes"][0]["width"], "90%")
+            windows_pane = next(pane for pane in manifest["panes"] if pane["id"] == "crossroads-windows")
+            self.assertNotIn("width", windows_pane)
+            self.assertNotIn("height", windows_pane)
             self.assertEqual(tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"], "0.1.1")
             package = next(p for p in tomllib.loads((repo / "Cargo.lock").read_text())["package"]
                            if p["name"] == "herdr-crossroads")
