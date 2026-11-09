@@ -309,7 +309,7 @@ The selected archive and its adjacent checksum must exist. Checksum records must
 be exactly lowercase SHA256, two spaces, the portable expected filename, and a
 newline. Both archive and internal binary hashes are checked.
 
-Public downloads prefer curl discovered with `shutil.which("curl")`. Curl retains
+Public downloads prefer curl discovered with `shutil.which("curl")`. By default, curl retains
 its native certificate-chain and hostname verification and trust configuration;
 the installer does not disable verification, change Python's strict TLS settings,
 or modify system trust. This permits environments where curl verifies a
@@ -329,6 +329,52 @@ timeout**, not a total transfer deadline. Neither client retries, and a curl
 failure never falls back to urllib. An installed curl that cannot execute or
 does not support a required option also fails closed; no version detection or
 tool installation is performed.
+
+### Optional Windows Schannel revocation workaround
+
+For Windows curl failures such as `CRYPT_E_NO_REVOCATION_CHECK` (`0x80092012`,
+curl exit 35), the updated installer supports
+`CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT=1`. It is **disabled by default**:
+only the exact value `1` adds `--ssl-revoke-best-effort`, and only on Windows.
+Unset, empty, `0`, `false`, and all other values retain the strict default.
+There is no automatic retry or fallback. This does not establish why revocation
+failed, and does not change proxy behavior.
+
+The option requires curl with the **Schannel TLS backend** to have this effect.
+[curl 8.21.0's option documentation](https://github.com/curl/curl/blob/curl-8_21_0/docs/cmdline-opts/ssl-revoke-best-effort.md)
+(checked 2026-11-09; option added in 7.70.0) describes ignoring revocation-check
+failures caused by missing/offline certificate revocation-list distribution points.
+Certificate-chain and hostname validation remain enabled, but **a revoked
+certificate may be accepted when its revocation information is unreachable**.
+This is not security-equivalent to strict revocation checking. Use it only if
+your corporate security policy permits; prefer restoring revocation access.
+It has no Schannel effect on other TLS backends and does not alter urllib's
+secure behavior when curl is absent. Unsupported curl options still fail closed.
+
+This is a source change, not a delivered update to the immutable `v0.3.0`
+installer. Obtain reviewed installer source containing the change after it is
+published; installing with `--ref v0.3.0` does not gain this option. Once the
+public default branch contains that source, a one-install PowerShell opt-in is:
+
+```powershell
+$previous = $env:CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT
+try {
+    $env:CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT = '1'
+    herdr plugin install eisenhauer-dev/herdr-crossroads
+} finally {
+    if ($null -eq $previous) {
+        Remove-Item Env:CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT -ErrorAction SilentlyContinue
+    } else {
+        $env:CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT = $previous
+    }
+}
+```
+
+The variable is process-scoped, inherited by the install hook, and restored or
+removed afterward; no global environment or system TLS setting is changed.
+This example has not been executed on Windows or against a corporate TLS proxy.
+
+### Transfer bounds and payload validation
 
 Both public-download paths use Python bounded reads: at most 64 MiB for the
 archive and 1 KiB for its checksum, checked by reading at most one extra byte.
@@ -500,6 +546,8 @@ standard-library tests with synthetic ELF/Mach-O bytes. It covers exact
 version selection, mocked pinned HTTPS downloads and fixture curl subprocesses,
 curl preference despite Python strict-TLS errors, absent-curl TLS failure,
 required curl security arguments, no fallback on curl failures/unsupported options,
+Windows-only exact-value revocation opt-in (including malformed/disabled values),
+retained HTTPS/deadline/size safeguards and absent-curl strict TLS behavior,
 unknown-length bounded output and child/pipe cleanup, missing assets/network errors,
 download/expansion limits, redirect transport/credential rejection, checksums,
 malformed/member attacks, host/ELF/Mach-O rejection,

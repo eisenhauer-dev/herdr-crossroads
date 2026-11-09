@@ -535,11 +535,82 @@ class InstallBinaryTests(unittest.TestCase):
             "--noproxy", "*", "--max-time", "30", "--url", base + name,
         ] for name in [ARCHIVE, ARCHIVE + ".sha256"]])
 
+    def test_windows_revocation_best_effort_requires_exact_explicit_opt_in(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        url = "https://github.com/asset"
+        flag = "CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT"
+        for system in ["Windows", "Linux", "Darwin"]:
+            for value in [None, "1", "0", "false", "true", "", "01", " 1", "1\n"]:
+                env = {} if value is None else {flag: value}
+                enabled = system == "Windows" and value == "1"
+                with self.subTest(system=system, value=value), patch.dict(
+                        os.environ, env, clear=True), patch(
+                        "platform.system", return_value=system), patch(
+                        "shutil.which", return_value="curl"), patch(
+                        "subprocess.Popen") as start, patch(
+                        "urllib.request.OpenerDirector.open") as python_download:
+                    child = start.return_value.__enter__.return_value
+                    child.stdout.read.return_value = b"abcd"
+                    child.wait.return_value = 0
+                    child.poll.return_value = 0
+                    self.assertEqual(module["download"](url, 4), b"abcd")
+                    expected = ["curl", "--disable", "--proto", "=https", "--proto-redir", "=https",
+                                "--disallow-username-in-url", "--location", "--fail", "--silent",
+                                "--show-error", "--noproxy", "*", "--max-time", "30", "--url", url]
+                    if enabled:
+                        expected.append("--ssl-revoke-best-effort")
+                    start.assert_called_once_with(expected, stdout=subprocess.PIPE)
+                    child.stdout.read.assert_called_once_with(5)
+                    python_download.assert_not_called()
+
+    def test_windows_revocation_opt_in_keeps_failures_bounds_and_url_policy(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        with patch.dict(os.environ, {"CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT": "1"}, clear=True), patch(
+                "platform.system", return_value="Windows"), patch(
+                "shutil.which", return_value="curl"), patch(
+                "urllib.request.OpenerDirector.open") as python_download:
+            for status in [35, 60, 2]:
+                with self.subTest(status=status), patch("subprocess.Popen") as start:
+                    child = start.return_value.__enter__.return_value
+                    child.stdout.read.return_value = b"abcd"
+                    child.wait.return_value = child.returncode = status
+                    child.poll.return_value = status
+                    with self.assertRaisesRegex(ValueError, "curl.*failed"):
+                        module["download"]("https://github.com/asset", 4)
+            with patch("subprocess.Popen") as start:
+                child = start.return_value.__enter__.return_value
+                child.stdout.read.return_value = b"abcde"
+                child.poll.return_value = None
+                with self.assertRaisesRegex(ValueError, "size limit"):
+                    module["download"]("https://github.com/asset", 4)
+                child.stdout.read.assert_called_once_with(5)
+                child.kill.assert_called_once_with()
+                child.wait.assert_called_once_with()
+            with patch("subprocess.Popen") as start:
+                for url in ["http://github.com/asset", "https://user@github.com/asset", "file:///asset"]:
+                    with self.subTest(url=url), self.assertRaisesRegex(ValueError, "HTTPS"):
+                        module["download"](url, 4)
+                start.assert_not_called()
+            python_download.assert_not_called()
+        self.assertEqual(self.binary.read_bytes(), b"previous binary")
+
+    def test_windows_revocation_opt_in_without_curl_keeps_urllib_tls_failure(self):
+        module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
+        failure = urllib.error.URLError(ssl.SSLCertVerificationError("certificate verification failed"))
+        with patch.dict(os.environ, {"CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT": "1"}, clear=True), patch(
+                "platform.system", return_value="Windows"), patch(
+                "shutil.which", return_value=None), patch(
+                "urllib.request.OpenerDirector.open", side_effect=failure), patch(
+                "subprocess.Popen") as start:
+            with self.assertRaisesRegex(urllib.error.URLError, "certificate verification failed"):
+                module["download"]("https://github.com/asset", 4)
+            start.assert_not_called()
+
     def test_curl_failures_never_fall_back_and_preserve_previous_binary(self):
         module = runpy.run_path(str(self.repo / "scripts/install-binary.py"))
         # Protocol downgrade, credentialed redirect, HTTP, timeout, TLS and
         # unsupported-option statuses: none permits switching TLS clients.
-        for status in [1, 3, 22, 28, 60, 2]:
+        for status in [1, 3, 22, 28, 35, 60, 2]:
             with self.subTest(status=status):
                 tools = self.fake_curl(f"sys.stdout.buffer.write(b'partial')\nsys.exit({status})\n")
                 with patch.dict(os.environ, self.curl_environment(tools), clear=True), patch(
