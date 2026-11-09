@@ -30,11 +30,24 @@ a required-check branch-protection rule there.
 Updates to `main` must use
 pull requests even for the owner, with administrator enforcement and no bypass;
 force pushes and branch deletion are disabled. No independent approval is
-required solely to let the owner merge their own pull request. The `Linux gates`
-and `PR source policy` checks from the GitHub Actions app (ID `15368`) are mandatory
-for all pull requests targeting `main`, including the owner's own branches.
-The latter enforces the source-repository metadata policy above. Branches must
-be up to date with `main` before merging. Pending, missing or failed required
+required solely to let the owner merge their own pull request. All five platform
+and policy checks from the GitHub Actions app (ID `15368`) remain mandatory for
+pull requests targeting `main`, including the owner's own branches. The local
+workflows use these renamed contexts:
+
+| Previous required context | Renamed context |
+| --- | --- |
+| `Linux gates` | `Linux · Build & Tests (x86_64)` |
+| `macOS preparation (aarch64-apple-darwin)` | `macOS Apple Silicon · Build & Tests (ARM64)` |
+| `macOS preparation (x86_64-apple-darwin)` | `macOS Intel · Build & Tests (x86_64)` |
+| `Windows x86_64 preparation (not certification)` | `Windows x64 · Build & Tests (x86_64)` |
+| `PR source policy` | `PR · Branch Rules` |
+
+The remote required-context update is pending; renaming workflow files alone
+does not change branch protection. That update must retain all five gates, their
+app binding, strict up-to-date checks, administrator enforcement and no bypass.
+The local `PR · Branch Rules` job implements the source-repository metadata policy
+above. Branches must be up to date with `main` before merging. Pending, missing or failed required
 checks block merging, including for administrators. GitHub also treats `skipped`
 and `neutral` check conclusions as passing; do not weaken the public CI job with
 conditions that skip its gates. See [required status checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging).
@@ -86,14 +99,40 @@ the checkout. See [README installation](README.md#installation) for optional
 manual build-then-link testing; those Herdr examples were not executed during
 documentation verification.
 
+### Windows preparation
+
+Native Windows 10/11 x86_64 is intended for **0.3.0**, currently **PREPARATION
+only**; the local package is **0.3.0**, unpublished on all four targets.
+The Linux/macOS 0.2.0 release is completed.
+Native Windows CI [completed successfully on 2026-10-21](docs/builds.md#windows-preparation-not-certification);
+no Windows support certification or release approval is claimed.
+`.github/workflows/windows.yml` uses the standard free
+public `windows-2025` runner, public-only/read-only, not a paid larger runner.
+It configures Rust/Cargo 1.99.0, Python 3.11+, formatting, native library/binary
+Clippy and `python -B scripts/build-windows.py`, then uploads preparation-only
+artifacts. Its Windows check is required for merging into `main`; the workflow
+itself does not configure branch protection or publish a release.
+
+Use [Windows build prerequisites and gates](docs/builds.md#windows-preparation-not-certification)
+and [native verification scope](docs/keymaps.md#windows-preparation-verification),
+not the Unix shell/PTY commands below, for Windows preparation. The helper tests
+fake Herdr CLI/named pipes and ConPTY, plus exact installed executable bytes in a
+temporary checkout; **no actual Herdr managed-install/live-popup integration**
+runs in CI. Separately, the user reported successful basic source-build/link/popup
+use on a physical Windows 11 PC with Herdr 0.9.5 on 2026-10-28; the exact OS build
+and per-function checklist were not recorded. This is not managed-install or
+Windows 10/11 certification evidence. [MSVC/SDK attribution review](docs/builds.md#msvc-and-sdk-attribution-gate)
+remains open. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
+
 ### macOS release preparation
 
 The separate `.github/workflows/macos.yml` runs native checks for Apple
 Silicon (`macos-15`) and Intel (`macos-15-intel`). These are versioned standard
 [GitHub-hosted runners](https://docs.github.com/actions/reference/runners/github-hosted-runners),
 free for public repositories (documentation checked 2026-10-16), not larger paid
-runners. The existing required `Linux gates` check remains unchanged; this
-workflow does not configure additional required checks.
+runners. Its check names are `macOS Apple Silicon · Build & Tests (ARM64)` and
+`macOS Intel · Build & Tests (x86_64)`; the workflow does not itself configure
+[required-check branch protection](#public-contribution-workflow).
 
 The macOS workflow runs formatting, Clippy, Cargo tests, a release build, and all
 four complete PTY harnesses. At `fa535ba414067bae6df59d6e4394d94149ee0f4b`,
@@ -107,12 +146,12 @@ does not establish a minimum macOS version or real Herdr popup, navigation, and
 focus behavior. Exact runner OS builds and Python versions are not recorded here.
 The later exact `6f91a3f` Linux and native macOS CI also passed four full PTYs
 per platform. These historical results predate the new 0.2.0 distribution gates.
-The checkout now prepares macOS **15.0+** ARM64/Intel with explicit deployment
-target 15.0; **0.2.0 is not released**, and published 0.1.0 stays Linux-only.
+Released **0.2.0** targets macOS **15.0+** ARM64/Intel with explicit deployment
+target 15.0; published 0.1.0 stays Linux-only.
 Current native three-platform packaging, provenance/notices and isolated real-Herdr
 installation CI passed, including all four installed-binary PTYs on each target.
 See [candidate identity, artifact verification and limits](docs/builds.md#current-020-three-platform-ci-evidence).
-Independent review and final acceptance remain pending; automated installation
+At that historical checkpoint independent review and final acceptance were pending; automated installation
 does not replace the waived live-popup gate or authorize publication.
 
 ## Optional local pre-commit and pre-push checks
@@ -233,7 +272,10 @@ builders fail rather than generating host-specific distribution notices; see
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts; publication remains a separately authorized action.
-The checkout prepares unreleased `0.2.0` for three targets. Published `0.1.0` is the first regular Linux release for
+Released `0.2.0` covers the three Linux/macOS targets; Windows remains preparation
+only for intended `0.3.0`. The local package is `0.3.0`, unpublished on all four
+targets; no merge, tag or publication is authorized. Published `0.1.0` is the
+first regular Linux release for
 `x86_64-unknown-linux-gnu` only, published as Latest on 2026-10-16 with four
 [reviewed clean CI assets](docs/builds.md#regular-010-public-pipeline-evidence),
 not the local personal-path-bearing binary or reused historical assets.
@@ -342,7 +384,7 @@ evidence above.
 
 ## Automated checks
 
-`.github/workflows/ci.yml` defines one stable **Linux gates** job for pushes to
+`.github/workflows/ci.yml` defines the **Linux · Build & Tests (x86_64)** job for pushes to
 `main`, `pull_request` events, and manual `workflow_dispatch` on an existing ref,
 on the standard Ubuntu 24.04 x86_64 runner. Pull requests from both owner branches
 and forks are checked, including new commits, with no PR target-branch filter.
@@ -361,8 +403,9 @@ complete PTY harnesses through `scripts/build-linux.sh`.
 The new workflow also checks release-install helpers, obtains checksum-pinned
 Herdr 0.9.5 and runs the real managed local-fixture installation gate against the
 fresh package before uploading those exact assets. The macOS matrix performs the
-equivalent native packaging/install gates while preserving its four individual
-five-minute full-PTY steps. [Current three-platform CI evidence](docs/builds.md#current-020-three-platform-ci-evidence)
+equivalent native packaging/install gates: the packaging helper runs all four
+complete PTYs with individual 300-second deadlines, followed by separate
+installed-package acceptance. [Current three-platform CI evidence](docs/builds.md#current-020-three-platform-ci-evidence)
 confirms these gates passed; final acceptance remains separate. Historical runs
 below establish only their dated scope.
 
@@ -414,11 +457,10 @@ On 2026-10-15, the public [push run](https://github.com/eisenhauer-dev/herdr-cro
 and [pull-request run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38765043636)
 passed their Linux gates, including binary packaging and artifact upload.
 The later [pipeline download verification](docs/builds.md#downloaded-public-pipeline-verification)
-checks that historical main artifact separately. Branch protection now requires
-**Linux gates** and **PR source policy** from GitHub Actions (app ID `15368`)
-and an up-to-date branch before merging into `main`, including for administrators;
-see the [contribution workflow](#public-contribution-workflow) for the accepted
-check-conclusion limits. Local hooks alone cannot enforce this protection.
+checks that historical main artifact separately. See the
+[contribution workflow](#public-contribution-workflow) for all five required
+GitHub Actions contexts, their pending name migration and accepted check-conclusion
+limits. Local hooks alone cannot enforce this protection.
 No private-repository Actions execution is claimed or required.
 
 ## Policy implementation and verification record
@@ -429,13 +471,14 @@ start with the [contribution workflow](#public-contribution-workflow) and
 
 ### Active PR source merge gate
 
-The separate **PR source policy** job uses `pull_request_target` for `opened`,
-`synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
+The active **PR source policy** job (renamed **PR · Branch Rules** in the local
+`develop` workflow, pending an update to `main`) uses `pull_request_target` for
+`opened`, `synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
 Unlike the ordinary CI workflow, GitHub takes this workflow from the base
 repository's **default branch**, not from the PR's merge commit. The reviewed
 workflow reached `main` through [PR #7](https://github.com/eisenhauer-dev/herdr-crossroads/pull/7),
 merged at `24e60502de675ca1d6d501ae1cc03421276a03c4` on 2026-10-16.
-It leaves `Linux gates` unchanged.
+That policy introduction left the then-named `Linux gates` job unchanged.
 
 The public-only job uses the standard Ubuntu 24.04 runner, a five-minute timeout,
 and `permissions: {}`. It runs only inline Python standard-library code against

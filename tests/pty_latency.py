@@ -66,7 +66,7 @@ def main(binary):
             assert "Workspace" in initial and "Tab" in initial and "filler" in initial and "p-0000" not in initial, initial[-300:]
             for key, count in (("x", 3), ("y", 2), ("z", 1)):
                 if key == "x":
-                    os.write(master, b"/")
+                    os.write(master, b"f")
                     read_frame(master, b"Backspace: erase")
                 start = time.monotonic()
                 os.write(master, key.encode())

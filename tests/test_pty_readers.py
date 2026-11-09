@@ -1,7 +1,10 @@
 """Closed-pipe EOF and real-PTY lifecycle regressions."""
+import contextlib
+import copy
 import errno
 import os
 import pty
+import signal
 import socket
 import struct
 import subprocess
@@ -12,23 +15,75 @@ import threading
 import tty
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pty_keymaps
 import pty_render
 
+DARWIN_PENDIN = 0x20000000
+
+
+class ScreenColorTests(unittest.TestCase):
+    def test_panel_background_uses_effective_colors_through_reverse_and_reset(self):
+        raw = "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244mA\x1b[7mB\x1b[27mC\x1b[7mD\x1b[0mE"
+        lines, wraps, backgrounds = pty_render.screen(raw, 5, 1, track_panel_bg=True)
+        self.assertEqual((lines, wraps), (["ABCDE"], 0))
+        self.assertEqual(backgrounds, [[True, False, True, False, False]])
+
+    def test_reverse_swaps_indexed_selection_and_panel_foreground(self):
+        raw = "\x1b[48;5;236m\x1b[38;2;24;24;37mA\x1b[7mB\x1b[27mC"
+        self.assertEqual(pty_render.screen(raw, 3, 1, track_bg=True)[2], [[True, False, True]])
+        self.assertEqual(pty_render.screen(raw, 3, 1, track_panel_bg=True)[2], [[False, True, False]])
+
+    def test_effective_colors_keep_defaults_ansi_rgb_and_indexed_roles(self):
+        raw = "A\x1b[49;7mB\x1b[7mC\x1b[27mD\x1b[34m\x1b[48;5;236mE\x1b[7mF\x1b[39;49mG\x1b[0mH"
+        colors = pty_render.screen(raw, 8, 1, track_colors=True)[2][0]
+        normal = ("default-fg", "default-bg")
+        self.assertEqual(colors, [normal, normal[::-1], normal[::-1], normal,
+                                  (4, 236), (236, 4), normal[::-1], normal])
+        raw = "\x1b[38;2;76;79;105m\x1b[48;2;239;241;245m\x1b[7mA\x1b[27mB"
+        self.assertEqual(pty_render.screen(raw, 2, 1, track_colors=True)[2],
+                         [[((239, 241, 245), (76, 79, 105)), ((76, 79, 105), (239, 241, 245))]])
+
+    def test_cursor_and_erase_do_not_reset_reverse_or_colors(self):
+        raw = "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m\x1b[7m\x1b[H\x1b[J\x1b[1;2HA\x1b[K"
+        colors = pty_render.screen(raw, 4, 1, track_colors=True)[2]
+        self.assertEqual(colors, [[((24, 24, 37), (205, 214, 244))] * 4])
+
+    def test_panel_assertion_rejects_reverse_leaking_past_mode_badge(self):
+        badge = "MODE: SELECT"
+        row = pty_render.expected_search_row(80, "f to search", "Select")
+        prefix = "\x1b[H\x1b[J\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m"
+        raw = prefix + row.replace(badge, f"\x1b[7m{badge}\x1b[27m") + "\x1b[K\r\n\x1b[K"
+        pty_render.assert_panel_background(raw, 80, 2)
+        with self.assertRaises(AssertionError):
+            pty_render.assert_panel_background(raw.replace("\x1b[27m", ""), 80, 2)
+        for invalid in (raw.replace("\x1b[7m", ""),
+                        raw.replace("\x1b[7m", "\x1b[38;2;1;2;3m\x1b[7m"),
+                        raw.replace(" \x1b[7m", "\x1b[7m ")):
+            with self.subTest(raw=invalid), self.assertRaises(AssertionError):
+                pty_render.assert_panel_background(invalid, 80, 2)
+
 
 class TerminalRestorationDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        pendin = patch.object(termios, "PENDIN", DARWIN_PENDIN, create=True)
+        pendin.start()
+        self.addCleanup(pendin.stop)
+
     def test_equal_attributes_are_checked_once_without_reading_output(self):
         master, slave = pty.openpty()
         self.addCleanup(os.close, master)
         self.addCleanup(os.close, slave)
         saved = termios.tcgetattr(slave)
         with patch.object(pty_render.termios, "tcgetattr", return_value=saved) as attributes, \
-             patch.object(pty_render.select, "select") as ready:
-            pty_render.assert_terminal_restored(master, slave, saved, saved, b"q", "cursor")
+             patch.object(pty_render.select, "select") as ready, \
+             patch("platform.mac_ver") as version:
+            pty_render.assert_terminal_restored(master, slave, saved, saved, b"q", "cursor",
+                                                pre_close=[0], cursor_marker_observed=[0])
         attributes.assert_called_once_with(slave)
         ready.assert_not_called()
+        version.assert_not_called()
 
     def test_every_attribute_mismatch_retains_exact_equality_and_diagnostics(self):
         saved = [1, 2, 3, 4, 9600, 9600, [b"\x03", b"\x1c"]]
@@ -42,29 +97,141 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
                          patch.object(pty_render.select, "select", return_value=([123], [], [])) as ready, \
                          patch.object(pty_render.os, "read", side_effect=[b"stty: restore error\r\n", ending]), \
                          self.assertRaises(AssertionError) as failure:
-                        pty_render.assert_terminal_restored(123, 456, saved, active, b"\x1b", "notice\x1b[?25h")
+                        pty_render.assert_terminal_restored(123, 456, saved, active, b"\x1b", "notice\x1b[?25h",
+                                                            pre_close=active, cursor_marker_observed=saved)
                     attributes.assert_called_once_with(456)
                     self.assertTrue(all(call.args[-1] == 0 for call in ready.call_args_list))
                     message = str(failure.exception)
                     for expected in ("key=b'\\x1b'", f"'{name}':", f"saved={saved!r}",
                                      f"active={active!r}", f"actual={actual!r}", "platform=", "python=",
-                                     "notice\\x1b[?25h", "stty: restore error\\r\\n"):
+                                     "notice\\x1b[?25h", "stty: restore error\\r\\n", f"pre_close={active!r}",
+                                     f"cursor_marker_observed={saved!r}", f"post_exit={actual!r}"):
                         self.assertIn(expected, message)
+
+    def test_darwin_failure_reports_observation_stages_and_versions(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+        actual = saved.copy()
+        actual[3] = 536872395
+        actual[1] ^= 1
+        with patch.object(pty_render.sys, "platform", "darwin"), \
+             patch("platform.mac_ver", return_value=("15.0", ("", "", ""), "arm64")), \
+             patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
+             patch.object(pty_render.select, "select", return_value=([], [], [])), \
+             self.assertRaises(AssertionError) as failure:
+            pty_render.assert_terminal_restored(123, 456, saved, saved, b"q", "cursor")
+        attributes.assert_called_once_with(456)
+        for expected in ("pre_close=None", "cursor_marker_observed=None", f"post_exit={actual!r}",
+                         "macos='15.0'", "darwin_kernel=", "python=", "sdk=unknown"):
+            self.assertIn(expected, str(failure.exception))
+
+    def test_darwin_canonical_added_pendin_is_accepted_without_reading_or_mutation(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+        active = [0, 0, 3, 0, 9600, 9600, [b"\x00"]]
+        actual = saved.copy()
+        actual[3] = 536872395
+        for machine in ("arm64", "x86_64"):
+            for key in (b"\r", b"\x1b", b"q"):
+                for marker in (active, actual):
+                    observations = copy.deepcopy((saved, actual, active, marker))
+                    with self.subTest(machine=machine, key=key, marker=marker), \
+                         patch.object(pty_render.sys, "platform", "darwin"), \
+                         patch("platform.mac_ver", return_value=("15.0", ("", "", ""), machine)), \
+                         patch.object(pty_render.os, "uname", return_value=os.uname_result(("Darwin", "host", "24.0.0", "version", machine))), \
+                         patch.object(pty_render.termios, "tcgetattr", return_value=actual) as attributes, \
+                         patch.object(pty_render.select, "select", return_value=([], [], [])) as ready, \
+                         patch.object(pty_render.os, "read") as read:
+                        pty_render.assert_terminal_restored(123, 456, saved, active, key, "cursor",
+                                                            pre_close=active, cursor_marker_observed=marker)
+                    attributes.assert_called_once_with(456)
+                    ready.assert_not_called()
+                    read.assert_not_called()
+                    self.assertEqual((saved, actual, active, marker), observations)
+
+    def test_restoration_rejects_every_change_outside_the_narrow_darwin_exception(self):
+        saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03", b"\x1c"]]
+        cases = []
+        for index in range(7):
+            actual = saved.copy()
+            actual[3] |= DARWIN_PENDIN
+            actual[index] = [b"\x04", b"\x1c"] if index == 6 else actual[index] ^ 1
+            cases.append(("darwin", saved, actual))
+        pending = saved.copy()
+        pending[3] |= DARWIN_PENDIN
+        noncanonical = saved.copy()
+        noncanonical[3] &= ~termios.ICANON
+        noncanonical_pending = noncanonical.copy()
+        noncanonical_pending[3] |= DARWIN_PENDIN
+        cases.extend([(platform, saved, pending) for platform in ("linux", "freebsd", "win32")])
+        cases.extend([("darwin", pending, saved), ("darwin", noncanonical, noncanonical_pending)])
+        for platform, expected, actual in cases:
+            with self.subTest(platform=platform, expected=expected, actual=actual), \
+                 patch.object(pty_render.sys, "platform", platform), \
+                 patch.object(pty_render.termios, "tcgetattr", return_value=actual), \
+                 patch.object(pty_render.select, "select", return_value=([], [], [])), \
+                 self.assertRaises(AssertionError):
+                pty_render.assert_terminal_restored(123, 456, expected, [0] * 7, b"q", "cursor")
+
+    def test_exact_equality_including_original_pendin_is_accepted_on_every_platform(self):
+        for platform in ("darwin", "linux", "freebsd", "win32"):
+            for lflag in (1483, 1483 | DARWIN_PENDIN, 0, DARWIN_PENDIN):
+                saved = [1, 2, 3, lflag, 9600, 9600, [b"\x03"]]
+                with self.subTest(platform=platform, lflag=lflag), \
+                     patch.object(pty_render.sys, "platform", platform), \
+                     patch.object(pty_render.termios, "tcgetattr", return_value=saved), \
+                     patch.object(pty_render.select, "select") as ready:
+                    pty_render.assert_terminal_restored(123, 456, saved, [0] * 7, b"q", "cursor")
+                ready.assert_not_called()
+
+    def test_popup_finish_uses_the_same_restoration_contract_and_keeps_cleanup_modes(self):
+        for kitty in (False, True):
+            for changed in (False, True):
+                saved = [1, 2, 3, 1483, 9600, 9600, [b"\x03"]]
+                actual = saved.copy()
+                actual[3] |= DARWIN_PENDIN
+                if changed:
+                    actual[2] ^= 1
+                popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
+                popup.master, popup.slave = pty.openpty()
+                fds = (popup.master, popup.slave)
+                popup.kitty = kitty
+                popup.saved_termios = saved
+                popup.child = Mock(returncode=0)
+                popup.child.poll.return_value = 0
+                popup.output = pty_keymaps.DrawReader(popup.master)
+                popup.output.pending = bytearray(b"\x1b[?1003l\x1b[?1006l\x1b[?25h" + (b"\x1b[<u" if kitty else b""))
+                with self.subTest(kitty=kitty, additional_change=changed), \
+                     patch.object(pty_keymaps.sys, "platform", "darwin"), \
+                     patch.object(pty_keymaps.termios, "tcgetattr", return_value=actual) as attributes, \
+                     patch.object(pty_keymaps, "drain", return_value=b""), \
+                     (self.assertRaisesRegex(AssertionError, "terminal restoration failed") if changed else contextlib.nullcontext()):
+                    popup.finish(b"q", expect_mouse=True)
+                attributes.assert_called_once_with(fds[1])
+                for fd in fds:
+                    with self.assertRaises(OSError):
+                        os.fstat(fd)
 
 
 class SearchCursorFrameTests(unittest.TestCase):
     @staticmethod
     def draw(width, mode, text, cursor_x):
+        mode = f"MODE: {mode.upper()}"
         row = "  Search: " + text
         row += " " * (width - 2 - len(mode) - sum(2 if c == "界" else 1 for c in row)) + mode
         return f"\x1b[H\x1b[J{row}\x1b[1;{cursor_x + 1}H\x1b[?25h".encode()
 
-    def run_cases(self, delivery, times_out=False, pending=b"", parsing_cost=False):
+    def run_cases(self, delivery, times_out=False, pending=b"", parsing_cost=False,
+                  target_query="x" * 200, unicode_cost=0):
         now = 0.0
         emissions = []
         popups = []
         test = self
         screen = pty_render.screen
+        combining = pty_render.unicodedata.combining
+
+        def character_width(char):
+            nonlocal now
+            now += unicode_cost
+            return combining(char)
 
         def parse(raw, *args, **kwargs):
             nonlocal now
@@ -75,18 +242,23 @@ class SearchCursorFrameTests(unittest.TestCase):
 
         class Popup:
             def __init__(self, binary, directory, width, height):
+                nonlocal now
+                now = 0.0  # Each child has its own modeled deadline/clock origin.
                 self.master, self.width, self.height = 123, width, height
                 self.output = pty_keymaps.DrawReader(self.master)
-                self.mode = "Search"
+                self.mode = "Select"
                 popups.append(self)
 
             def send(self, data):
                 if data == b"?":
                     self.mode = "Help"
+                elif data == b"t":
+                    self.mode = "Themes"
 
             def finish(self, key):
                 test.assertFalse(emissions, "final query draw was not consumed")
-                test.assertEqual(bytes(self.output.pending), pending if self.width == 142 and self.mode == "Search" and self.query == "x" * 200 else b"")
+                test.assertLessEqual(now, 3, "query parsing exceeded the original deadline")
+                test.assertEqual(bytes(self.output.pending), pending if self.width == 142 and self.mode == "Select" and self.query == target_query else b"")
 
             def abort(self):
                 pass
@@ -95,17 +267,26 @@ class SearchCursorFrameTests(unittest.TestCase):
             popup = popups[-1]
             query = "" if data == b"\x7f" else data.decode()
             popup.query = query
-            budget = popup.width - 4 - len(popup.mode) - 1
+            budget = popup.width - 4 - len(f"MODE: {popup.mode.upper()}") - 1
+            query_budget = budget - 9
             if len(query) < 10:
                 text, x = query, 10 + len(query)
             elif query.startswith("界"):
-                count = (budget - 10) // 2
-                text, x = "界" * count + "…", 11 + 2 * count
+                count = (query_budget - 1) // 2
+                text, x = "界" * count + "Z", 11 + 2 * count
+            elif query.startswith("e\u0301"):
+                text, x = "e" * (query_budget - 1) + "Z", budget + 1
+            elif query.startswith("old"):
+                text, x = query[-query_budget:], budget + 1
             else:
-                text, x = "x" * (budget - 10) + "…", budget + 1
+                text, x = "x" * query_budget, budget + 1
             final = self.draw(popup.width, popup.mode, text, x)
-            if popup.width == 142 and popup.mode == "Search" and query == "x" * 200:
-                intermediate = self.draw(142, "Search", "x" * 104, 114)
+            if query.startswith("e\u0301"):
+                final = final.replace(("e" * (query_budget - 1) + "Z").encode(),
+                                      ("e\u0301" * (query_budget - 1) + "Z").encode())
+            if popup.width == 142 and popup.mode == "Select" and query == target_query:
+                intermediate = (final.replace(b"Z", b"e") if query.startswith("e\u0301")
+                                else self.draw(142, "Select", "x" * 104, 114))
                 emissions.extend(delivery(now, intermediate, final))
             else:
                 emissions.append((now, final))
@@ -130,6 +311,7 @@ class SearchCursorFrameTests(unittest.TestCase):
 
         with patch.object(pty_keymaps, "Popup", Popup), \
              patch.object(pty_render, "screen", side_effect=parse), \
+             patch.object(pty_render.unicodedata, "combining", side_effect=character_width), \
              patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
              patch.object(pty_render.select, "select", side_effect=ready), \
              patch.object(pty_render.os, "read", side_effect=read), \
@@ -160,7 +342,7 @@ class SearchCursorFrameTests(unittest.TestCase):
     def test_wrong_query_or_cursor_cannot_satisfy_final_state(self):
         for invalid in (
             lambda final: final.replace(b"xxxxx", b"yyyyy", 1),
-            lambda final: final.replace(b"\x1b[1;133H", b"\x1b[1;132H"),
+            lambda final: final.replace(b"\x1b[1;127H", b"\x1b[1;126H"),
         ):
             with self.subTest(invalid=invalid):
                 self.run_cases(lambda now, intermediate, final: [(now, invalid(final))], times_out=True)
@@ -182,6 +364,140 @@ class SearchCursorFrameTests(unittest.TestCase):
         self.run_cases(lambda now, intermediate, final: [
             (now, intermediate * 100), (now + 2.5, final),
         ], parsing_cost=True)
+
+    def test_full_unicode_query_repaints_do_not_spend_deadline_on_ascii_widths(self):
+        def delivery(now, intermediate, final):
+            def full_frame(raw):
+                cursor = raw.rfind(b"\x1b[1;")
+                body = (b"\r\n" + b" " * 141 + b"\x1b[K") * 29
+                return raw[:cursor] + body + raw[cursor:]
+
+            return [(now, full_frame(intermediate)) for _ in range(400)] + [(now, full_frame(final))]
+
+        # Charge two microseconds per Unicode lookup, independently of host CPU.
+        # All 401 full-height draws must be consumed before the unchanged 3s limit.
+        self.run_cases(delivery, target_query="e\u0301" * 200 + "Z", unicode_cost=0.000002)
+
+
+class MouseReadinessTests(unittest.TestCase):
+    def run_mouse_help(self, delivery="delayed", missing=False, missing_wheel=False):
+        now = 0.0
+        emissions = []
+        sent = []
+        panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
+
+        def paint(query="f to search", searching=False, help_view=False, selected=0):
+            names = ("pane 3", "pane 4", "pane 1", "pane 2") if query == "pane" else ("codex",) if query != "f to search" else panes
+            lines = [pty_keymaps.expected_search_row(120, query, "Help" if help_view else "Select"),
+                     "  Keys — Select" if help_view else "  " + "─" * 116,
+                     f"    {'Workspace':12} {'Tab':8} {'Agent/Pane Name':24} Status",
+                     "  " + "─" * 116]
+            lines.extend(f"  {'>' if index == selected else ' '} {'Same':12} {'Same':8} {name:24} idle"
+                         for index, name in enumerate(names))
+            lines.append("  " + "─" * 116)
+            lines.extend([""] * (29 - len(lines)))
+            lines.append("  Enter/Esc: select  Backspace: erase" if searching else "  Esc: exit · ?: keys")
+            cursor = f"\x1b[1;{11 + len(query)}H\x1b[?25h" if searching else "\x1b[?25l"
+            return ("\x1b[?1003h\x1b[?1006h\x1b[H\x1b[J" + "\r\n".join(lines) + cursor).encode()
+
+        popup = pty_keymaps.Popup.__new__(pty_keymaps.Popup)
+        popup.master, popup.width, popup.height = 123, 120, 30
+        popup.initial = paint().decode()
+        popup.output = pty_keymaps.DrawReader(popup.master)
+        popup.abort = Mock()
+
+        class HelpObserved(Exception):
+            pass
+
+        def write(fd, data):
+            sent.append(data)
+            if len(sent) == 1:
+                emissions.append((now, paint("", searching=True)))
+            elif len(sent) == 2:
+                self.assertEqual(data, b"pane")
+                emissions.append((now, paint("pane", searching=True)))
+            elif 3 <= len(sent) <= 6:
+                index = len(sent) - 3
+                button, selected, previous = [(64, 3, 0), (65, 0, 3), (65, 1, 0), (64, 0, 1)][index]
+                self.assertEqual(data, pty_keymaps.mouse_report(5, 5, button=button))
+                self.assertEqual(len(emissions), 0, "next wheel sent before matching selection/query/cursor")
+                self.assertEqual(popup.output.pending, b"", "stale wheel draw was accepted")
+                final = paint("pane", searching=True, selected=selected)
+                # The right query/cursor with the old selection, or the right
+                # selection with a wrong query/cursor, cannot complete a wheel.
+                stale = paint("pane", searching=True, selected=previous)
+                wrong_query = final.replace(b"Search: pane", b"Search: panj")
+                wrong_cursor = final.replace(b"[1;15H", b"[1;14H")
+                emissions.append((now, stale + wrong_query + wrong_cursor))
+                if not missing_wheel:
+                    emissions.append((now, final))
+            elif len(sent) == 7:
+                self.assertEqual(data, b"\x7f" * 4)
+                self.assertEqual(len(emissions), 0)
+                self.assertEqual(popup.output.pending, b"")
+                emissions.append((now, paint("", searching=True)))
+            elif len(sent) == 8:
+                self.assertEqual(data, b"codex")
+                # Each key repaints; a gap longer than 10ms is not completion.
+                frames = [paint("codex"[:index], searching=True) for index in range(1, 6)]
+                if delivery in ("coalesced", "stale Select"):
+                    emissions.append((now, b"".join(frames)))
+                elif delivery == "fragmented":
+                    emissions.extend([(now, b"".join(frames)[:-1]), (now + 0.1, frames[-1][-1:])])
+                elif delivery == "wrong cursor":
+                    emissions.append((now, frames[-1].replace(b"[1;16H", b"[1;15H")))
+                    if not missing:
+                        emissions.append((now + 0.1, frames[-1]))
+                else:
+                    emissions.extend((now + index * 0.02, frame) for index, frame in enumerate(frames, 1))
+            elif len(sent) == 9:
+                self.assertEqual(len(emissions), 0, "search return sent before the complete query draw")
+                # A late editing repaint has the same MODE: SELECT badge.
+                emissions.append((now, paint("codex", searching=True) + paint("codex")))
+            elif len(sent) == 10:
+                self.assertEqual(len(emissions), 0, "Help click sent before search return was observed")
+                self.assertEqual(popup.output.pending, b"", "editing repaint was mistaken for search return")
+                if delivery == "stale Select":
+                    emissions.extend([(now, paint("codex")), (now + 0.02, paint("f to search", help_view=True))])
+                else:
+                    emissions.append((now, paint("codex") + paint("f to search", help_view=True)))
+            else:
+                self.assertEqual(popup.output.pending, b"", "pre-Help Select repaint was mistaken for Help")
+                raise HelpObserved
+            return len(data)
+
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            if emissions and emissions[0][0] <= now + timeout:
+                now = max(now, emissions[0][0])
+                return readers, [], []
+            now += timeout
+            return [], [], []
+
+        with patch.object(pty_keymaps, "Popup", return_value=popup), \
+             patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_keymaps.select, "select", side_effect=ready), \
+             patch.object(pty_keymaps.os, "read", side_effect=lambda fd, size: emissions.pop(0)[1]), \
+             patch.object(pty_keymaps.os, "write", side_effect=write):
+            with self.assertRaisesRegex(AssertionError, "bytearray") if missing or missing_wheel else self.assertRaises(HelpObserved):
+                pty_keymaps.mouse_cases("unused", Path("unused"))
+        self.assertEqual(len(sent), 3 if missing_wheel else 8 if missing else 11)
+        if missing or missing_wheel:
+            self.assertEqual(now, 3.0, "query repaints extended the original deadline")
+
+    def test_mouse_help_waits_for_typing_and_search_return_before_next_click(self):
+        for delivery in ("delayed", "coalesced", "fragmented", "wrong cursor"):
+            with self.subTest(delivery=delivery):
+                self.run_mouse_help(delivery)
+
+    def test_mouse_query_with_wrong_cursor_cannot_advance_to_search_return(self):
+        self.run_mouse_help("wrong cursor", missing=True)
+
+    def test_pre_help_select_repaint_is_not_the_help_click_result(self):
+        self.run_mouse_help("stale Select")
+
+    def test_wheel_requires_matching_selection_query_and_editing_cursor(self):
+        self.run_mouse_help(missing_wheel=True)
 
 
 class ReaderEofTests(unittest.TestCase):
@@ -244,11 +560,32 @@ finally:
     def test_drain_empty_eof(self):
         self.check_reader("drain(reader)", expected=b"")
 
+    def test_ready_drain_preserves_eof_tail_and_pty_errors(self):
+        self.check_reader("drain(reader, timeout=0)", b"tail\x1b[?25h", b"tail\x1b[?25h")
+        self.check_reader("drain(reader, timeout=0)", expected=b"")
+        for number in (errno.EIO, errno.EBADF):
+            with self.subTest(errno=number), \
+                 patch.object(pty_keymaps.select, "select", return_value=([123], [], [])), \
+                 patch.object(pty_keymaps.os, "read", side_effect=[b"tail", OSError(number, "read failure")]):
+                if number == errno.EIO:
+                    self.assertEqual(pty_keymaps.drain(123, timeout=0), b"tail")
+                else:
+                    with self.assertRaises(OSError) as failure:
+                        pty_keymaps.drain(123, timeout=0)
+                    self.assertEqual(failure.exception.errno, number)
+
+    def test_live_drain_keeps_waiting_for_a_full_quiet_window(self):
+        chunks = iter((b"first", b"late"))
+        with patch.object(pty_keymaps.select, "select", side_effect=[([123], [], []), ([123], [], []), ([], [], [])]) as ready, \
+             patch.object(pty_keymaps.os, "read", side_effect=lambda fd, size: next(chunks)):
+            self.assertEqual(pty_keymaps.drain(123), b"firstlate")
+        self.assertEqual([call.args[-1] for call in ready.call_args_list], [0.2] * 3)
+
 
 class EscapeObservationTests(unittest.TestCase):
     @staticmethod
     def frame(searching=True, query="codex", cursor=None, help_search=False):
-        header = pty_keymaps.expected_search_row(80, query, "Help" if help_search else "Search" if searching else "Select")
+        header = pty_keymaps.expected_search_row(80, query, "Help" if help_search else "Select")
         footer = "  Enter/Esc: return · Backspace: erase" if searching else "q: close keys" if help_search else "q: close"
         if cursor is None:
             cursor = b"\x1b[1;16H\x1b[?25h" if searching else b"\x1b[?25l"
@@ -499,11 +836,13 @@ class PopupLifecycleTests(unittest.TestCase):
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
 
-    def child(self, kitty=False, status=0, restore=True, initial=True, linger=False, repaint=False):
+    def child(self, kitty=False, status=0, restore=True, initial=True, linger=False, repaint=False, tail=None, delay=0):
         first_frame = ((b"\x1b[>1u" if kitty else b"") + b"frame\x1b[?25l") if initial else b"bad frame\x1b[?25l"
-        tail = (b"\x1b[<u" if kitty else b"") + (b"\x1b[?25h" if restore else b"")
+        if tail is None:
+            tail = (b"\x1b[<u" if kitty else b"") + (b"\x1b[?25h" if restore else b"")
         self.binary.write_text(f"""#!{sys.executable}
 import os
+import time
 import tty
 tty.setraw(0)
 os.write(1, b'\\x1b[?u')
@@ -520,6 +859,7 @@ if {repaint!r}:
     pending = b'x' * 262144
     while pending:
         pending = pending[os.write(1, pending):]
+time.sleep({delay!r})
 os.write(1, {tail!r})
 raise SystemExit({status})
 """)
@@ -555,14 +895,14 @@ raise SystemExit({status})
                         output.extend(chunk)
                     return chunk
 
-                def check_drain(fd):
+                def check_drain(fd, **kwargs):
                     self.assertIsNotNone(popup.child.returncode)
                     try:
                         os.fstat(slave)
                     except OSError:
                         self.fail("parent slave closed before post-exit tail drain")
                     self.assertEqual(fd, master)
-                    tail = drain(fd)
+                    tail = drain(fd, **kwargs)
                     self.assertEqual(output, (b"\x1b[<u" if kitty else b"") + b"\x1b[?25h")
                     return tail
 
@@ -588,6 +928,68 @@ raise SystemExit({status})
             finally:
                 os.close(reader)
                 os.close(writer)
+
+    def test_completed_child_drains_all_queued_chunks_without_a_quiet_wait(self):
+        for kitty in (False, True):
+            with self.subTest(kitty=kitty):
+                tail = b"queued" * 100 + (b"\x1b[<u" if kitty else b"") + b"trailing diagnostic"
+                self.child(kitty=kitty, tail=tail)
+                popup = self.popup(kitty=kitty)
+                popup.output.pending.extend(b"read ahead\x1b[?25h")
+                write, read, select = os.write, os.read, pty_keymaps.select.select
+                received = bytearray()
+
+                def exit_before_poll(fd, key):
+                    result = write(fd, key)
+                    popup.child.wait(timeout=3)
+                    return result
+
+                def ready(readers, writers, errors, timeout):
+                    self.assertIsNotNone(popup.child.returncode)
+                    self.assertEqual(timeout, 0, "completed writer must not incur a quiet wait")
+                    os.fstat(popup.slave)
+                    return select(readers, writers, errors, timeout)
+
+                def small_read(fd, size):
+                    chunk = read(fd, min(size, 7))
+                    received.extend(chunk)
+                    return chunk
+
+                with patch.object(pty_keymaps.os, "write", side_effect=exit_before_poll), \
+                     patch.object(pty_keymaps.os, "read", side_effect=small_read), \
+                     patch.object(pty_keymaps.select, "select", side_effect=ready):
+                    popup.finish(b"q")
+                self.assertEqual(received, tail)
+                self.assertEqual(popup.output.pending, b"")
+                self.assert_closed()
+
+    def test_late_output_before_exit_is_collected_without_shortening_live_wait(self):
+        self.child(kitty=True, delay=0.25)
+        popup = self.popup(kitty=True)
+        popup.finish(b"q")
+        self.assertEqual(popup.child.returncode, 0)
+        self.assert_closed()
+
+    def test_finish_rejects_missing_or_duplicate_kitty_pop_with_complete_tail(self):
+        for count in (0, 2):
+            with self.subTest(pop_count=count):
+                tail = b"\x1b[<u" * count + b"\x1b[?25htrailing diagnostic"
+                self.child(kitty=True, tail=tail)
+                popup = self.popup(kitty=True)
+                with self.assertRaises(AssertionError) as failure:
+                    popup.finish(b"q")
+                self.assertEqual(failure.exception.args, (bytearray(tail),))
+                self.assertIsNotNone(popup.child.returncode)
+                self.assert_closed()
+
+    def test_stopped_live_child_times_out_and_is_reaped(self):
+        self.child()
+        popup = self.popup()
+        os.kill(popup.child.pid, signal.SIGSTOP)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            popup.finish(b"q")
+        self.assertIsNotNone(popup.child.returncode)
+        self.assert_closed()
 
     def test_finish_drains_repaint_larger_than_pty_queue_before_exit(self):
         for kitty in (False, True):

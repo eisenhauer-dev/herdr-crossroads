@@ -6,7 +6,7 @@ use crate::test_support::ui;
 fn help_search_keeps_letters_as_text_and_arrows_do_not_cycle() {
     let mut state = ui();
     state.key(Key::Char('?'));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for key in [Key::Up, Key::Down, Key::Char('j'), Key::Char('k')] {
         assert!(state.key(key).is_none());
         assert_eq!(state.help.selected, Some(0));
@@ -22,9 +22,9 @@ fn last_help_entry_wraps_forward_to_first_match() {
     let mut state = ui();
     state.key(Key::Char('?'));
     state.help.query = "search".into();
-    state.help.selected = Some(7);
+    state.help.selected = Some(14);
     assert!(state.key(Key::Down).is_none());
-    assert_eq!(state.help.selected, Some(6));
+    assert_eq!(state.help.selected, Some(7));
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn help_has_independent_search_and_fixed_table_chrome() {
     state.query = "Claude".into();
     state.key(Key::Char('?'));
     let lines = state.layout(80, 15, false);
-    assert!(lines[0].starts_with("  Search: / to search") && lines[0].ends_with("Help"));
+    assert!(lines[0].starts_with("  Search: f to search") && lines[0].ends_with("MODE: HELP"));
     assert_eq!(lines[1], "  Keys — Select");
     assert!(lines[2].starts_with("  ─"), "{lines:?}");
     assert!(
@@ -100,7 +100,7 @@ fn help_has_independent_search_and_fixed_table_chrome() {
         "{lines:?}"
     );
     assert!(!lines.iter().any(|line| line.contains("Claude")));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     for c in "focus".chars() {
         state.key(Key::Char(c));
     }
@@ -133,22 +133,29 @@ fn help_filter_matches_columns_independently_in_original_order() {
             ("k/↑", "previous pane"),
             ("h/←", "previous tab"),
             ("l/→", "next tab"),
-            ("→ Tab | ← Shift+Tab", "next/previous workspace"),
+            ("Tab", "next workspace"),
+            ("Shift+Tab", "previous workspace"),
             ("Enter", "focus selected pane"),
-            ("/", "search"),
+            ("f", "search"),
             ("r", "reset search"),
             ("t", "choose theme"),
             ("?", "show keys"),
-            ("Esc/q", "close Crossroads")
+            ("Esc/q", "close Crossroads"),
+            ("Hover", "highlight row; theme preview only, never activate"),
+            (
+                "Left click",
+                "focus clicked pane; Help runs action; footer or search"
+            ),
+            ("Wheel", "highlight previous or next row, including search")
         ]
     );
     for (query, expected) in [
-        ("DN", vec![5]),
-        ("PRVP", vec![1, 4]),
-        ("search", vec![6, 7]),
+        ("DN", vec![6, 13, 14]),
+        ("PRVP", vec![1, 5]),
+        ("search", vec![7, 8, 13, 14]),
         ("jnext", vec![]),
         ("Navigation", vec![]),
-        ("Actions", vec![]),
+        ("Actions", vec![13]),
         ("not-a-key", vec![]),
     ] {
         state.help.query = query.into();
@@ -187,11 +194,11 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
             state.key(Key::Down);
             state.terminal_frame(80, 15);
         }
-        assert_eq!(state.help.selected, Some(10));
+        assert_eq!(state.help.selected, Some(14));
         assert!(state.help.viewport_start.get() > 0);
-        assert!(state.key(Key::Enter).is_none());
+        assert!(state.key(Key::Ctrl('m')).is_none());
         assert!(!state.closed && state.mode == Mode::Help);
-        state.key(Key::Char('/'));
+        state.key(Key::Char('f'));
         for c in "qr?é".chars() {
             state.key(Key::Char(c));
         }
@@ -206,8 +213,8 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
         assert!(!state.help.searching && state.mode == Mode::Help);
         state.key(Key::Char('r'));
         assert!(state.help.query.is_empty());
-        assert_eq!(state.help.selected, Some(10));
-        state.key(Key::Char('/'));
+        assert_eq!(state.help.selected, Some(14));
+        state.key(Key::Char('f'));
         state.key(Key::Char('t'));
         state.key(Key::Enter);
         assert!(!state.help.searching && state.help.query == "t");
@@ -235,7 +242,7 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
 #[test]
 fn help_navigation_wraps_reset_keeps_visible_entry_and_search_treats_question_as_text() {
     let mut state = ui();
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(Key::Char('?'));
     assert_eq!(state.mode, Mode::Search);
     assert_eq!(state.query, "?");
@@ -248,18 +255,18 @@ fn help_navigation_wraps_reset_keeps_visible_entry_and_search_treats_question_as
     state.key(Key::Esc);
     state.key(Key::Char('?'));
     state.key(Key::Up);
-    assert_eq!(state.help.selected, Some(10));
+    assert_eq!(state.help.selected, Some(14));
     state.help.query = "search".into();
     state.key(Key::Char('j'));
     assert_eq!(state.help.selected, Some(7));
     state.key(Key::Down);
-    assert_eq!(state.help.selected, Some(6));
+    assert_eq!(state.help.selected, Some(8));
     state.key(Key::Char('k'));
     assert_eq!(state.help.selected, Some(7));
     state.key(Key::Up);
-    assert_eq!(state.help.selected, Some(6));
+    assert_eq!(state.help.selected, Some(14));
     state.key(Key::Char('r'));
-    assert_eq!(state.help.selected, Some(6));
+    assert_eq!(state.help.selected, Some(14));
     assert!(state.help.query.is_empty());
 }
 
@@ -300,10 +307,19 @@ fn themes_help_preserves_pending_preview_and_pane_state_without_saving() {
                     ("Space", "toggle list/table preview"),
                     ("Enter", "save theme"),
                     ("Esc/q", "cancel theme selection"),
-                    ("?", "show keys")
+                    ("?", "show keys"),
+                    ("Hover", "highlight row; theme preview only, never activate"),
+                    (
+                        "Left click",
+                        "save theme or focus pane; Help runs action; footer or search"
+                    ),
+                    (
+                        "Wheel",
+                        "preview theme; Help/search highlights next or previous row"
+                    )
                 ]
             );
-            state.key(Key::Char('/'));
+            state.key(Key::Char('f'));
             state.key(Key::Char('?'));
             assert_eq!(state.help.query, "?");
             state.terminal_frame(80, 15);
@@ -346,13 +362,23 @@ fn themes_help_uses_effective_caller_bindings_and_configured_help_controls() {
             .iter()
             .map(|e| e.keys.as_str())
             .collect::<Vec<_>>(),
-        ["N/→", "P", "v", "s", "c", "H"]
+        [
+            "N/→",
+            "P",
+            "v",
+            "s",
+            "c",
+            "H",
+            "Hover",
+            "Left click",
+            "Wheel"
+        ]
     );
     state.key(Key::Char('n'));
     assert_eq!(state.help.selected, Some(1));
     state.key(Key::Char('f'));
     state.key(Key::Char('s'));
-    assert_eq!(state.help.visible(), [1, 2, 3, 4, 5]);
+    assert_eq!(state.help.visible(), [1, 2, 3, 4, 5, 7, 8]);
     state.key(Key::Esc);
     state.key(Key::Char('x'));
     assert_eq!(state.mode, Mode::Themes);
@@ -365,7 +391,7 @@ fn help_status_updates_do_not_change_help_or_pane_navigation() {
     state.query = "Claude".into();
     let selected = state.selected.clone();
     state.key(Key::Char('?'));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(Key::Char('r'));
     let before = state.terminal_frame(80, 15);
     assert!(state.status_event(

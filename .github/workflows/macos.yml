@@ -1,4 +1,4 @@
-name: macOS preparation
+name: macOS
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   macos:
-    name: macOS preparation (${{ matrix.host }})
+    name: ${{ matrix.platform }} · Build & Tests (${{ matrix.arch }})
     if: github.event.repository.private == false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -20,9 +20,13 @@ jobs:
       matrix:
         include:
           - runner: macos-15
+            platform: macOS Apple Silicon
+            arch: ARM64
             machine: arm64
             host: aarch64-apple-darwin
           - runner: macos-15-intel
+            platform: macOS Intel
+            arch: x86_64
             machine: x86_64
             host: x86_64-apple-darwin
     defaults:
@@ -51,6 +55,9 @@ jobs:
           test ! -L /tmp/opencode
           mkdir -p -m 700 /tmp/opencode
           test -O /tmp/opencode && test -w /tmp/opencode
+      - name: Observe native terminal restoration without a reader
+        timeout-minutes: 1
+        run: python3 tests/diagnose_darwin_terminal.py
       - name: Check workflow contract
         run: python3 tests/test_macos_workflow.py
       - name: Check formatting
@@ -60,7 +67,9 @@ jobs:
       - name: Run Cargo tests
         run: cargo test --locked
       - name: Check buffered PTY reader regressions
-        run: python3 -B -m unittest discover -s tests -p test_pty_readers.py
+        run: |
+          python3 -B -m unittest discover -s tests -p test_pty_readers.py
+          python3 -B -m unittest discover -s tests -p test_darwin_terminal_diagnostics.py
       - name: Check release and installation helpers
         run: |
           python3 tests/test_version.py
@@ -69,20 +78,6 @@ jobs:
           python3 tests/test_install_binary.py
           python3 tests/test_setup_keybind.py
           python3 tests/test_release_install_helpers.py
-      - name: Build native release binary
-        run: cargo build --release --locked
-      - name: Run full release PTY latency gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_latency.py target/release/herdr-crossroads
-      - name: Run full release PTY render gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_render.py target/release/herdr-crossroads
-      - name: Run full release PTY keymaps gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_keymaps.py target/release/herdr-crossroads
-      - name: Run full release PTY hints gate
-        timeout-minutes: 5
-        run: python3 -u tests/pty_hints.py target/release/herdr-crossroads
       - name: Build, test, and package native macOS binary
         id: package
         run: |

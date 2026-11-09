@@ -1,18 +1,42 @@
 use ratatui::buffer::CellWidth;
+use ratatui::{style::Style, text::Span};
 
 use super::{clipped, columns, wrapped};
-use crate::keymap::Context;
-use crate::selection::{Mode, Ui};
+use crate::input::Key;
+use crate::keymap::{Action, Context};
+use crate::selection::{Hit, Mode, Ui};
 
 impl Ui {
     pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
-        let badge = match self.mode {
-            Mode::Select => "Select",
-            Mode::Search => "Search",
-            Mode::Help => "Help",
-            Mode::Themes => "Themes",
+        let badge = match if self.mode == Mode::Search {
+            self.search_return
+        } else {
+            self.mode
+        } {
+            Mode::Select | Mode::Search => "MODE: SELECT",
+            Mode::Help => "MODE: HELP",
+            Mode::Themes => "MODE: THEMES",
         };
         (badge, width.saturating_sub(4 + badge.len() + 1))
+    }
+
+    pub(crate) fn search_text(&self, query: &str, width: usize) -> String {
+        let (_, available) = self.search_prompt_geometry(width);
+        let label = clipped("Search: ", available.saturating_sub(1));
+        let budget = available.saturating_sub(label.cell_width() as usize + 1);
+        let source = Span::raw(query);
+        let graphemes: Vec<_> = source.styled_graphemes(Style::default()).collect();
+        let mut start = query.len();
+        let mut used = 0;
+        for grapheme in graphemes.iter().rev() {
+            let cells = grapheme.symbol.cell_width() as usize;
+            if used + cells > budget {
+                break;
+            }
+            used += cells;
+            start -= grapheme.symbol.len();
+        }
+        format!("{label}{}", &query[start..])
     }
 
     pub(super) fn search_prompt(
@@ -21,10 +45,11 @@ impl Ui {
         query: &str,
         searching: bool,
         width: usize,
+        ansi: bool,
     ) -> String {
         let (badge, available) = self.search_prompt_geometry(width);
         let text = if !query.is_empty() || searching {
-            clipped(&format!("Search: {query}"), available)
+            self.search_text(query, width)
         } else {
             let text = format!(
                 "Search: {} to search",
@@ -37,54 +62,66 @@ impl Ui {
             clipped(&pages[self.hint_scroll.get() % pages.len()], available)
         };
         format!(
-            "{text}{}{badge}",
-            " ".repeat(available.saturating_sub(text.cell_width() as usize) + 1)
+            "{text}{}{}{badge}{}",
+            " ".repeat(available.saturating_sub(text.cell_width() as usize) + 1),
+            if ansi { "\x1b[7m" } else { "" },
+            if ansi { "\x1b[27m" } else { "" }
         )
     }
 
-    fn hint_lines(&self, context: Context, width: usize) -> Vec<String> {
-        let actions: &[(&str, &str)] = match context {
+    fn hint_lines(&self, context: Context, width: usize) -> Vec<Vec<(String, Hit)>> {
+        let actions: &[(Hit, &str)] = match context {
             Context::Select => &[
-                ("next_row", "↓pane"),
-                ("previous_row", "↑pane"),
-                ("previous_tab", "↑tab"),
-                ("next_tab", "↓tab"),
-                ("next_workspace", "↓ws"),
-                ("previous_workspace", "↑ws"),
-                ("focus_pane", "focus"),
-                ("close", "exit"),
-                ("open_help", "keys"),
+                (Hit::Action(Action::NextRow), "↓pane"),
+                (Hit::Action(Action::PreviousRow), "↑pane"),
+                (Hit::Action(Action::PreviousTab), "↑tab"),
+                (Hit::Action(Action::NextTab), "↓tab"),
+                (Hit::Action(Action::NextWorkspace), "↓ws"),
+                (Hit::Action(Action::PreviousWorkspace), "↑ws"),
+                (Hit::Action(Action::FocusPane), "focus"),
+                (Hit::Action(Action::Close), "exit"),
+                (Hit::Action(Action::OpenHelp), "keys"),
             ],
             Context::Help => &[
-                ("next_category", "↓move"),
-                ("previous_category", "↑move"),
-                ("close", "close keys"),
+                (Hit::Action(Action::NextCategory), "↓move"),
+                (Hit::Action(Action::PreviousCategory), "↑move"),
+                (Hit::Key(Key::Enter), "run"),
+                (Hit::Action(Action::Close), "close keys"),
             ],
             Context::Themes => &[
-                ("next_theme", "↓theme"),
-                ("previous_theme", "↑theme"),
+                (Hit::Action(Action::NextTheme), "↓theme"),
+                (Hit::Action(Action::PreviousTheme), "↑theme"),
                 (
-                    "toggle_preview",
+                    Hit::Action(Action::TogglePreview),
                     if self.theme_table_preview {
                         "list"
                     } else {
                         "table"
                     },
                 ),
-                ("save", "save"),
-                ("cancel", "cancel"),
+                (Hit::Action(Action::Save), "save"),
+                (Hit::Action(Action::Cancel), "cancel"),
             ],
         };
-        let mut lines: Vec<String> = Vec::new();
-        for &(action, meaning) in actions {
-            let unit = format!("{}: {meaning}", self.keymap.footer_labels(context, action));
+        let mut lines: Vec<Vec<(String, Hit)>> = Vec::new();
+        for (hit, meaning) in actions {
+            let unit = format!(
+                "{}: {meaning}",
+                match hit {
+                    Hit::Action(action) => self.keymap.footer_labels(context, action.name()),
+                    Hit::Key(Key::Enter) => "Enter".to_owned(),
+                    _ => unreachable!(),
+                }
+            );
             if let Some(line) = lines.last_mut().filter(|line| {
-                columns(line) + columns(" · ") + columns(&unit) <= width.saturating_sub(4)
+                line.iter().map(|(text, _)| columns(text)).sum::<usize>()
+                    + line.len() * columns(" · ")
+                    + columns(&unit)
+                    <= width.saturating_sub(4)
             }) {
-                line.push_str(" · ");
-                line.push_str(&unit);
+                line.push((unit, hit.clone()));
             } else {
-                lines.push(unit);
+                lines.push(vec![(unit, hit.clone())]);
             }
         }
         lines
@@ -114,12 +151,24 @@ impl Ui {
             )
     }
 
+    #[cfg(test)]
     pub(crate) fn hints(
         &self,
         context: Context,
         width: usize,
         budget: usize,
         ansi: bool,
+    ) -> Vec<String> {
+        self.hints_at(context, width, budget, ansi, 0)
+    }
+
+    pub(crate) fn hints_at(
+        &self,
+        context: Context,
+        width: usize,
+        budget: usize,
+        ansi: bool,
+        y: usize,
     ) -> Vec<String> {
         let lines = self.hint_lines(context, width);
         let budget = budget.max(1);
@@ -136,11 +185,45 @@ impl Ui {
             .into_iter()
             .skip(start)
             .take(if ansi { budget } else { usize::MAX })
-            .map(|s| format!("  {s}"))
+            .enumerate()
+            .map(|(row, units)| {
+                let mut line = String::from("  ");
+                let mut x = 2;
+                for (index, (unit, hit)) in units.into_iter().enumerate() {
+                    if index > 0 {
+                        line.push_str(" · ");
+                        x += " · ".cell_width() as usize;
+                    }
+                    let width = unit.cell_width() as usize;
+                    self.hit(x, y + row, width, hit);
+                    line.push_str(&unit);
+                    x += width;
+                }
+                line
+            })
             .collect();
         if ansi {
             result.resize(budget, String::new());
         }
         result
+    }
+
+    pub(super) fn search_edit_hits(&self, y: usize, text: &str) {
+        use crate::input::Key;
+        let erase = text.find("Backspace").unwrap();
+        let return_label = text[..erase].trim_end_matches([' ', '·']);
+        self.hit(
+            2,
+            y,
+            return_label.cell_width() as usize,
+            Hit::Key(Key::Enter),
+        );
+        let x = 2 + text[..erase].cell_width() as usize;
+        self.hit(
+            x,
+            y,
+            "Backspace: erase".cell_width() as usize,
+            Hit::Key(Key::Backspace),
+        );
     }
 }

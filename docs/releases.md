@@ -1,10 +1,13 @@
 # Local versioned release preparation
 
-This process prepares reviewable versioned Linux/macOS assets locally and configures
+This process prepares reviewable versioned assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-The checkout prepares **0.2.0, not released**; no tag, merge, push or publication
-is approved by this preparation. The latest published version is `0.1.0`, the first regular Linux release, for
+**0.2.0 is released** for Linux/macOS. Windows 10/11 x86_64 is intended for
+**0.3.0**, currently **PREPARATION only**. The local package version is **0.3.0**,
+unpublished on all four targets;
+no new tag, merge, push or publication is approved by this preparation.
+The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
 publication as the regular [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0),
@@ -67,6 +70,197 @@ including formatting, Clippy, Rust/helper tests, the builder-profile gate, build
 all four full PTYs, packaging and upload. These are test-version results, not the
 fresh gates or separate publication approval for the regular `0.1.0` release above.
 
+## 0.3.0 local preparation
+
+The canonical Cargo manifest, unique lock entry and plugin manifest agree on
+`0.3.0`. Preparation covers Linux x86_64 glibc, native Apple Silicon and Intel
+macOS, and native Windows x86_64. This is not four-platform support or release
+approval. Runtime code, dependencies, installer policies and CI gates are unchanged
+by the version bump. macOS retains minimum **15.0**; Linux retains its existing
+glibc evidence limits, not a new minimum-runtime guarantee.
+
+Each target must produce its own fresh version-named archive, checksum, provenance
+and link map, binding the exact tested binary and source. Do not rename historical
+0.1.0/0.2.0 assets or copy their hashes as 0.3.0 proof. Fresh Linux packaging and
+isolated installation, native macOS/Windows candidate gates, artifact-specific
+attribution review, independent combined review and primary acceptance remain
+separate from this version/docs preparation. Windows provenance must retain
+`preparation_only: true` and `distribution_approved: false`; the first GNU native
+preparation passed at the `b5a86ed` source tree, but the added full ZPL notices
+require fresh final-tree packages. Distribution approval remains open. Additional Windows 10/11 managed-install/live-popup testing was
+explicitly waived by the user on 2026-11-04, not performed or certified.
+The Windows collector now uses GNU ld map/double-trace evidence and `objdump`
+PE imports, binding actual tool/input hashes to the tested binary. Its
+[GNU contract and licensing limits](builds.md#windows-gnu-toolchain-and-attribution)
+now include native Windows Server 2025 execution and offline tool/input archive
+hash correspondence, not Windows 10/11 certification or exact source/patch proof.
+Historical MSVC receipts remain unchanged.
+
+The local release-notes draft is `target/release-0.3.0-notes.md`, an ignored
+preparation artifact, not published release notes. No release date, tag, public
+asset URL or certification is established. Keep the published Linux/macOS
+`--ref v0.2.0` fallback: this checkout's default installer requests 0.3.0 and has
+no public assets yet. Do not advance the public default branch without matching
+approved assets or a separately approved controlled publication window. Merge,
+tag, push and publication are not authorized by local preparation.
+
+### Local 0.3.0 Linux verification
+
+On 2026-11-02, the local `develop` checkout at `9d1660a` plus the uncommitted
+0.3.0 preparation changes passed `cargo fmt --check`, all 293 Rust tests,
+21 Linux build-helper tests and 12 portable macOS build-helper tests. These
+macOS helper tests use fixtures; they are not native macOS candidate evidence.
+
+`sh scripts/build-linux.sh` produced a fresh Linux 0.3.0 archive after all four
+complete PTYs passed. Archive members, inner/outer checksums, notice bytes and
+binary/map provenance hashes were checked. The archive SHA256 is
+`540b52a41367cb8acef007dca55d0f64ca42c6786614ecf6dde8e98b7ad4b4d6`;
+the binary SHA256 is
+`b3f1551bc57c6447511df9ffad306ac73859138e9700c0d9a06644b7ec0f3ebf`.
+The isolated `tests/test_release_install.py` gate with the CI-pinned Herdr 0.9.5
+executable passed install/reinstall, all four installed-binary PTYs and rejection
+checks without personal configuration activation. These are local dirty-checkout
+results, not clean CI release assets, publication approval or evidence for other
+targets. Later native candidate evidence and the Windows testing waiver are
+recorded below; Windows licensing remains outstanding.
+
+### Fresh 0.3.0 CI preparation
+
+On 2026-11-04, all five checks for `develop@676c087` passed: Linux 7m43s,
+Windows 3m46s, macOS ARM64 9m47s, macOS Intel 14m05s and PR policy 4s.
+[Linux run 41830572308](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41830572308),
+[macOS run 41830572225](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41830572225)
+and [Windows run 41830572270](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41830572270)
+produced fresh 0.3.0 packages after their native build/acceptance/install gates.
+The four downloaded archives passed historical member, checksum, notice and binary/map
+provenance inspection. The Windows archive's CRLF `LICENSE` does not match the
+canonical LF checkout now pinned by `.gitattributes`; it is unsuitable for the
+final byte-exact notice policy. Retain these assets and source receipts as
+historical evidence without rewriting them; require fresh final-tree packages.
+Mac binaries were inspected structurally on Linux with the
+documented macOS 15.0 minimum modeled; their native execution evidence is the CI,
+not that local inspection. See the [Windows attribution receipt](builds.md#msvc-and-sdk-attribution-gate)
+for exact source identity, versions, hashes and remaining gaps. These are CI
+preparation assets, not published releases. Windows licensing remains open;
+the additional runtime testing waiver below is not execution evidence.
+
+<a id="latest-candidate-evidence-and-testing-acceptance"></a>
+
+### Earlier candidate evidence and testing acceptance
+
+The owning session supplied these 2026-11-04 receipts for
+`develop@8df685c99314034ad06cf30116734221059f9d97`, exactly one commit above
+`main@46f2e136e131b790ae415dde0ae4a029785646c0`:
+
+| Check | Receipt | Result |
+| --- | --- | --- |
+| Linux | [41863128541](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41863128541) | Passed, 7m02s |
+| Windows | [41863128738](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41863128738) | Passed, 3m11s |
+| PR policy | [41863125457](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41863125457) | Passed, 4s |
+| macOS Intel | [41863128535, attempt 2, job 126710038448](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41863128535/job/126710038448) | Passed, 15m33s; full native/package/isolated real-Herdr install/upload |
+| macOS ARM64 | [41863128535, attempt 3, job 126740988873](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/41863128535/job/126740988873) | Passed, 9m41s; final retry SUCCESS |
+
+ARM64 attempt 2 job `126710037698` was cancelled before runner acquisition:
+“The job was not acquired by Runner of type hosted even after multiple attempts”.
+The supplied final attempt 3 result is **SUCCESS**, with Intel's earlier 15m33s
+success retained. These receipts cover `8df685c`, not the subsequent GNU migration.
+The inspected four-target packages in
+`target/ci-0.3.0-676c087` retain their earlier source/run identities; they are not
+assets for `8df685c` or the final tree.
+
+The user explicitly accepted the existing Windows tests as sufficient:
+“Die Tests auf Windows wurden bereits ausreichend durchgeführt. Das passt also.”
+This waives additional Windows 10/11 managed-install/live-popup testing for this
+preparation. It is not a new run, Windows 10 evidence, full-feature certification,
+licensing clearance or release approval. The earlier physical Windows 11 report
+and native Windows Server fake-host receipts keep their original scope. Historical
+provenance `open_gates` records and preparation/distribution flags are unchanged.
+
+The GNU collector, notices, workflow and docs changes after `8df685c` are not covered by that historical exact-SHA CI.
+Unchanged production evidence is reused only within its recorded scope; fresh CI
+against the final reviewed tree, including the newly selected Windows collector
+regressions, remains required. These supplied receipts were not independently
+re-fetched during this local documentation update.
+
+### First GNU success and four-target preparation
+
+The owning session supplied final **SUCCESS** receipts on 2026-11-05 for head
+`b5a86edf926adc60c61ac33b274a598d2a93a702`:
+
+| Check | Receipt | Result |
+| --- | --- | --- |
+| Linux | [42105384869, job 127518713986](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42105384869/job/127518713986) | Passed, 7m37s; package, isolated real-Herdr install, upload |
+| Windows GNU | [42105384867, job 127518713737](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42105384867/job/127518713737) | Passed, 3m13s; package, installed-byte fake-host acceptance, upload |
+| macOS ARM64 | [42105385111, job 127518715535](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42105385111/job/127518715535) | Passed, 10m30s; package, isolated real-Herdr install, upload |
+| macOS Intel | [42105385111, job 127518715846](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42105385111/job/127518715846) | Passed, 15m45s; package, isolated real-Herdr install, upload |
+| PR policy | [42105382172](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42105382172) | Passed |
+
+The actual artifact source is synthetic PR merge
+`1f94ad40f2fd8ce961a2d616651189b046cf3b48`, not a direct HEAD checkout.
+The owning session verified its tree
+`71ac34ecbda20d50ca6f8f9f29ab5253d1a97b1d` equals the branch head's tree, with
+base `46f2e136e131b790ae415dde0ae4a029785646c0` and head `b5a86ed` as parents.
+The first GNU Windows success ran on Windows Server 2025 `10.0.26100`, with 61
+passing tests in nine selected Rust groups, all nine isolated ConPTY acceptance
+cases twice and eleven distribution checks. It is neither the entire Cargo
+suite nor real-Herdr Windows integration or Windows 10/11 certification.
+See [the artifact hashes, member attribution and offline archive comparison](builds.md#first-successful-gnu-preparation).
+These CI receipts are supplied evidence, not independently re-fetched here.
+
+The prior-notice `b5a86ed` assets remain immutable. They **lack the full root
+MinGW ZPL notices now added**; fresh final-tree CI and all four packages are
+required after that correction. The 82-package union and earlier license bytes
+remain unchanged. Offline correspondence of all 19 reported MinGW tool/input
+hashes to a public archive does not prove historical download identity, complete
+installed-tree identity, source base/patch state or reproducibility. Original
+provenance `installed_archive_identity: null` and preparation/distribution flags
+are not rewritten. Private UCRT Windows 10/11 compatibility, independent combined
+review, primary acceptance and explicit distribution/release approval remain open.
+
+## Windows release boundary
+
+The Windows workflow/helper currently prepare evidence, not releasable or
+certified assets. The first two native Windows CI attempts reached the 30-minute
+job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
+console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
+was no native Windows GREEN at that checkpoint. The fourth (`bcbd93e`, run `39605428457`) passed
+the standard-handle/redirected-parent and exact console-restoration checks, then
+failed a raw styled-label assertion in 3m 38s with clean teardown and no artifacts.
+Run `39614583553` (`6623013`) passed the styled-label assertion and earlier console,
+focus, reconnect and noninteractive checks, then failed in 2m 56s on a stale
+resize-message expectation despite the correct minimum/actual-size notice.
+Supplied [run 39617733551](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39617733551)
+at `b536649` passed all seven native acceptance tests, including resize/close and
+theme save/replace/reopen/Auto removal, then failed the distribution suite's
+pinned-directory rename assertion; that failed run did not reach installed-binary
+acceptance. The later [run 39619790130](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/39619790130)
+at head `6c464a7` completed successfully on 2026-10-21: all seven acceptance checks
+passed against both final-linked and installed bytes, and all ten distribution
+checks passed. Exact artifact verification also passed; the
+[historical artifact receipt](builds.md#successful-windows-preparation-evidence)
+retains preparation-only provenance and limited retention, not release approval.
+Those historical versioned outputs use **0.2.0** and must not be relabeled.
+Fresh local preparation now derives **0.3.0** names from the canonical version;
+that does not verify new assets. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
+
+Historical MSVC pipeline success and exact artifact verification are recorded above.
+Before a Windows release, the remaining gates include
+[fresh final-notice GNU packages and linked-input attribution review](builds.md#windows-gnu-toolchain-and-attribution),
+independent combined review and primary acceptance. Additional Windows 10/11
+managed-install/live-popup testing is waived as recorded above, not certified. The helper's
+fake-host ConPTY/named-pipe and installer-byte checks are **not** actual Herdr
+managed-install/live-popup integration. Separately, the user reported successful
+basic source-build/link/live-popup use with Herdr 0.9.5 on a physical Windows 11
+PC on 2026-10-28; the exact OS build and per-function checklist were not recorded.
+That report does not certify all features, Windows 10 or managed installation,
+and does not close the attribution gate or approve a release. Host keybinding
+setup is Unix-only and Windows uses `crossroads-windows`; reconcile those
+[launch limits](installation.md#windows-preparation-limitations) before acceptance.
+Version changes, remote actions and release/publication approval remain separate.
+
+The 0.2.0 gate checklist and dated receipts below describe the earlier macOS
+release preparation, not remaining Windows acceptance or authority to release again.
+
 ## Version and asset contract
 
 `python3 scripts/check-version.py` reads the checkout's `Cargo.toml`, the unique
@@ -83,22 +277,24 @@ the prepared route downloads the exact version from GitHub Releases. Publication
 of both test prereleases and execution of the full public cycle are recorded
 above; this verified test cycle is not regular-release approval.
 
-For `0.2.0`, each of `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
-`x86_64-apple-darwin` produces four distinct assets. Linux example:
+For local `0.3.0` preparation, each of `x86_64-unknown-linux-gnu`,
+`aarch64-apple-darwin`, `x86_64-apple-darwin`, and `x86_64-pc-windows-gnu`
+produces four distinct assets: 16 target-specific names if all four gates pass,
+not a claim that those assets exist or are approved. Linux example:
 
 ```text
-target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.link.map
 ```
 
-New builds' tar contains the exact tested executable, preserving its executable mode,
+New Unix builds' tar contains the exact tested executable, preserving its executable mode,
 `herdr-crossroads.sha256`, the project's `LICENSE`, and `THIRD-PARTY-NOTICES.md`.
 The installer requires all four files and retains both notices beside the binary.
 The already-published `v0.1.0` archive still contains `THIRD-PARTY-NOTICES.html`;
-it is not replaced or relabeled by this conversion. New 0.2.0 artifacts are
-separate; never replace v0.1.0 assets. When the checkout version is 0.1.0, the
+it is not replaced or relabeled by this conversion. New 0.3.0 artifacts are
+separate; never replace v0.1.0 or v0.2.0 assets. When the checkout version is 0.1.0, the
 installer accepts only the exact historical HTML paired with the pinned equivalent Markdown;
 [installation](installation.md#validation-and-failure-behavior) specifies the hashes
 and unchanged negative checks. Old pinned checkouts continue installing HTML.
@@ -106,6 +302,69 @@ Ownership is normalized to numeric root. Both
 checksum entries use portable filenames. SHA256 detects corruption, not asset
 authenticity or publisher identity. See [builds](builds.md) for prerequisites,
 failure/stale-output behavior, extraction checks, and installation limitations.
+Windows uses `herdr-crossroads.exe` and `herdr-crossroads.exe.sha256` instead;
+the [Windows contract](builds.md#windows-preparation-not-certification) remains
+preparation only, with the same two notice files.
+
+## 0.3.0 manual release checklist
+
+This reuses the 0.2.0 manual process below; it is a checklist, not authorization or
+release automation. Stop on any identity/hash mismatch or unresolved release gate.
+
+1. Freeze the final independently reviewed tree and record full head/tree IDs,
+   base and actual CI checkout/merge identities. Preserve the completed ARM64 retry receipt;
+   run fresh final Linux, native ARM64/Intel macOS and Windows CI with every existing
+   gate/deadline retained. Require the Windows workflow's collector regression suite.
+   Record the Windows testing waiver separately from executed checks.
+2. Download fresh successful assets for that tree, not the retained `676c087`
+   packages. Require exactly these **16 filenames** (four suffixes per target):
+
+   ```text
+   herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
+   herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+   herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.provenance.json
+   herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.link.map
+   herdr-crossroads-0.3.0-aarch64-apple-darwin.tar.gz
+   herdr-crossroads-0.3.0-aarch64-apple-darwin.tar.gz.sha256
+   herdr-crossroads-0.3.0-aarch64-apple-darwin.provenance.json
+   herdr-crossroads-0.3.0-aarch64-apple-darwin.link.map
+   herdr-crossroads-0.3.0-x86_64-apple-darwin.tar.gz
+   herdr-crossroads-0.3.0-x86_64-apple-darwin.tar.gz.sha256
+   herdr-crossroads-0.3.0-x86_64-apple-darwin.provenance.json
+   herdr-crossroads-0.3.0-x86_64-apple-darwin.link.map
+   herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.tar.gz
+   herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.tar.gz.sha256
+   herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.provenance.json
+   herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.link.map
+   ```
+
+3. Record all outer SHA256s, verify archive/inner checksums, exact four-member
+   contracts and byte-exact notices against the frozen source (`LICENSE` must be
+   LF on every target; preserve vendor notice bytes under the existing `-text` policy).
+   Bind exact tested binary/map hashes and clean source identities in provenance;
+   inspect platform headers, system/link inputs and notices as in the 0.2.0 gates.
+   Resolve actual GNU startup/runtime/member attribution and applicable licensing
+   before distribution; verify system-only PE imports and the bounded builder-security
+   exception. Historical MSVC receipts are not GNU evidence; do not silently flip `preparation_only` or
+   `distribution_approved`. Never replace tested bytes by signing/stripping/rebuilds.
+4. Finalize release notes from `target/release-0.3.0-notes.md`, including platform
+   limits and explicit waivers. Obtain independent combined Code/Tests/Docs review
+   and primary final acceptance of the exact tree, notes and 16 asset hashes.
+   Any later change requires reconciliation and relevant rechecks.
+5. Obtain separate explicit approvals for push, merge, tag `v0.3.0` at the approved
+   source and manual publication with the exact assets/notes. Coordinate and approve
+   the default-branch/asset publication window: default HEAD requests its own version,
+   so do not expose 0.3.0 without matching assets outside that controlled window.
+   Record merged main and tag identities separately; require approved tree equality.
+   No automation or remote branch-protection change is part of this checklist.
+6. After publication, download all 16 public assets and compare approved hashes;
+   verify the public pinned and default install routes in isolated environments,
+   with installed binary/notices/hash checks on each native target. These later
+   public-install checks are not proved by local-fixture CI or the Windows waiver.
+   Keep v0.1.0/v0.2.0 immutable. On failure stop rollout, record the failure and seek
+   approval for corrective remote actions; retain the Linux/macOS
+   `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0` fallback.
+   There is no published Windows fallback; do not claim one.
 
 ## 0.2.0 manual release gates
 
@@ -162,13 +421,17 @@ python3 tests/test_version.py
 python3 tests/test_build_linux.py
 python3 tests/test_build_macos.py
 python3 tests/test_build_provenance.py
+python3 tests/test_windows_provenance.py
+python3 tests/test_windows_workflow.py
+python3 tests/test_windows_process.py
+python3 tests/test_windows_distribution.py
 python3 tests/test_install_binary.py
 python3 tests/test_distribution_helpers.py
 python3 tests/test_release_install_helpers.py
 python3 tests/test_notices.py
 sh scripts/build-linux.sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-tar -tvzf target/builds/herdr-crossroads-0.2.0-x86_64-unknown-linux-gnu.tar.gz
+(cd target/builds && sha256sum -c herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+tar -tvzf target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 This block is the Linux preflight. On each native Mac use the corresponding
@@ -200,16 +463,23 @@ profile match, or build alone is not distribution approval.
 `THIRD-PARTY-NOTICES.md` preserves actual full license/copyright/attribution
 texts, not just SPDX expressions, including system startup/runtime package records
 and the full system license files those records reference.
-`scripts/third-party-notices.py --write` uses
-`cargo tree --offline --locked --target x86_64-unknown-linux-gnu -e normal,build`
-and offline, locked Cargo metadata for the same target. The current inventory
-covers **78 unique active registry package versions**, including both `syn`
+`scripts/third-party-notices.py --write` uses offline, locked Cargo trees
+(`-e normal,build`) and metadata for `x86_64-unknown-linux-gnu` and
+`x86_64-pc-windows-gnu`. The current union inventory
+covers **82 unique active registry package versions**, including both `syn`
 and `hashbrown` versions. Each package records exact name/version, crates.io
 provenance, Cargo.lock checksum, upstream license expression, and all packaged
 license, NOTICE, copyright and attribution files found by name recursively.
+The GNU import crate's omitted license texts use hash-pinned, byte-identical
+upstream workspace licenses from cached `winapi 0.3.9`; the binary import archive
+whose name contains `license` is not decoded as a text notice. MinGW-w64 v13
+runtime and winpthreads notices are included in full; GCC GPLv3/Exception 3.1
+texts remain in the system inventory. Native input/member proof is still required.
 No packages are downloaded. The conservative whole normal/build graph includes
 build-only/proc-macro dependencies; it is not a claim that every entry is linked.
 Dev-only and inactive-target dependencies are excluded.
+The retained Linux-only `generate_html(windows=False)` path reproduces historical
+compatibility notices; it is not the current default generation scope.
 
 The exact cached manifests identify `jsonc-parser 0.34.0` and `ratatui 0.30.2` as
 MIT, `serde_json 1.0.151` as MIT OR Apache-2.0, and
@@ -237,7 +507,12 @@ stripping or reflowing it; fences exceed any backtick run in the text. Cached
 crate files are read as UTF-8 bytes, preserving their original CRLF where present
 (the old HTML generator normalized those line endings). `.gitattributes` disables
 Git text normalization for this generated file so checkouts retain those bytes
-and the installer compatibility pin. The upstream Rust HTML
+and the installer compatibility pin. Targeted `-text` rules also preserve
+`LICENSES/*-system.json` and `LICENSES/glibc-*-startup.txt`: their exact bytes are
+part of the checked notice provenance, including on `core.autocrlf=true` Windows
+checkouts. Tests materialize a real Git index with that conversion enabled and
+verify both preserved evidence and rejection/detection of changed evidence.
+The upstream Rust HTML
 SHA256 still identifies the original source bytes, not the Markdown rendition.
 Tests compare all 458 preformatted blocks in order, all prose and external links,
 and all 140 active packaged license/notice files against the exact local sources.
@@ -448,7 +723,7 @@ pending at that historical checkpoint; the later real cycle is recorded above.
 
 ## Public CI and later publication remain separate
 
-The existing **Linux gates** job accepts `push`, `pull_request`, and manual
+The **Linux · Build & Tests (x86_64)** job accepts `push`, `pull_request`, and manual
 `workflow_dispatch` on an existing ref. Every invocation remains public-only,
 read-only, and uses the same gates and helper. Only successful packaging writes
 the exact versioned name to step outputs; upload selects its tar, archive
@@ -471,9 +746,11 @@ the exact packaged archive before upload. This actual managed install/reinstall,
 negative/config-retention and installed-binary four-PTY gate uses local Git/assets
 and no server/popup. Its native execution passed on all three targets in the
 [current candidate runs](builds.md#current-020-three-platform-ci-evidence), separately
-from the historical public runs below. The macOS workflow preserves its individual existing
-five-minute PTY steps and adds native packaging/real installation before exact-asset
-upload. Both workflows remain public-only/read-only with manual publication separate.
+from the historical public runs below. The macOS workflow runs its four full PTY
+gates on the fresh final-linked binary inside packaging, each with a five-minute
+watchdog, rather than also testing a separate ordinary release build. Real
+installation acceptance still precedes exact-asset upload. Both workflows remain
+public-only/read-only with manual publication separate.
 
 The public [main run on 2026-10-15](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/38775076190)
 passed the gates, explicit-target build, all four full isolated PTYs, packaging,

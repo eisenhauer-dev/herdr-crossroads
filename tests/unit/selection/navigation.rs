@@ -229,7 +229,7 @@ fn tab_bytes_navigate_visible_workspaces_without_focusing() {
     state.key(tab);
     state.key(back);
     assert_eq!(state.selected.as_deref(), Some("p-other"));
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(tab);
     state.key(back);
     assert_eq!(state.mode, Mode::Search);
@@ -290,7 +290,10 @@ fn workspace_jumps_skip_hidden_blocks_and_wrap_at_both_ends() {
     assert_eq!(state.selected.as_deref(), Some("p-third"));
     let help = state.terminal_frame(60, 15);
     assert!(
-        help.contains("→ Tab | ← Shift+Tab") && help.contains("next/previous workspace"),
+        help.contains("Tab")
+            && help.contains("Shift+Tab")
+            && help.contains("next workspace")
+            && help.contains("previous workspace"),
         "{help}"
     );
     state.key(Key::Esc);
@@ -305,19 +308,19 @@ fn workspace_jumps_skip_hidden_blocks_and_wrap_at_both_ends() {
 #[test]
 fn query_above_list_and_help_describes_actual_keys() {
     let mut state = ui();
-    state.key(Key::Char('/'));
+    state.key(Key::Char('f'));
     state.key(Key::Char('x'));
     let frame = state.terminal_frame(120, 20);
     assert!(
         frame.starts_with(&format!(
-            "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m  Search: x{}Search\x1b[48;2;24;24;37m\x1b[K\r\n", " ".repeat(101)
+            "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m  Search: x{}\x1b[7mMODE: SELECT\x1b[27m\x1b[48;2;24;24;37m\x1b[K\r\n", " ".repeat(95)
         )),
         "{frame}"
     );
     state.key(Key::Esc);
     assert!(state.terminal_frame(120, 20).contains(&format!(
-        "  Search: x{}Select\x1b[48;2;24;24;37m\x1b[K\r\n",
-        " ".repeat(101)
+        "  Search: x{}\x1b[7mMODE: SELECT\x1b[27m\x1b[48;2;24;24;37m\x1b[K\r\n",
+        " ".repeat(95)
     )));
     state.key(Key::Char('?'));
     let help = state.terminal_frame(120, 20);
@@ -411,7 +414,7 @@ fn first_remaining_row_shows_its_workspace_and_tab_context() {
     let lines: Vec<_> = frame.lines().collect();
     assert_eq!(
         lines[0],
-        format!("  Search: Needle{}Select", " ".repeat(136))
+        format!("  Search: Needle{}MODE: SELECT", " ".repeat(130))
     );
     assert!(lines[1].starts_with("  ─"));
     assert!(

@@ -3,7 +3,9 @@ import errno
 import fcntl
 import json
 import os
+import platform
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -12,6 +14,8 @@ import tempfile
 import termios
 import unicodedata
 from pathlib import Path
+
+from terminal_restoration import raw_terminal_restored
 
 
 def frame(master, marker):
@@ -35,12 +39,12 @@ def frame(master, marker):
     return data.decode("utf-8", "replace")
 
 
-def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False):
+def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False, track_colors=False):
     cells = [[" "] * width for _ in range(height)]
-    backgrounds = [[False] * width for _ in range(height)]
-    panel_backgrounds = [[False] * width for _ in range(height)]
-    selected_bg = False
-    panel_bg = False
+    foreground, background = "default-fg", "default-bg"
+    reverse = False
+    track_style = track_bg or track_panel_bg or track_colors
+    colors = [[(foreground, background)] * width for _ in range(height)] if track_style else None
     cursor_visible = True
     x = y = 0
     wraps = 0
@@ -67,8 +71,9 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
             elif command == "J":
                 assert params == "", params
                 cells = [[" "] * width for _ in range(height)]
-                backgrounds = [[False] * width for _ in range(height)]
-                panel_backgrounds = [[False] * width for _ in range(height)]
+                effective = (background, foreground) if reverse else (foreground, background)
+                if track_style:
+                    colors = [[effective] * width for _ in range(height)]
                 # Timed hint pages may precede a resize frame at the previous dimensions.
                 # Check wraps in the final full repaint, just like the cells below.
                 wraps = 0
@@ -78,21 +83,40 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                 # final cell, not beyond it. EL still erases that occupied cell.
                 for at in range(min(x, width - 1), width):
                     cells[y][at] = " "
-                    backgrounds[y][at] = False
-                    panel_backgrounds[y][at] = panel_bg
+                    if track_style:
+                        colors[y][at] = (background, foreground) if reverse else (foreground, background)
             elif command == "m":
-                sgr = params
-                if sgr == "48;5;236":
-                    selected_bg = True
-                elif sgr in ("0", "49", "48;2;24;24;37"):
-                    selected_bg = False
-                if sgr in ("0", "49", "48;5;236"):
-                    panel_bg = False
-                elif sgr == "48;2;24;24;37":
-                    panel_bg = True
+                codes = [int(code or 0) for code in params.split(";")]
+                at = 0
+                while at < len(codes):
+                    code = codes[at]
+                    at += 1
+                    if code == 0:
+                        foreground, background, reverse = "default-fg", "default-bg", False
+                    elif code in (7, 27):
+                        reverse = code == 7
+                    elif code == 39:
+                        foreground = "default-fg"
+                    elif code == 49:
+                        background = "default-bg"
+                    elif 30 <= code <= 37 or 90 <= code <= 97:
+                        foreground = code - (30 if code < 90 else 82)
+                    elif 40 <= code <= 47 or 100 <= code <= 107:
+                        background = code - (40 if code < 100 else 92)
+                    elif code in (38, 48):
+                        kind = codes[at]
+                        assert kind in (2, 5), codes
+                        count = 3 if kind == 2 else 1
+                        color = tuple(codes[at + 1:at + 1 + count]) if kind == 2 else codes[at + 1]
+                        at += 1 + count
+                        if code == 38:
+                            foreground = color
+                        else:
+                            background = color
             else:
-                assert params == "?25", (params, command)
-                cursor_visible = command == "h"
+                assert params in ("?25", "?1000", "?1003", "?1006"), (params, command)
+                if params == "?25":
+                    cursor_visible = command == "h"
             i = end + 1
             continue
         if c == "\r":
@@ -100,22 +124,25 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
         elif c == "\n":
             y = min(y + 1, height - 1)
         else:
-            char_width = 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
+            char_width = 1 if c.isascii() else 0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
             if x >= width:
                 wraps += 1
                 x = 0
                 y = min(y + 1, height - 1)
             if char_width:
                 cells[y][x] = c
-                backgrounds[y][x] = selected_bg
-                panel_backgrounds[y][x] = panel_bg
+                if track_style:
+                    for col in range(x, min(width, x + char_width)):
+                        colors[y][col] = (background, foreground) if reverse else (foreground, background)
                 x += char_width
         i += 1
     result = (["".join(line).rstrip() for line in cells], wraps)
+    if track_colors:
+        return (*result, colors)
     if track_bg:
-        return (*result, backgrounds)
+        return (*result, [[bg == 236 for _, bg in row] for row in colors])
     if track_panel_bg:
-        return (*result, panel_backgrounds)
+        return (*result, [[bg == (24, 24, 37) for _, bg in row] for row in colors])
     return (*result, (cursor_visible, x, y)) if track_cursor else result
 
 
@@ -131,32 +158,53 @@ def assert_selected_background(raw, width, height):
     painted = [x for x, enabled in enumerate(backgrounds[selected[0]]) if enabled]
     assert painted == border, (width, selected, painted, border)
     assert all(not any(row) for at, row in enumerate(backgrounds) if at != selected[0]), backgrounds
+    assert_mode_badge_colors(raw, width, height)
     return lines
 
 
 def assert_panel_background(raw, width, height):
-    lines, wraps, backgrounds = screen(raw, width, height, track_panel_bg=True)
+    lines, wraps, colors = screen(raw, width, height, track_colors=True)
     assert wraps == 0, (width, height, wraps, lines)
-    assert all(all(row) for row in backgrounds), (width, height, [at for at, row in enumerate(backgrounds) if not all(row)], lines)
+    assert_mode_badge_colors(raw, width, height)
+    for y, row in enumerate(colors):
+        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
+        for x, (_, bg) in enumerate(row):
+            expected = (205, 214, 244) if badge and badge.start() <= x < badge.end() else (24, 24, 37)
+            assert bg == expected, (x, y, bg, expected, lines)
     return lines
+
+
+def assert_mode_badge_colors(raw, width, height, foreground=(205, 214, 244), background=(24, 24, 37)):
+    lines, wraps, colors = screen(raw, width, height, track_colors=True)
+    assert wraps == 0, (width, height, wraps, lines)
+    for y, line in enumerate(lines):
+        if not line.startswith("  Search:"):
+            continue
+        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", line)
+        assert badge and badge.end() == width - 2, line
+        for x, color in enumerate(colors[y]):
+            expected = (background, foreground) if badge.start() <= x < badge.end() else (foreground, background)
+            assert color == expected, (x, y, color, expected, line)
 
 
 def expected_search_row(width, text, mode):
     # These ASCII queries fit without clipping; reserve the renderer's two-cell
     # right margin and assert the entire row, not just the query or badge.
     left = f"  Search: {text}"
+    mode = f"MODE: {mode.upper()}"
     assert left.isascii() and len(left) + len(mode) + 1 <= width - 2
     return left + " " * (width - 2 - len(left) - len(mode)) + mode
 
 
 def assert_help_frame(raw, width=80, height=15, searching=False):
+    assert_mode_badge_colors(raw, width, height)
     lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
     assert wraps == 0 and cursor[0] == searching, (lines, wraps, cursor)
     border = "  " + "─" * (width - 4)
     footer = ["  Enter/Esc: return to keys · Backspace: erase"] if searching else default_footer_lines(width, "help")
     assert lines[2] == border and lines[-len(footer) - 1] == border, lines
     assert lines[1] == "  Keys — Select", lines
-    assert lines[0].startswith("  Search: ") and lines[0].endswith("Help") and len(lines[0]) == width - 2, lines
+    assert lines[0].startswith("  Search: ") and lines[0].endswith("MODE: HELP") and len(lines[0]) == width - 2, lines
     assert not any("Keys ·" in line or "Meaning" in line or "Agent/Pane Name" in line for line in lines), lines
     if searching:
         assert lines[-1] == "  Enter/Esc: return to keys · Backspace: erase", lines
@@ -169,9 +217,10 @@ def assert_help_frame(raw, width=80, height=15, searching=False):
 NOTICE_END = b"  Press Enter/Esc/q to close."
 
 
-def assert_terminal_restored(master, slave, saved, active, key, output):
+def assert_terminal_restored(master, slave, saved, active, key, output,
+                             pre_close=None, cursor_marker_observed=None):
     actual = termios.tcgetattr(slave)
-    if actual == saved:
+    if raw_terminal_restored(saved, actual):
         return
     # The cursor marker precedes stty restoration. Collect any later error output
     # only after child.wait(), without waiting or retrying the attribute check.
@@ -188,9 +237,13 @@ def assert_terminal_restored(master, slave, saved, active, key, output):
         tail.extend(chunk)
     names = ("iflag", "oflag", "cflag", "lflag", "ispeed", "ospeed", "cc")
     changed = {name: (before, after) for name, before, after in zip(names, saved, actual) if before != after}
-    assert actual == saved, (f"terminal restoration failed: key={key!r} "
+    darwin = (f"macos={platform.mac_ver()[0]!r} darwin_kernel={os.uname().release!r} "
+              "sdk=unknown (not queried) " if sys.platform == "darwin" else "")
+    assert raw_terminal_restored(saved, actual), (f"terminal restoration failed (only Darwin canonical added PENDIN is permitted): key={key!r} "
                              f"platform={sys.platform}/{os.uname().machine} python={sys.version} "
+                             f"{darwin}"
                              f"changed={changed!r} saved={saved!r} active={active!r} actual={actual!r} "
+                             f"pre_close={pre_close!r} cursor_marker_observed={cursor_marker_observed!r} post_exit={actual!r} "
                              f"output={output!r} post_exit_output={bytes(tail)!r}")
 
 
@@ -198,7 +251,7 @@ def default_footer_lines(width, mode="select", table=False):
     # Independent expected effective default identities, all visible without paging.
     text = {
         "select": "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys",
-        "help": "j/↓: ↓move · k/↑: ↑move · Esc: close keys",
+        "help": "j/↓: ↓move · k/↑: ↑move · Enter: run · Esc: close keys",
         "themes": f"j/↓: ↓theme · k/↑: ↑theme · Space: {'list' if table else 'table'} · Enter: save · Esc: cancel",
     }[mode]
     wrapped = [""]
@@ -238,7 +291,7 @@ def assert_notice_style(raw):
 
 
 def search_cursor_cases(binary):
-    from pty_keymaps import Popup, read_frame
+    from pty_keymaps import Popup, read_frame, mouse_report
 
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cursor-") as temporary:
         directory = Path(temporary)
@@ -247,21 +300,32 @@ def search_cursor_cases(binary):
         fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
         fake.chmod(0o700)
         for width, height in ((80, 15), (142, 30)):
-            for mode in ("Help", "Search"):
-                budget = width - 4 - len(mode) - 1
-                wide_count = (budget - 2 - 8) // 2
+            for context, opening, mode in (
+                ("Help", (b"?",), "Help"),
+                ("Select", (), "Select"),
+                ("Themes", (b"t", b" ", mouse_report(4, 1)), "Themes"),
+                ("Themes list help", (b"t", b"?"), "Help"),
+                ("Themes table help", (b"t", b" ", b"?"), "Help"),
+            ):
+                badge = f"MODE: {mode.upper()}"
+                budget = width - 4 - len(badge) - 1
+                query_budget = budget - 8 - 1  # Keep a cell for the editing cursor.
+                wide_count = (query_budget - 1) // 2
                 # screen() retains a blank continuation cell after wide glyphs.
                 for query, expected_x, visible_query in (
                     ("", 10, ""), ("abc", 13, "abc"), ("abc  ", 15, "abc  "),
-                    ("x" * 200, 2 + budget - 1, "x" * (budget - 10) + "…"),
-                    ("界" * 100, 2 + 8 + 2 * wide_count + 1, "界 " * wide_count + "…"),
+                    ("x" * 200, 2 + budget - 1, "x" * query_budget),
+                    ("old" * 100 + "LATEST", 2 + budget - 1, ("old" * 100 + "LATEST")[-query_budget:]),
+                    ("界" * 100 + "Z", 10 + 2 * wide_count + 1, "界 " * wide_count + "Z"),
+                    ("e\u0301" * 200 + "Z", 2 + budget - 1, "e" * (query_budget - 1) + "Z"),
                 ):
                     popup = Popup(binary, directory, width=width, height=height)
                     try:
-                        if mode == "Help":
-                            popup.send(b"?")
-                        popup.send(b"/")
-                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(mode)) + mode
+                        for key in opening:
+                            popup.send(key)
+                        if context != "Themes":
+                            popup.send(b"f")
+                        expected_row = "  Search: " + visible_query + " " * (width - 2 - expected_x - len(badge)) + badge
                         latest = None
 
                         def final_query(raw):
@@ -281,22 +345,70 @@ def search_cursor_cases(binary):
                         try:
                             raw = read_frame(popup.output, expected=final_query)
                         except AssertionError as error:
-                            error.add_note(f"width={width} mode={mode} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
+                            error.add_note(f"width={width} context={context} query={query!r} expected_row={expected_row!r} expected_cursor={(True, expected_x, 0)!r} latest_complete={latest!r}")
                             raise
                         lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
-                        assert wraps == 0 and lines[0].endswith(mode), (lines, wraps)
+                        assert wraps == 0 and lines[0].endswith(badge), (lines, wraps)
                         assert cursor == (True, expected_x, 0), (width, mode, query, cursor, expected_x, lines[0])
                         assert lines[0] == expected_row, lines
                         if len(query) < 10:
                             assert lines[0] == expected_search_row(width, query, mode), lines
-                        else:
-                            assert "…" in lines[0], lines
+                        elif query.startswith("e\u0301"):
+                            assert "Search: " + "e\u0301" * (query_budget - 1) + "Z " in raw, raw
+                        assert expected_x < 2 + budget, (expected_x, budget)
                         popup.send(b"\r")
                         if mode == "Help":
+                            popup.send(b"q")
+                        if opening and opening[0] == b"t":
                             popup.send(b"q")
                         popup.finish(b"q")
                     finally:
                         popup.abort()
+
+
+def mode_color_cases(binary):
+    from pty_keymaps import Popup, read_frame, mouse_report
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-mode-colors-") as temporary:
+        directory = Path(temporary)
+        fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        for theme, foreground, background in (
+            ("catppuccin", (205, 214, 244), (24, 24, 37)),
+            ("catppuccin-latte", (76, 79, 105), (239, 241, 245)),
+            ("terminal", "default-fg", "default-bg"),
+        ):
+            (directory / "theme.jsonc").write_text(json.dumps({"theme": theme}))
+            for width, height in ((80, 15), (142, 30)):
+                popup = Popup(binary, directory, width=width, height=height)
+                try:
+                    assert_mode_badge_colors(popup.initial, width, height, foreground, background)
+                    for key, mode, y in (
+                        (b"f", "SELECT", 0), (b"\r", "SELECT", 0),
+                        (b"?", "HELP", 0), (b"f", "HELP", 0),
+                        (b"\r", "HELP", 0), (b"q", "SELECT", 0),
+                        (b"t", None, 0), (b" ", "THEMES", 1),
+                        (mouse_report(4, 1), "THEMES", 0),
+                        (b"x", "THEMES", 0), (b"\x7f", "THEMES", 0),
+                        (b"\r", "THEMES", 1),
+                        (b"?", "HELP", 0), (b"f", "HELP", 0),
+                        (b"\r", "HELP", 0), (b"q", "THEMES", 1),
+                        (b"q", "SELECT", 0),
+                    ):
+                        os.write(popup.master, key)
+                        raw = read_frame(popup.output)
+                        lines, wraps = screen(raw, width, height)
+                        assert wraps == 0, lines
+                        if mode is None:
+                            assert lines[0].startswith("  Themes · selected:") and not any("Search:" in line for line in lines), lines
+                        else:
+                            assert lines[y].endswith(f"MODE: {mode}"), lines
+                            assert_mode_badge_colors(raw, width, height, foreground, background)
+                    popup.finish(b"q")
+                finally:
+                    popup.abort()
 
 
 def launch_selection_cases(binary):
@@ -348,6 +460,7 @@ def launch_selection_cases(binary):
 def main(binary):
     launch_selection_cases(binary)
     search_cursor_cases(binary)
+    mode_color_cases(binary)
     with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-screen-") as path:
         directory = Path(path)
         fixture = Path(__file__).parent / "fixtures" / "topology.json"
@@ -374,7 +487,7 @@ def main(binary):
             assert "Claude \x1b[2m|\x1b[22m \x1b[38;2;249;226;175mworking\x1b[38;2;205;214;244m" in selected_raw, raw
             assert selected_raw.endswith("\x1b[0m\x1b[48;2;24;24;37m\x1b[K"), selected_raw
             assert "codex \x1b[2m|\x1b[22m \x1b[38;2;166;227;161midle\x1b[38;2;205;214;244m" in raw, raw
-            assert lines[0] == expected_search_row(80, "/ to search", "Select") and not any("Herdr Crossroads" in line for line in lines), lines
+            assert lines[0] == expected_search_row(80, "f to search", "Select") and not any("Herdr Crossroads" in line for line in lines), lines
             assert lines[1].startswith("  ─") and all(header in lines[2] for header in ("Workspace", "Tab", "Agent/Pane Name")) and "Status" not in lines[2], lines
             assert lines[15-len(default_footer_lines(80))-1].startswith("  ─") and not any("│" in line or "├" in line or "▏" in line for line in lines), lines
             assert sum("┄" in line for line in lines) == 1, lines
@@ -389,36 +502,59 @@ def main(binary):
             os.write(master, b"?")
             raw = frame(master, b"Esc: close")
             lines = assert_help_frame(raw)
-            assert lines[0] == expected_search_row(80, "/ to search", "Help") and lines[3] == "  Navigation", lines
+            assert lines[0] == expected_search_row(80, "f to search", "Help") and lines[3] == "  Navigation", lines
             assert lines[4].startswith("  > j/↓") and "next pane" in lines[4], lines
-            assert lines[8].endswith("next/previous workspace") and lines[9] == "" and lines[10] == "  Actions", lines
+            assert lines[8].endswith("next workspace") and lines[9].endswith("previous workspace") and lines[10] == "" and lines[11] == "  Actions", lines
             _, _, backgrounds = screen(raw, 80, 15, track_bg=True)
             assert [x for x, enabled in enumerate(backgrounds[4]) if enabled] == list(range(2, 78)), backgrounds[4]
-            assert not any(backgrounds[9]), backgrounds[9]
-            for _ in range(10):
+            assert not any(backgrounds[10]), backgrounds[10]
+            for keys, meaning in (
+                ("k/↑", "previous pane"), ("h/←", "previous tab"),
+                ("l/→", "next tab"), ("Tab", "next workspace"),
+                ("Shift+Tab", "previous workspace"), ("Enter", "focus selected pane"),
+                ("f", "search"), ("r", "reset search"), ("t", "choose theme"),
+                ("?", "show keys"), ("Esc/q", "close Crossroads"),
+            ):
                 os.write(master, b"\x1b[B")
                 lines = assert_help_frame(frame(master, b"Esc: close"))
+                selected = [line for line in lines if line.startswith("  > ")]
+                assert len(selected) == 1 and selected[0].startswith(f"  > {keys} ") and selected[0].endswith(meaning), lines
             assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            for keys, meaning in (
+                ("Hover", "highlight row; theme preview only, never activate"),
+                ("Left click", "focus clicked pane; Help runs action; footer or search"),
+                ("Wheel", "highlight previous or next row, including search"),
+            ):
+                os.write(master, b"\x1b[B")
+                lines = assert_help_frame(frame(master, b"Esc: close"))
+                assert "  Mouse (fixed)" in lines, lines
+                selected = [line for line in lines if line.startswith("  > ")]
+                assert len(selected) == 1 and selected[0].startswith(f"  > {keys} ") and selected[0].endswith(meaning), lines
+                os.write(master, b"\r")
+                assert assert_help_frame(frame(master, b"Esc: close")) == lines, lines
+                assert child.poll() is None, f"Enter activated informational {keys} row"
             os.write(master, b"\x1b[B")
             lines = assert_help_frame(frame(master, b"Esc: close"))
             assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines
             os.write(master, b"\x1b[A")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
-            os.write(master, b"\r")
+            assert any(line.startswith("  > Wheel") and "highlight previous or next row" in line for line in lines), lines
+            os.write(master, b"\x1b[106;5u")
             assert_help_frame(frame(master, b"Esc: close"))
-            assert child.poll() is None, "Help Enter focused or closed"
-            os.write(master, b"/focus")
+            assert child.poll() is None, "Ctrl+j in Help focused or closed"
+            os.write(master, b"ffocus")
             raw = frame(master, b"\x1b[?25h")
             lines = assert_help_frame(raw, searching=True)
             assert lines[0] == expected_search_row(80, "focus", "Help") and lines[3] == "  Actions", lines
             assert not any("Navigation" in line for line in lines), lines
             assert any("focus selected pane" in line for line in lines), lines
-            assert lines[4].startswith("  > Enter") and all(not line for line in lines[5:-2]), lines
+            assert lines[4].startswith("  > Enter") and lines[5] == "" and lines[6] == "  Mouse (fixed)", lines
+            assert lines[7].startswith("    Left click") and "focus clicked pane" in lines[7], lines
+            assert all(not line for line in lines[8:-2]), lines
             assert "\x1b[38;2;180;190;254m\x1b[4m" in raw, raw
             os.write(master, b"\x1b")
             assert_help_frame(frame(master, b"Esc: close"))
-            os.write(master, b"r/qr?")
+            os.write(master, b"rfqr?")
             lines = assert_help_frame(frame(master, b"\x1b[?25h"), searching=True)
             assert lines[0] == expected_search_row(80, "qr?", "Help") and lines[3] == "  No matching keys", lines
             assert not any("Navigation" in line or "Actions" in line for line in lines), lines
@@ -433,14 +569,14 @@ def main(binary):
                 lines = assert_help_frame(frame(master, b"Esc: close"), width, height)
                 assert any(line.startswith("  > Enter") for line in lines), lines
                 actions = lines.index("  Actions")
-                assert lines[actions - 1] == "" and lines[actions - 2].endswith("next/previous workspace"), lines
-            for _ in range(5):
+                assert lines[actions - 1] == "" and lines[actions - 2].endswith("previous workspace"), lines
+            for _ in range(6):
                 os.write(master, b"k")
                 lines = assert_help_frame(frame(master, b"Esc: close"))
             assert lines[4].startswith("  > j/↓"), lines
             os.write(master, b"k")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            assert any(line.startswith("  > Wheel") and "highlight previous or next row" in line for line in lines), lines
             os.write(master, b"j")
             lines = assert_help_frame(frame(master, b"Esc: close"))
             assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines
@@ -478,13 +614,13 @@ def main(binary):
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 80, 0, 0))
             raw = frame(master, b"  Search: ")
             assert_selected_background(raw, 80, 15)
-            os.write(master, b"/codex\r")
+            os.write(master, b"fcodex\r")
             raw = frame(master, b"Search: codex")
             assert "codex" in "\n".join(screen(raw, 80, 15)[0]), raw
             before_help = screen(raw, 80, 15)[0]
             os.write(master, b"?")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert lines[0] == expected_search_row(80, "/ to search", "Help"), lines
+            assert lines[0] == expected_search_row(80, "f to search", "Help"), lines
             os.write(master, b"q")
             assert screen(frame(master, b"  Search: codex"), 80, 15)[0] == before_help
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 15, 110, 0, 0))
@@ -501,7 +637,7 @@ def main(binary):
                 assert wraps == 0 and cursor[0] is False, (lines, wraps, cursor)
                 assert [line for line in lines if line] == notice_lines(width, height), lines
                 assert not any("Search:" in line or "Claude" in line or "focus" in line or "─" in line for line in lines), lines
-                for key in (b"/", b"?", b"j", b"k", b"\x1b[A", b"\x1b[B"):
+                for key in (b"f", b"?", b"j", b"k", b"\x1b[A", b"\x1b[B"):
                     os.write(master, key)
                     raw = frame(master, NOTICE_END)
                     assert [line for line in screen(raw, width, height)[0] if line] == notice_lines(width, height), raw
@@ -585,8 +721,13 @@ def main(binary):
                 os.write(master, key)
                 restored = frame(master, b"\x1b[?25h")
                 assert "\x1b[?25h" in restored, restored[-100:]
+                # Observation after frame() returns, not stty completion or the
+                # instant the marker was emitted; frame() also drains output.
+                cursor_marker_observed = termios.tcgetattr(slave) if sys.platform == "darwin" else None
                 assert child.wait(timeout=3) == 0, key
-                assert_terminal_restored(master, slave, saved, active, key, initial + restored)
+                assert_terminal_restored(master, slave, saved, active, key, initial + restored,
+                                         pre_close=active if sys.platform == "darwin" else None,
+                                         cursor_marker_observed=cursor_marker_observed)
             finally:
                 if child is not None and child.poll() is None:
                     child.kill()

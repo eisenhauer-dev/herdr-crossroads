@@ -1,12 +1,6 @@
 # Zukunftsideen
 
-Ideensammlung, kein zugesagter Umfang und keine Implementierungsfreigabe. Die erste Plugin-Iteration bleibt auf Anzeige, Suche und Fokuswechsel beschränkt.
-
-## Erste mögliche Erweiterung: Mausunterstützung
-
-- Herdr-Nutzer sollen Tabellenzeilen per Maus auswählen und fokussieren können, ohne die Tastaturbedienung zu verlieren.
-- Mausereignisse, Verhalten von Doppelklick/Einfachklick, Scrollen, Fokuswechsel und Abbruch erst nach Prüfung der Herdr- und Terminal-API festlegen.
-- Die Bedienung muss weiterhin vollständig ohne Maus funktionieren; keine Mausaktion darf unbeabsichtigt einen Pane oder Workspace schließen.
+Ideensammlung noch offener Erweiterungen, kein zugesagter Umfang und keine Implementierungsfreigabe.
 
 ## Navigationsansichten
 
