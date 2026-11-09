@@ -3,10 +3,14 @@
 This process prepares reviewable versioned assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-**0.2.0 is released** for Linux/macOS. Windows 10/11 x86_64 is intended for
-**0.3.0**, currently **PREPARATION only**. The local package version is **0.3.0**,
-unpublished on all four targets;
-no new tag, merge, push or publication is approved by this preparation.
+**0.3.0 is released** for all four targets as the regular
+[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.0),
+with the disclosed Windows compatibility and provenance limits. The local package
+version is **0.3.1**, unpublished and preparing cross-platform `setup-keybind`.
+Its native dispatcher requires new binaries; never replace the published 0.3.0
+assets or move that tag. No new tag, merge, push or publication is approved by
+this preparation. The 0.3.0 preparation sections below are historical receipts,
+not statements of current release availability.
 The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and

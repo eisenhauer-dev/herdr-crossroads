@@ -515,6 +515,13 @@ status disconnect/reconnect/resnapshot, noninteractive EOF/missing CLI and theme
 save/reopen/Auto removal. Pipes and CLI are fake-host fixtures, not a real Herdr
 server/client. After packaging, the helper also installs in a temporary checkout,
 checks exact executable bytes, and repeats acceptance on that installed binary.
+Preparation also runs native CLI dispatcher tests, the portable setup-helper suite
+and `tests/test_windows_keybind.py` (ACLs/staging, sharing, pinned ancestors,
+reparse/hardlink/read-only refusal and partial-failure recovery), each within a
+60-second command deadline. Both acceptance passes test manifest dispatch without
+an `.exe` suffix and opt-in/idempotent Windows binding setup in a temporary checkout.
+These new checks still require native execution for the 0.3.1 change; Linux runs
+skip Windows-only APIs. They do not reload Herdr or edit personal host config.
 The Unix four-PTY commands below are not Windows gates; a plain Windows
 `cargo test` does not run this ConPTY suite (its console test is ignored unless
 explicitly launched by the harness).
@@ -659,6 +666,13 @@ python3 tests/pty_hints.py target/release/herdr-crossroads
 The render gate checks effective foreground/background inversion on exactly the
 mode-badge cells in Select (including search), Help (including search), and Themes
 table preview, at minimum and wider sizes with Mocha, Latte and terminal-default colors.
+Each mode-color transition waits for a complete draw with the expected search-row
+position, exact query/prompt and editing cursor (or the search-free Themes list),
+not an output gap or a mode badge alone. Deterministic reader regressions replay
+stale, delayed, coalesced and fragmented draws, preserve read-ahead, and reject
+missing transitions within the unchanged three-second deadline; matching state
+still undergoes the per-cell badge-color assertions. This covers a reader race
+consistent with the ARM64 preview-frame failure, not proof of its native scheduling cause.
 Reader regressions cover SGR reverse/reset state and reject inversion leaking
 into padding or following rows; cursor movement and erasure do not reset styling.
 

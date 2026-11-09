@@ -1,7 +1,7 @@
 id = "herdr-crossroads"
 name = "Herdr Crossroads"
 description = "Navigate your Herdr. Find your sheep when you need them."
-version = "0.3.0"
+version = "0.3.1"
 min_herdr_version = "0.9.1"
 platforms = ["linux", "macos", "windows"]
 
@@ -17,8 +17,8 @@ command = ["python", "scripts/install-binary.py"]
 id = "setup-keybind"
 title = "Set up prefix+f launch binding"
 contexts = ["global"]
-platforms = ["linux", "macos"]
-command = ["python3", "scripts/setup-keybind.py"]
+platforms = ["linux", "macos", "windows"]
+command = ["./target/release/herdr-crossroads", "--setup-keybind"]
 
 [[panes]]
 id = "crossroads"

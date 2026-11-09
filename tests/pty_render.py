@@ -385,20 +385,30 @@ def mode_color_cases(binary):
                 popup = Popup(binary, directory, width=width, height=height)
                 try:
                     assert_mode_badge_colors(popup.initial, width, height, foreground, background)
-                    for key, mode, y in (
-                        (b"f", "SELECT", 0), (b"\r", "SELECT", 0),
-                        (b"?", "HELP", 0), (b"f", "HELP", 0),
-                        (b"\r", "HELP", 0), (b"q", "SELECT", 0),
-                        (b"t", None, 0), (b" ", "THEMES", 1),
-                        (mouse_report(4, 1), "THEMES", 0),
-                        (b"x", "THEMES", 0), (b"\x7f", "THEMES", 0),
-                        (b"\r", "THEMES", 1),
-                        (b"?", "HELP", 0), (b"f", "HELP", 0),
-                        (b"\r", "HELP", 0), (b"q", "THEMES", 1),
-                        (b"q", "SELECT", 0),
+                    for key, mode, y, query, searching in (
+                        (b"f", "SELECT", 0, "", True), (b"\r", "SELECT", 0, "f to search", False),
+                        (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
+                        (b"\r", "HELP", 0, "f to search", False), (b"q", "SELECT", 0, "f to search", False),
+                        (b"t", None, 0, "", False), (b" ", "THEMES", 1, "", False),
+                        (mouse_report(4, 1), "THEMES", 0, "", True),
+                        (b"x", "THEMES", 0, "x", True), (b"\x7f", "THEMES", 0, "", True),
+                        (b"\r", "THEMES", 1, "", False),
+                        (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
+                        (b"\r", "HELP", 0, "f to search", False), (b"q", "THEMES", 1, "", False),
+                        (b"q", "SELECT", 0, "f to search", False),
                     ):
+                        def expected_mode(raw):
+                            # A queued repaint (including the same badge before a
+                            # search edit) is not completion of this input action.
+                            raw = raw[raw.rfind("\x1b[H\x1b[J"):]
+                            lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                            if mode is None:
+                                return lines[0].startswith("  Themes · selected:") and not any("Search:" in line for line in lines) and not cursor[0]
+                            return (lines[y] == expected_search_row(width, query, mode)
+                                    and (cursor == (True, 10 + len(query), 0) if searching else not cursor[0]))
+
                         os.write(popup.master, key)
-                        raw = read_frame(popup.output)
+                        raw = read_frame(popup.output, expected=expected_mode)
                         lines, wraps = screen(raw, width, height)
                         assert wraps == 0, lines
                         if mode is None:

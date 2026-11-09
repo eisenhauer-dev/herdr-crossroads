@@ -1,4 +1,5 @@
 mod actions;
+mod cli;
 mod config;
 mod focus;
 mod input;
@@ -16,12 +17,15 @@ mod transport;
 mod windows_pipe;
 
 pub fn run() -> std::io::Result<()> {
-    runtime::run()
+    cli::run()
 }
 
 #[cfg(test)]
 #[path = "../tests/unit/actions.rs"]
 mod test_actions;
+#[cfg(test)]
+#[path = "../tests/unit/cli.rs"]
+mod test_cli;
 #[cfg(test)]
 #[path = "../tests/unit/input.rs"]
 mod test_input;

@@ -11,6 +11,12 @@ launch binding. Opening or searching the popup invokes neither path and does not
 install/update binaries or change host configuration. There are no startup or
 event hooks. See [installation and setup safeguards](installation.md).
 
+`src/cli.rs` dispatches `--setup-keybind` before runtime initialization, using
+`python3` on Unix and `python` on Windows with inherited stdio/environment and
+no shell. This keeps one action ID/argv for all platforms despite Herdr's unique-ID
+constraint. It requires the updated 0.3.1 binary plus manifest/helper; 0.3.1 is
+pending release, and published 0.3.0 binaries remain immutable and lack this flag.
+
 Released 0.2.0 covers Linux x86_64 glibc and macOS 15.0+ ARM64/Intel;
 published 0.1.0 stays Linux-only. The following Unix distribution evidence does
 not cover the Windows WIP. Installation selects the running
@@ -25,10 +31,14 @@ acceptance waiver is not an automated-installation waiver.
 
 ### Windows preparation boundary
 
-Native Windows 10/11 x86_64 is intended for 0.3.0, **PREPARATION only**; the local
-package is unpublished 0.3.0. The manifest separates Unix `crossroads` from Windows
+Native Windows 10/11 x86_64 retains its **PREPARATION** verification limits; the local
+package is 0.3.1, pending release. The manifest separates Unix `crossroads` from Windows
 `crossroads-windows` (`./target/release/herdr-crossroads.exe`), with `python` for
-Windows installation and `python3` on Unix. `setup-keybind` remains Unix-only.
+Windows installation and `python3` on Unix. The updated `setup-keybind` action
+supports both, selecting the appropriate pane launch entry. Its Windows path uses
+`scripts/windows-files.py` directory pins and ACL-preserving native replacement,
+not Unix directory descriptors or mode bits. See the filesystem/race limitations
+in [keyboard launch setup](installation.md#keyboard-launch-setup).
 The Windows installer shares archive/checksum/notice validation but validates
 AMD64 PE32+ console headers and uses a native pinned-directory/reparse-rejecting
 replacement helper instead of Unix directory descriptors.

@@ -1,6 +1,6 @@
 """Opt-in host binding contracts; never invoke Herdr or use personal config."""
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import os
 import re
 import runpy
@@ -15,22 +15,25 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/setup-keybind.py"
-COMMAND = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
+COMMAND = ("herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
+           + ("-windows" if os.name == "nt" else ""))
 
 
 class SetupKeybindTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="crossroads-keybind-", dir="/tmp/opencode")
+        self.temporary = tempfile.TemporaryDirectory(prefix="crossroads-keybind-",
+                                                   dir=None if os.name == "nt" else "/tmp/opencode")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name).resolve()
         self.config = self.root / "config.toml"
-        self.env = {"HOME": str(self.root / "home"), "PATH": "",
+        self.env = {**{key: os.environ[key] for key in ("SYSTEMROOT",) if key in os.environ},
+                    "HOME": str(self.root / "home"), "PATH": "",
                     "HERDR_CONFIG_PATH": str(self.config), "PYTHONDONTWRITEBYTECODE": "1"}
 
     def invoke(self, env=None, success=True):
         result = subprocess.run([sys.executable, str(SCRIPT)], cwd=self.root,
                                 env=self.env if env is None else env,
-                                capture_output=True, text=True, timeout=10)
+                                capture_output=True, text=True, encoding="utf-8", timeout=10)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
         else:
@@ -41,6 +44,12 @@ class SetupKeybindTests(unittest.TestCase):
     def entry(self, key="prefix+f", kind="shell", command=COMMAND):
         return (f'[[keys.command]]\nkey = "{key}"\ntype = "{kind}"\n'
                 f'command = "{command}"\n').encode()
+
+    def write_config(self, data):
+        self.config.write_bytes(data.encode() if isinstance(data, str) else data)
+        if os.name == "nt":
+            from windows_security_fixture import auto_inherit
+            auto_inherit(self.config)
 
     def assert_not_rewritten(self, before):
         after = self.config.stat()
@@ -54,8 +63,8 @@ class SetupKeybindTests(unittest.TestCase):
             "id": "setup-keybind",
             "title": "Set up prefix+f launch binding",
             "contexts": ["global"],
-            "platforms": ["linux", "macos"],
-            "command": ["python3", "scripts/setup-keybind.py"],
+            "platforms": ["linux", "macos", "windows"],
+            "command": ["./target/release/herdr-crossroads", "--setup-keybind"],
         }])
         self.assertEqual(manifest["build"], [{
             "platforms": ["linux", "macos"],
@@ -72,19 +81,21 @@ class SetupKeybindTests(unittest.TestCase):
             "key": "prefix+f", "type": "shell", "command": COMMAND,
             "description": "Open Herdr Crossroads",
         }])
-        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
         self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
 
     def test_preserves_original_bytes_comments_permissions_and_is_idempotent(self):
         original = (b'# comment\r\n[general]\r\nname = "test"\r\n'
                     b'[keys]\r\ngoto = "prefix+g"\r\nclose_pane = "prefix+x" # keep')
-        self.config.write_bytes(original)
+        self.write_config(original)
         self.config.chmod(0o640)
         before = self.config.stat()
         self.invoke()
         data = self.config.read_bytes()
         self.assertTrue(data.startswith(original))
-        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
         self.assertNotEqual(self.config.stat().st_ino, before.st_ino)
         after = self.config.stat()
         result = self.invoke()
@@ -104,7 +115,7 @@ class SetupKeybindTests(unittest.TestCase):
                 if table.startswith(b'[keys]\n'):
                     original = b'# indexed shortcuts\r\n'
                 original += table
-                self.config.write_bytes(original)
+                self.write_config(original)
                 self.config.chmod(0o640)
                 self.invoke()
                 data = self.config.read_bytes()
@@ -112,7 +123,8 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(data, original + helper["BINDING"])
                 self.assertEqual(tomllib.loads(data.decode())["keys"]["indexed"],
                                  tomllib.loads(original.decode())["keys"]["indexed"])
-                self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
+                if os.name != "nt":
+                    self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o640)
                 before = self.config.stat()
                 self.assertIn("Already configured", self.invoke().stdout)
                 self.assertEqual(self.config.read_bytes(), data)
@@ -155,13 +167,26 @@ class SetupKeybindTests(unittest.TestCase):
         del env["XDG_CONFIG_HOME"]
         self.invoke(env)
         self.assertTrue((self.root / "home/.config/herdr/config.toml").exists())
-        self.assertEqual(stat.S_IMODE((self.root / "home/.config").stat().st_mode), 0o700)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE((self.root / "home/.config").stat().st_mode), 0o700)
 
     def test_reading_old_config_access_time_is_not_a_concurrent_edit(self):
-        self.config.write_bytes(b"# old file\n")
+        self.write_config(b"# old file\n")
         os.utime(self.config, (1, 1))
         self.invoke()
         self.assertTrue(self.config.read_bytes().startswith(b"# old file\n"))
+
+    def test_nonascii_path_and_comments_preserve_bytes_and_report_path(self):
+        self.config = self.root / "配置 with spaces" / "config.toml"
+        self.config.parent.mkdir()
+        self.env["HERDR_CONFIG_PATH"] = str(self.config)
+        original = '# 配置\r\n[keys]\r\ngoto = "prefix+g" # keep'.encode()
+        self.write_config(original)
+        self.assertIn(str(self.config), self.invoke().stdout)
+        self.assertTrue(self.config.read_bytes().startswith(original))
+        before = self.config.read_bytes()
+        self.assertIn("Already configured", self.invoke().stdout)
+        self.assertEqual(self.config.read_bytes(), before)
 
     def test_empty_relative_or_traversing_selected_path_never_falls_back(self):
         for variable in ["HERDR_CONFIG_PATH", "XDG_CONFIG_HOME", "HOME"]:
@@ -173,7 +198,8 @@ class SetupKeybindTests(unittest.TestCase):
                     result = self.invoke(env, success=False)
                     self.assertIn(variable, result.stderr)
                     self.assertFalse((self.root / "fallback").exists())
-        self.invoke({"PATH": ""}, success=False)
+        if os.name != "nt":
+            self.invoke({"PATH": ""}, success=False)
         for value in ["/", str(self.root / "missing") + "/"]:
             self.invoke({**self.env, "HERDR_CONFIG_PATH": value}, success=False)
         self.assertFalse((self.root / "missing").exists())
@@ -212,12 +238,12 @@ class SetupKeybindTests(unittest.TestCase):
                     "Prefix+f", "f", "ctrl+f"]:
             with self.subTest(key=key):
                 original = self.entry(key=key, command="other")
-                self.config.write_bytes(original)
+                self.write_config(original)
                 self.invoke()
                 self.assertTrue(self.config.read_bytes().startswith(original))
                 self.assertEqual(len(tomllib.loads(self.config.read_text())["keys"]["command"]), 2)
         for prefix in ['"F"', '["ctrl+b", "ctrl+f"]']:
-            self.config.write_text(f"[keys]\nprefix = {prefix}\n")
+            self.write_config(f"[keys]\nprefix = {prefix}\n")
             self.invoke()
 
     def test_invalid_toml_encoding_or_relevant_shapes_fail_closed(self):
@@ -235,6 +261,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(self.config.read_bytes(), data)
                 self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
 
+    @unittest.skipIf(os.name == "nt", "Unix link-following policy; Windows rejects reparse points")
     def test_relative_absolute_and_chained_symlinks_preserve_links_and_target_bytes(self):
         helper = runpy.run_path(str(SCRIPT))
         original = b'# dotfiles\r\n[keys]\r\ngoto = "prefix+g" # keep'
@@ -268,6 +295,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(list(target.parent.glob(".crossroads-keybind-*")), [])
                 self.config.unlink()
 
+    @unittest.skipIf(os.name == "nt", "Unix link-following policy; Windows rejects reparse points")
     def test_symlinked_parent_supports_existing_and_new_config(self):
         target = self.root / "dotfiles"
         target.mkdir()
@@ -283,6 +311,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertTrue(path.is_file())
                 self.assertEqual((link.readlink(), link.lstat().st_ino), identity)
 
+    @unittest.skipIf(os.name == "nt", "Unix FIFO/link policy; native Windows rejection tested separately")
     def test_dangling_loop_and_nonregular_targets_are_refused_without_artifacts(self):
         missing = self.root / "missing/target.toml"
         directory = self.root / "directory"
@@ -318,6 +347,7 @@ class SetupKeybindTests(unittest.TestCase):
                     success=False)
         self.assertFalse(missing.parent.exists())
 
+    @unittest.skipIf(os.name == "nt", "Unix link-following policy; Windows pins/rejects ancestors")
     def test_symlink_chain_retargeted_during_staging_is_not_written(self):
         helper = runpy.run_path(str(SCRIPT))
         original = self.root / "original.toml"
@@ -350,6 +380,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
                 intermediate.unlink()
 
+    @unittest.skipIf(os.name == "nt", "Unix descriptor policy; native Windows rename denial tested separately")
     def test_resolved_parent_replaced_during_staging_is_not_written(self):
         helper = runpy.run_path(str(SCRIPT))
         parent = self.root / "dotfiles"
@@ -380,9 +411,15 @@ class SetupKeybindTests(unittest.TestCase):
         original = b"# keep me\n"
         for operation in ["fsync", "replace"]:
             with self.subTest(operation=operation):
-                self.config.write_bytes(original)
+                self.write_config(original)
+                native = (runpy.run_path(str(ROOT / "scripts/windows-files.py"))
+                          if os.name == "nt" else None)
+                failure = mock.patch.object(
+                    native["KERNEL"] if native and operation == "replace" else os,
+                    "ReplaceFileW" if native and operation == "replace" else operation,
+                    side_effect=OSError("injected failure"))
                 with mock.patch.dict(os.environ, self.env, clear=True), \
-                        mock.patch.object(os, operation, side_effect=OSError("injected failure")):
+                        failure, mock.patch.object(runpy, "run_path", return_value=native):
                     with self.assertRaisesRegex(OSError, "injected failure"):
                         helper["setup"]()
                 self.assertEqual(self.config.read_bytes(), original)
@@ -400,7 +437,7 @@ class SetupKeybindTests(unittest.TestCase):
         for existing in [False, True]:
             with self.subTest(existing=existing):
                 if existing:
-                    self.config.write_bytes(b"# original\n")
+                    self.write_config(b"# original\n")
                 with mock.patch.dict(os.environ, self.env, clear=True), \
                         mock.patch.object(os, "fsync", side_effect=edit_during_staging):
                     with self.assertRaisesRegex(ValueError, "config changed before write"):
@@ -410,7 +447,7 @@ class SetupKeybindTests(unittest.TestCase):
 
     def test_exclusive_staging_collision_never_removes_someone_elses_file(self):
         helper = runpy.run_path(str(SCRIPT))
-        self.config.write_bytes(b"# original\n")
+        self.write_config(b"# original\n")
         staging = self.root / ".crossroads-keybind-fixed"
         staging.write_bytes(b"# another writer\n")
         with mock.patch.dict(os.environ, self.env, clear=True), \
@@ -422,16 +459,59 @@ class SetupKeybindTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), b"# original\n")
 
     def test_readme_toml_example_matches_setup_and_documents_async_order(self):
-        readme = (ROOT / "README.md").read_text()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
         example = next(block for block in re.findall(r"```toml\n(.*?)```", readme, re.S)
                        if "[[keys.command]]" in block)
         helper = runpy.run_path(str(SCRIPT))
-        self.assertEqual(tomllib.loads(example), tomllib.loads(helper["BINDING"].decode()))
+        expected = tomllib.loads(example)
+        if os.name == "nt":
+            expected["keys"]["command"][0]["command"] += "-windows"
+        self.assertEqual(expected, tomllib.loads(helper["BINDING"].decode()))
         invoke = "herdr plugin action invoke herdr-crossroads.setup-keybind"
         logs = "herdr plugin log list --plugin herdr-crossroads"
         reload = "herdr server reload-config"
         self.assertLess(readme.index(invoke), readme.index(logs))
         self.assertLess(readme.index(logs), readme.index(reload))
+
+
+class WindowsConfigPathTests(unittest.TestCase):
+    def select(self, env):
+        helper = runpy.run_path(str(SCRIPT))
+        function = helper["config_path"]
+        with mock.patch.dict(function.__globals__, WINDOWS=True, Path=PureWindowsPath), \
+                mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("tempfile.gettempdir", return_value="C:/wrong-python-temp"), \
+                mock.patch.object(runpy, "run_path", return_value={
+                    "temp_directory": lambda: PureWindowsPath("C:/isolated-temp")}):
+            return function()
+
+    def test_windows_environment_precedence_matches_herdr(self):
+        env = {"HERDR_CONFIG_PATH": "D:/配置/config.toml", "XDG_CONFIG_HOME": "D:/xdg",
+               "APPDATA": "C:/roaming", "USERPROFILE": "C:/profile", "HOME": "C:/home"}
+        for variable, expected in [
+                ("HERDR_CONFIG_PATH", "D:/配置/config.toml"),
+                ("XDG_CONFIG_HOME", "D:/xdg/herdr/config.toml"),
+                ("APPDATA", "C:/roaming/herdr/config.toml"),
+                ("USERPROFILE", "C:/profile/AppData/Roaming/herdr/config.toml"),
+                ("HOME", "C:/home/.config/herdr/config.toml")]:
+            with self.subTest(variable=variable):
+                self.assertEqual(self.select(env), PureWindowsPath(expected))
+                del env[variable]
+        self.assertEqual(self.select(env), PureWindowsPath("C:/isolated-temp/herdr/config.toml"))
+
+    def test_windows_invalid_selected_path_never_falls_back(self):
+        for variable in ("HERDR_CONFIG_PATH", "XDG_CONFIG_HOME", "APPDATA", "USERPROFILE", "HOME"):
+            for value in ("", "relative", "C:relative", "\\rooted", "C:/a/../b"):
+                with self.subTest(variable=variable, value=value):
+                    with self.assertRaisesRegex(ValueError, variable):
+                        self.select({variable: value})
+
+    def test_windows_absolute_drive_and_unc_selection(self):
+        for value in ("C:/配置/config.toml", r"\\server\share\herdr\config.toml"):
+            self.assertEqual(self.select({"HERDR_CONFIG_PATH": value}), PureWindowsPath(value))
+        for value in ("C:/", "C:/directory/", "C:\\directory\\"):
+            with self.assertRaises(ValueError):
+                self.select({"HERDR_CONFIG_PATH": value})
 
 
 if __name__ == "__main__":

@@ -2,13 +2,16 @@
 
 import os
 from pathlib import Path
+import runpy
 import secrets
 import stat
 import sys
 import tomllib
 
 
-COMMAND = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
+WINDOWS = os.name == "nt"
+COMMAND = ("herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
+           + ("-windows" if WINDOWS else ""))
 BINDING = f'''\n\n[[keys.command]]
 key = "prefix+f"
 type = "shell"
@@ -18,17 +21,23 @@ description = "Open Herdr Crossroads"
 
 
 def config_path():
-    for variable, suffix in [("HERDR_CONFIG_PATH", ""),
-                             ("XDG_CONFIG_HOME", "herdr/config.toml"),
-                             ("HOME", ".config/herdr/config.toml")]:
+    locations = [("HERDR_CONFIG_PATH", ""), ("XDG_CONFIG_HOME", "herdr/config.toml")]
+    if WINDOWS:
+        locations += [("APPDATA", "herdr/config.toml"),
+                      ("USERPROFILE", "AppData/Roaming/herdr/config.toml")]
+    locations.append(("HOME", ".config/herdr/config.toml"))
+    for variable, suffix in locations:
         if variable in os.environ:
             value = os.environ[variable]
             path = Path(value)
             if not value or not path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"{variable} must be nonempty, absolute, and without '..'; no fallback")
-            if not suffix and (not path.name or value.endswith("/")):
+            if not suffix and (not path.name or value.endswith(("/", "\\") if WINDOWS else ("/",))):
                 raise ValueError("HERDR_CONFIG_PATH must name a file, not a directory path")
             return path / suffix if suffix else path
+    if WINDOWS:
+        native = runpy.run_path(str(Path(__file__).with_name("windows-files.py")))
+        return native["temp_directory"]() / "herdr/config.toml"
     raise ValueError("HOME is required when HERDR_CONFIG_PATH and XDG_CONFIG_HOME are absent")
 
 
@@ -152,6 +161,21 @@ def snapshot(directory, name):
 
 def setup():
     selected = config_path()
+    if WINDOWS:
+        native = runpy.run_path(str(Path(__file__).with_name("windows-files.py")))
+
+        def proposed(data):
+            if has_launch_binding(data):
+                return None
+            result = data + BINDING
+            has_launch_binding(result)
+            return result
+
+        if native["update_config"](selected, proposed):
+            print(f"Added prefix+f to {selected}. Now run: herdr server reload-config")
+        else:
+            print(f"Already configured prefix+f in {selected}; no changes. Reload explicitly if needed.")
+        return
     path = resolved_config_path(selected)
     reported = str(selected) if selected == path else f"{selected} (resolved target: {path})"
     directory = parent_directory(path)
@@ -198,6 +222,10 @@ def setup():
 
 
 if __name__ == "__main__":
+    if WINDOWS:
+        # Herdr captures action output as UTF-8, including non-ASCII config paths.
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     try:
         if len(sys.argv) != 1:
             raise ValueError("setup-keybind takes no arguments")

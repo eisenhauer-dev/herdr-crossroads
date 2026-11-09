@@ -1,10 +1,12 @@
 # Binary installation
 
 Released **0.2.0** retains Linux x86_64 glibc and adds Apple Silicon/Intel
-**macOS 15.0+**. Native Windows 10/11 x86_64 is intended for **0.3.0**, currently
-**PREPARATION only**. The local package is **0.3.0**, unpublished on all four
-targets; use the published `--ref v0.2.0` Linux/macOS fallback, not a nonexistent
-0.3.0 release route. Published **0.1.0 remains
+**macOS 15.0+**. The local package is **0.3.1**, pending release for the native
+setup dispatcher and Windows keybinding fix. Published **0.3.0 binaries remain
+immutable** and cannot run the new dispatcher; do not mix them with the updated
+action manifest. Windows 10/11 certification is not established by this fix.
+The published `--ref v0.2.0` Linux/macOS fallback retains its original behavior.
+Published **0.1.0 remains
 Linux-only and immutable**. Historical 0.2.0 native packaging and isolated real-Herdr
 installation CI passed on all three Linux/macOS targets. Separate
 [0.3.0 candidate receipts](releases.md#fresh-030-ci-preparation) record later native
@@ -47,11 +49,13 @@ There is no short-name registry.
 
 ## Windows preparation limitations
 
-There is no approved Windows release/install route yet. The WIP manifest uses
+The current 0.3.1 fix is not released. The manifest uses
 `python scripts/install-binary.py` on Windows (not `python3`) and a separate
 `crossroads-windows` pane pointing to `./target/release/herdr-crossroads.exe`.
-The `crossroads` pane and `setup-keybind` action remain **Linux/macOS-only**.
-Do not invoke setup or copy the Unix quickstart's launch entry unchanged on Windows.
+The `crossroads` pane remains **Linux/macOS-only**. The updated `setup-keybind`
+action supports all three platforms and selects `crossroads-windows` on Windows;
+it requires the new binary as well as the manifest/helper. Do not copy the Unix
+quickstart's manual launch entry unchanged on Windows.
 The source-declared Windows launch command is:
 
 ```powershell
@@ -77,14 +81,14 @@ review and distribution/release approval remain open.
 Source preparation needs Git, Python 3.11+, Rust `1.99.0-x86_64-pc-windows-gnu`
 and the [approved MinGW-w64 builder](builds.md#windows-gnu-toolchain-and-attribution);
 historical MSVC success does not validate the GNU migration. This does not
-establish a supported Windows installation route. Windows host keybinding setup
-remains manual and unverified; no native host-config path or shortcut sequence is
-certified here.
+certify Windows 10/11. Automated Windows host-keybinding setup is now implemented
+for the updated source tree; native execution of this change and the personal-host
+shortcut sequence remain unverified here.
 
 The installer selects `x86_64-pc-windows-gnu` for an AMD64/x86_64 host reporting
 Windows version 10 or newer; old/unknown versions and other architectures fail.
 It expects the current version's `.tar.gz` plus checksum, currently
-`herdr-crossroads-0.3.0-x86_64-pc-windows-gnu.tar.gz[.sha256]`, with exactly
+`herdr-crossroads-0.3.1-x86_64-pc-windows-gnu.tar.gz[.sha256]` (pending release), with exactly
 `herdr-crossroads.exe`, `herdr-crossroads.exe.sha256`, `LICENSE`, and
 `THIRD-PARTY-NOTICES.md`. Common checksum/notice/member checks precede native
 writes; the binary must pass AMD64 PE32+ console-executable header checks, not
@@ -117,7 +121,7 @@ checkout and require fresh packages, not installer normalization or edited
 archives. Existing clones with a stale CRLF `LICENSE` must refresh that file from
 the matching source after preserving any local edits.
 
-The remaining setup and Unix permission details below apply to Linux/macOS;
+Setup below covers Linux/macOS/Windows with platform-specific filesystem safeguards;
 dated installation receipts retain their original platform/version scope.
 
 ## Keyboard launch setup
@@ -130,12 +134,21 @@ herdr plugin action invoke herdr-crossroads.setup-keybind
 herdr plugin log list --plugin herdr-crossroads
 ```
 
-The global `setup-keybind` action runs `python3 scripts/setup-keybind.py` from the
-plugin root. Python **3.11+** must still be available on the server's `PATH`.
+The single global `setup-keybind` action runs
+`./target/release/herdr-crossroads --setup-keybind` from the plugin root on all
+three platforms. The native dispatcher runs `python3 scripts/setup-keybind.py` on
+Linux/macOS and `python scripts/setup-keybind.py` on Windows, without a shell,
+before any UI, host CLI/IPC, status subscription or plugin configuration load.
+It inherits helper input/output/environment and propagates its exit status.
+Python **3.11+** must still be available on the server's `PATH`; no `python3`
+alias is required on Windows. Rust `Command` permits omitting `.exe` here;
+Herdr v0.9.5 resolves this relative program against the plugin root.
 Installation/build hooks, startup and opening Crossroads never run this helper;
 only explicit invocation opts into the host-config write. Existing installs need
-a reviewed checkout/manifest containing the action and its matching binary assets.
-The Unix entrypoint and optional binding remain unchanged for local 0.3.0 preparation.
+a reviewed **0.3.1 binary, manifest and helper** containing this change. Source-checkout
+users must rebuild the binary first. Published 0.3.0 binaries do not implement
+`--setup-keybind`; they remain immutable, and 0.3.1 release assets are not yet available.
+The helper appends the Unix `crossroads` or Windows `crossroads-windows` launch entry.
 
 **Wait for completion before reloading.** A successful invoke response means the
 action started, not that setup succeeded. Repeat the log command and match the
@@ -155,19 +168,31 @@ The helper selects the config using the **action process's inherited environment
 
 1. Present `HERDR_CONFIG_PATH` selects that exact file.
 2. Otherwise present `XDG_CONFIG_HOME` selects `$XDG_CONFIG_HOME/herdr/config.toml`.
-3. Otherwise `HOME` selects `$HOME/.config/herdr/config.toml` (Linux default).
+3. On Windows, otherwise present `APPDATA` selects `$APPDATA/herdr/config.toml`.
+4. On Windows, otherwise present `USERPROFILE` selects
+   `$USERPROFILE/AppData/Roaming/herdr/config.toml`.
+5. Otherwise `HOME` selects `$HOME/.config/herdr/config.toml` (Linux default).
+6. Only on Windows, if none is present, the system temporary directory selects
+   `herdr/config.toml` via `GetTempPath2W`/`GetTempPathW`, matching Herdr v0.9.5's
+   Rust final fallback rather than Python's different temporary-directory search.
+   Verify this reported path especially carefully; it may not be your intended
+   persistent config.
 
 Presence, not truthiness, determines precedence. Unlike Herdr's permissive path
 resolution, setup rejects empty, relative, or `..`-containing selected paths and
-missing `HOME` when required, rather than guessing or falling back. An explicit
-config path must name a file, not end with `/`. Verify the
-reported path matches your running host's config before reload.
+missing `HOME` on Unix, rather than guessing or falling back. An explicit
+config path must name a file, not end with `/` (or `\` on Windows). Windows selection
+recognizes absolute drive/UNC paths, but writes deliberately require a local
+absolute drive path on an ACL-capable filesystem, refusing network/device paths.
+Verify the reported path matches your running host's config before reload.
 
 Setup validates existing/proposed TOML with stdlib `tomllib` and appends only the
-[README's exact shell-binding entry](../README.md#add-the-launch-binding-reload-and-open).
+[README's shell-binding entry](../README.md#add-the-launch-binding-reload-and-open),
+with the platform-specific entrypoint above.
 Layouts that cannot accept an appended `[[keys.command]]` (such as an inline
 `command = []` array) fail without rewriting; use manual setup for those layouts.
-Existing bytes/comments and file permissions are preserved; new config files are
+Existing bytes/comments (including CRLF) are preserved. On **Linux/macOS**, file
+permissions are preserved; new config files are
 mode 0600 and missing parent directories 0700. Relative or absolute symlinks,
 including chains and symlinked config directories, are followed without replacing
 the links: only the final resolved regular file is updated. Relative link targets
@@ -184,6 +209,81 @@ failures leave the existing file unchanged and clean the helper's staging file;
 new empty parents can remain. Forced termination can leave a staging file. This is
 not a hostile-filesystem sandbox or power-loss durability guarantee: **do not edit
 config or run setup concurrently**; the final check/replacement is not a lock.
+
+On **Windows**, setup reuses native directory pins to prevent ancestor rename,
+rejecting reparse ancestors/targets, hardlinked or read-only files, device/alias
+components and existing writer/delete handles during reads. It compares file
+identity, edit metadata, bytes and owner/group/DACL snapshots before commit.
+The initial path-to-handle comparison uses creation time: CPython 3.12.10 reports
+creation time as `lstat().st_ctime_ns` but change time as `fstat().st_ctime_ns`.
+Handle-to-handle comparisons still check change time during reads and before commit;
+access-time changes alone do not count as edits. This distinction is covered by
+portable metadata regressions in `python3 -B tests/test_windows_keybind.py`, not
+native Windows acceptance. Source checked 2026-11-09:
+[CPython 3.12.10 path-stat compatibility](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L2138-L2150)
+and [handle metadata](https://github.com/python/cpython/blob/v3.12.10/Python/fileutils.c#L1108-L1127).
+**Existing configs can be updated only when their DACL is already auto-inherited**
+(`SE_DACL_AUTO_INHERITED`, `0x0400`), including protected auto-inherited DACLs.
+Legacy unprotected (`0x8004`) and protected non-auto-inherited (`0x9004`)
+descriptors are refused before staging or replacement: native replacement can add
+parent grants or change descriptor control bits even after exact staging readback.
+An already-configured no-op remains allowed without this write prerequisite.
+Setup never converts or normalizes a user's ACL. If refused, stop concurrent editors
+and manually add the [README launch binding](../README.md#3-reload-and-open),
+using `--entrypoint crossroads-windows` and an editor/write method that
+preserves the existing file identity and ACL (no temporary-file replacement).
+Check owner/group/DACL and inheritance before and after; do not enable inheritance
+or loosen permissions just to make automated setup work.
+
+Existing owner/group/DACL information is applied to exclusive staging at creation
+with inheritance temporarily blocked, so no additional parent grants expose config
+bytes. Before writing, the still-empty staging file receives the original DACL
+and protection state via low-level `SetFileSecurityW`; a handle-based readback must
+match the original owner/group/DACL snapshot byte-for-byte, including inheritance
+control bits. Restoration/readback failure closes and removes staging without
+changing the config. This deliberately uses the older descriptor setter, not
+`SetSecurityInfo`, which recomputes inheritance. New files/directories inherit
+Windows parent security rather than Unix mode bits; creation does not convert the
+resulting ACL. A later write to that new file must meet the same auto-inherited
+prerequisite (an unchanged binding still returns a no-op). Existing files use
+`ReplaceFileW` with **no flags that ignore ACL/merge errors**, not truncation or a
+non-atomic rewrite fallback.
+A concurrent creation cannot be replaced when creating a new config.
+Win32 replacement can fail partially: a private recovery directory provides the
+backup destination. On a partial failure, staging and any backup are retained;
+stderr names their locations for manual recovery. After successful replacement,
+the final owner/group/DACL descriptor must also match the original byte-for-byte
+before the backup is deleted or success reported. A mismatch or readback error
+retains the original backup and any remaining staging, reports recovery paths,
+and fails without retrying, rewriting ACLs or automatically restoring the file.
+Do not discard recovery files before inspecting the failure. This final check
+detects an unexpected result; it cannot undo a replacement's exposure window.
+Ordinary pre-replacement failures remove owned staging; empty new parents can remain.
+The final file check/replacement is **not a hostile-filesystem lock**, and audit
+SACL/power-loss guarantees are not claimed. Do not edit or run setup concurrently.
+Portable staging regressions cover legacy, auto-inherited and protected descriptors,
+restore/readback failures and cleanup. Commit regressions cover legacy refusal,
+no-op/new-file behavior, exact final verification and recovery retention on errors.
+Native success fixtures explicitly establish modern inheritance only on synthetic
+test files, retaining exact staging/final descriptor assertions, including protected
+auto-inherited updates. A separate unchanged legacy fixture checks refusal and
+preservation of bytes, security and identity without staging or replacement.
+Native Windows ACL/reparse/sharing/recovery tests are wired into preparation but
+this follow-up has not been executed on Windows from the Linux writing host.
+Native API contracts checked 2026-11-09: Microsoft's
+[CreateFileW security/sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
+[GetKernelObjectSecurity](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-getkernelobjectsecurity),
+[protected staging DACLs](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-setsecuritydescriptorcontrol),
+[low-level descriptor restoration](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-setfilesecurityw)
+(marked obsolete by Microsoft),
+and [ReplaceFileW preserved attributes, error flags and partial failures](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
+(pages updated 2025-07-01). These are API evidence, not native test results.
+Microsoft's [automatic-inheritance contract](https://learn.microsoft.com/en-us/windows/win32/secauthz/automatic-propagation-of-inheritable-aces)
+(updated 2025-03-12) describes `SetSecurityInfo` inheritance recomputation; neither
+that behavior nor a successful creation is proof of an exact descriptor copy.
+The temporary fallback follows [Rust 1.99.1 `temp_dir`](https://doc.rust-lang.org/1.99.1/std/env/fn.temp_dir.html).
+Windows action/path contracts were rechecked on 2026-11-09 against Herdr v0.9.5;
+the earlier compatibility evidence below retains its original scope/date.
 
 The action refuses occupied `prefix+f` in built-in configured bindings or custom
 commands, including arrays and whitespace-equivalent spellings, and unmodified
@@ -227,6 +327,8 @@ primary contracts:
 - [Managed installation and pane-open CLI](https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs)
 - [Action argv schema and valid hyphenated IDs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/manifest.rs)
 - [Asynchronous action execution and captured logs](https://github.com/herdrdev/herdr/blob/v0.9.5/src/app/api/plugins/runtime.rs)
+- [Relative argv resolution against plugin root](https://github.com/herdrdev/herdr/blob/v0.9.5/src/plugin_command.rs)
+- [Rust 1.99.1 Command executable extension rules](https://doc.rust-lang.org/1.99.1/std/process/struct.Command.html#method.new)
 - [Action invoke and log list --plugin syntax](https://github.com/herdrdev/herdr/blob/v0.9.1/src/cli/plugin.rs)
 - [Config-path presence precedence](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/io.rs)
 - [Binding normalization, shell default, and reserved prefix keys](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/keybinds.rs)
@@ -258,15 +360,15 @@ For the current checkout, the installer requires the agreed version's archive
 and adjacent checksum for exactly one target:
 
 ```text
-herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz[.sha256]
-herdr-crossroads-0.3.0-aarch64-apple-darwin.tar.gz[.sha256]
-herdr-crossroads-0.3.0-x86_64-apple-darwin.tar.gz[.sha256]
+herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz[.sha256]
+herdr-crossroads-0.3.1-aarch64-apple-darwin.tar.gz[.sha256]
+herdr-crossroads-0.3.1-x86_64-apple-darwin.tar.gz[.sha256]
 ```
 
 `[.sha256]` denotes the additional checksum file, not a literal filename.
-These are local preparation names, not available public 0.3.0 assets. Use trusted
+These are local preparation names, not available public 0.3.1 assets. Use trusted
 fresh local assets with the explicit override below; absent that override, this
-checkout requests unpublished 0.3.0 assets and fails rather than selecting 0.2.0.
+checkout requests unpublished 0.3.1 assets and fails rather than selecting 0.2.0.
 Selection uses the **running Python process architecture**, not physical hardware:
 ARM64 selects `aarch64-apple-darwin`; an x86_64 process under Rosetta selects the
 Intel asset. Actual Rosetta execution has **not** been proven. Older or unknown

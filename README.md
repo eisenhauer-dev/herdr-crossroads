@@ -50,7 +50,7 @@ use the [current controls](#controls) below rather than the recorded key labels.
 ## Requirements and compatibility
 
 [![Published: 0.2.0](https://img.shields.io/badge/published-0.2.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.2.0)
-[![Preparing: Windows for 0.3.0](https://img.shields.io/badge/preparing-Windows_for_0.3.0-orange?style=flat)](docs/builds.md#windows-preparation-not-certification)
+[![Preparing: 0.3.1](https://img.shields.io/badge/preparing-0.3.1-orange?style=flat)](docs/installation.md#keyboard-launch-setup)
 [![Herdr: ≥ 0.9.1](https://img.shields.io/badge/Herdr-%E2%89%A5%200.9.1-5865a3?style=flat)](https://herdr.dev)
 [![Managed installation: Python ≥ 3.11](https://img.shields.io/badge/managed_install-Python_%E2%89%A5_3.11-3776ab?style=flat&logo=python&logoColor=white)](docs/installation.md)
 [![Supported: Linux x86_64 glibc](https://img.shields.io/badge/Linux-x86__64_glibc-2ea44f?style=flat&logo=linux&logoColor=white)](docs/builds.md#runtime-and-verification-limits)
@@ -61,9 +61,10 @@ use the [current controls](#controls) below rather than the recorded key labels.
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
 - Released **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
   `MACOSX_DEPLOYMENT_TARGET=15.0`. Published 0.1.0 remains Linux-only.
-- Native **Windows 10/11 x86_64** is intended for **0.3.0**, currently
-  **PREPARATION only**, not supported or certified. The local package version is
-  **0.3.0**, unpublished on all four targets. Native GNU Windows preparation CI
+- Native **Windows 10/11 x86_64** remains subject to the
+  **PREPARATION** limitations below, not Windows 10/11 certification. The local package
+  version is **0.3.1**, pending release; published **0.3.0** assets remain immutable.
+  Native GNU Windows preparation CI
   passed on Windows Server 2025 on 2026-11-05; a user-reported basic
   Windows 11 source-build/link/live-popup test with Herdr 0.9.5 succeeded on
   2026-10-28. Neither establishes Windows 10/11 certification or release approval.
@@ -122,8 +123,8 @@ use the [current controls](#controls) below rather than the recorded key labels.
 ### Quickstart
 
 Install [Herdr](https://herdr.dev) first and check the
-[requirements](#requirements-and-compatibility). This quickstart is for Linux/macOS;
-Windows preparation uses a separate entrypoint and has no setup action.
+[requirements](#requirements-and-compatibility). The manual launch entry below is for
+Linux/macOS; Windows uses `crossroads-windows`. The updated setup action selects it automatically.
 **Review the source, manifest, and assets before approving installation: it executes
 code and registers a plugin globally for your user, not in a sandbox.**
 
@@ -138,8 +139,8 @@ version and platform binary. To select released Linux/macOS 0.2.0 rather than
 the development branch, use `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`.
 The Windows WIP is not a released Windows installation route. See [installation options and safeguards](docs/installation.md) and
 [public installation evidence](docs/installation.md#regular-010-public-installation).
-Local 0.3.0 preparation is unpublished: do not use `--ref v0.3.0` or expect its
-download assets. Advancing the default branch requires matching approved assets
+Local **0.3.1** preparation is pending release: do not expect `v0.3.1` download
+assets yet. Advancing the default branch requires matching approved assets
 or a separately approved controlled publication window.
 
 <a id="add-the-launch-binding-reload-and-open"></a>
@@ -148,6 +149,13 @@ or a separately approved controlled publication window.
 
 Installation alone does not write a host binding. Explicitly opt in to adding
 `prefix+f` to Herdr's user config:
+
+**Updated source action:** requires the matching **0.3.1 binary, manifest and helper**.
+Build the updated binary first when using a source checkout. Published 0.3.0 binaries
+do not implement `--setup-keybind`; changing only the manifest/helper is insufficient.
+The 0.3.1 fix is pending release, not available through older immutable release assets.
+On Windows the action uses `python`; on Linux/macOS it uses `python3`, both **3.11+**
+on the server's `PATH`. No interpreter alias is needed.
 
 ```sh
 herdr plugin action invoke herdr-crossroads.setup-keybind
@@ -192,6 +200,8 @@ description = "Open Herdr Crossroads"
 ```
 
 `shell` runs the launch command detached; the plugin manifest opens the popup.
+For a manual Windows binding, replace `--entrypoint crossroads` above with
+`--entrypoint crossroads-windows`; the updated setup action does this itself.
 After manual setup, reload as above and press your configured prefix and chosen key.
 This host launch binding is separate from `keymaps.jsonc`, which changes only
 controls inside Crossroads. Personal-host configuration and key launch remain
@@ -261,8 +271,8 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
 ```
 
 The `crossroads` entrypoint supports Linux/macOS only; opening it on Windows fails
-with `platform_unsupported`. Windows must use `crossroads-windows`, and the Unix
-`setup-keybind` action does not apply. See [Windows preparation limitations](docs/installation.md#windows-preparation-limitations).
+with `platform_unsupported`. Windows must use `crossroads-windows`; the updated
+`setup-keybind` action selects that entrypoint. See [setup requirements and safeguards](docs/installation.md#keyboard-launch-setup).
 
 - Without manifest dimensions or CLI overrides, the popup defaults to half-size.
   For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's

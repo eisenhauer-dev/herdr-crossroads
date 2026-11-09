@@ -6,10 +6,10 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-**0.2.0 is released** for Linux and macOS. Native Windows 10/11 x86_64 is intended
-for **0.3.0**, currently **PREPARATION only**; the checkout's package/manifest
-version is **0.3.0**, unpublished on all four targets. Current commands below
-prepare new local assets, not public downloads. The historical `0.1.0` Linux
+**0.3.0 is released** for Linux, macOS and Windows GNU with the disclosed Windows
+compatibility and provenance limits. The checkout's package/manifest version is
+**0.3.1**, currently local preparation only; current commands prepare new assets,
+not published 0.3.1 downloads. The historical `0.1.0` Linux
 release was published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
@@ -93,8 +93,125 @@ command deadlines with bounded process-tree cleanup. Each acceptance method is
 isolated in a process with a 30-second deadline, including fixture teardown;
 the overall job timeout is unchanged. See [native test scope and timeout limits](keymaps.md#windows-preparation-verification).
 
+Immediately before `tests/test_setup_keybind.py`, the helper runs
+`tests/diagnose_windows_security.py` unbuffered under the same supervisor with a
+60-second deadline. This diagnostic uses only standard-library ctypes and isolated
+temporary synthetic files, never real Herdr or user configuration. It compares
+protected staging creation followed by `SetFileSecurityW` DACL-only (`4`) with
+the existing `4 | PROTECTED/UNPROTECTED_DACL_SECURITY_INFORMATION` sequence and
+one additional `auto-inherit-request` variant. The latter uses a separate copy of
+the original descriptor, setting `SE_DACL_AUTO_INHERIT_REQ` (`0x0100`) through
+`SetSecurityDescriptorControl` only when the original has `SE_DACL_AUTO_INHERITED`
+(`0x0400`), then calls `SetFileSecurityW` with the original protection flags.
+The original descriptor is never modified. Microsoft's
+[control-bit reference](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-control)
+(checked 2026-11-09) describes an inheritance request, not a byte-exact restore
+guarantee; exact native readback remains necessary. All three variants retain
+the no-sharing stage handle and ancestor pins. Fixture setup requests legacy/default
+unprotected, auto-inherited and protected descriptors under a controlled parent
+with an inheritable Everyone-read ACE. The auto-inherited target starts with the
+private protected DACL, then explicitly enables inheritance using
+`SetNamedSecurityInfoW` with `SE_FILE_OBJECT` and
+`DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION`
+before synthetic bytes are written.
+Fixture control prerequisites are checked;
+setup, capture and cleanup failures are real failures, not successful observations.
+
+Flushed JSON records include original/parent, staging before/after the setter and
+target after `ReplaceFileW(flags=0)`: owner/group/DACL SDDL (including ACE order,
+masks and flags), control bits, raw descriptor bytes and equality comparisons.
+The additional variant's setter record includes `setter_descriptor` with the
+actual copied input's control bits, raw bytes and SDDL before the file setter runs.
+Failure to prepare or capture this copy is an infrastructure failure.
+Only after both staging captures are synthetic replacement bytes written.
+Setter/replacement API failures are reported per variant without stopping other
+probes; they are observations, not acceptance assertions. Raw-byte and SDDL
+equality are reported separately and neither proves semantic equivalence.
+Non-Windows execution explicitly skips native APIs; portable harness regressions
+check fixture-string construction, conversion call order/arguments, native error
+handling and rejection of missing control bits, not Windows API compatibility.
+The supplied [native run 42656050331, job 129294702206](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42656050331/job/129294702206)
+on Server 2025/Python 3.12.10 failed all six fixture setups with WinError 1336
+before original/parent captures; no setter comparison was obtained. A portable
+regression identified malformed fixture SDDL: replacing every `A;;` also matched
+the tail of `FA;;;`, inserting `OICI` into the object-GUID field. Replacement now
+matches only the ACE opening `(A;;`, preserving the
+[ACE field layout](https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-strings)
+(Microsoft documentation checked 2026-11-09). The supplied follow-up native run
+[42657829325](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42657829325)
+reached the comparisons for legacy/protected fixtures but failed both auto-inherited
+setups: control `0x8004` lacked the required `0x0400` bit. Creating a file beneath
+the low-level `SetFileSecurityW`-configured parent did not establish the current
+automatic-inheritance model. The fixture now explicitly requests conversion via
+[SetNamedSecurityInfoW](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfow)
+and retains the strict control-bit readback prerequisite; Microsoft's
+[automatic-inheritance contract](https://learn.microsoft.com/en-us/windows/win32/secauthz/automatic-propagation-of-inheritable-aces)
+documents this API's conversion and `SE_DACL_AUTO_INHERITED` bit (checked 2026-11-09).
+That run's protected replacement succeeded with control `0x9004` changing to
+`0x9404`; this observation alone does not establish a production defect or acceptance.
+The subsequent [native run 42663256496](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42663256496)
+reported zero diagnostic infrastructure failures for the corrected fixtures and
+the two original variants. For the auto-inherited fixture, original control
+`0x8404` (180 bytes) became `0x9004` at protected staging creation, then `0x8004`
+after either setter; only diagnostic replacement yielded raw equality to the original.
+For the legacy fixture, staging matched the original `0x8004` (144 bytes), but
+replacement yielded `0x8404` (208 bytes), not raw equality.
+
+Native JSON from
+[run 42676763541](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42676763541)
+at source `63fa0657b06373a3da3fe1c798dbf3edaaf13abf` (2026-11-09) reports zero
+infrastructure failures across all nine fixture/variant combinations. For the
+auto-inherited fixture, the request variant passed a copied setter descriptor
+with control `0x8504` and flags `0x20000004`; staging read back as `0x8404`,
+raw-equal to the original, as did the final replacement. This confirms the
+observational candidate on that native fixture, not full product acceptance.
+The product staging setter now uses this separate copy and conditional request,
+derives protection flags from the unchanged original, and still refuses any raw
+readback mismatch before descriptor handoff or config-byte writes. Portable
+regressions model the missing-request bit loss, copy isolation, conditional
+request, protection flags and failure cleanup. A native regression checks exact
+staging/target security and bytes over three auto-inherited updates; execution
+of the changed product and full native setup/keybind GREEN remain open. The
+run's unchanged-product setup suite still had 11 failures and 5 skips
+among 26 tests.
+
+**Legacy replacement observation and fail-closed support boundary:** the diagnostic legacy fixture's final replacement
+actually adds inherited Administrators-full, SYSTEM-full and Everyone-read ACEs
+to its original three explicit ACEs. The controlled parent grants those
+inheritable permissions; original/staging `0x8004` (144 bytes) becomes final
+`0x8404` (208 bytes). This demonstrates permission broadening in a synthetic
+fixture, not exploitation of real user configuration. The staging fix alone does
+not prevent it. Product updates now refuse descriptors without
+`SE_DACL_AUTO_INHERITED` (`0x0400`) before staging/replacement, including both
+legacy `0x8004` and protected non-auto-inherited `0x9004`. The latter's observed
+`0x9004` to `0x9404` change alone is not a permission-broadening proof, but violates
+the exact-descriptor contract. No-op setup is still allowed; new configs still
+inherit parent security and must meet the same prerequisite for subsequent writes.
+User ACLs are never normalized. Use the [manual ACL-preserving setup alternative](installation.md#keyboard-launch-setup)
+when refused, not permission changes to bypass the guard.
+
+After native replacement, exact final descriptor readback is required before
+backup deletion and success. Mismatch/readback failure retains the original backup
+and any remaining staging, reports recovery paths and fails without automatic
+retry or restoration. This is a detection/recovery gate, not prevention of an
+unexpected post-replacement exposure; refusing known unsupported descriptors
+before replacement is the preventive fix. Portable commit regressions cover these
+boundaries, with success fixtures explicitly modern and a separate native legacy
+refusal regression. Protected-auto-inherited `0x9404` retains the exact descriptor
+guards. Native [run 42682540431](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42682540431)
+at `fd06120fa6dc60905256e8927048a49a9e7e2cca` passed all 29 keybind tests,
+including protected auto-inherited updates, legacy refusal and recovery checks.
+The setup suite passed 26 tests with five Unix-only skips. The subsequent manifest
+dispatch acceptance case still used a legacy success fixture and was refused;
+that synthetic fixture now explicitly establishes modern inheritance using the
+same test-only helper. Full native acceptance and packaging remain unverified.
+Fixture/API checkpoints and infrastructure-error code locations distinguish
+setup steps without dumping exception messages, personal paths, source lines or
+locals. The probe's completion record remains `acceptance: "not evaluated"`;
+existing setup/keybind assertions, deadlines and fail-closed gates are unchanged.
+
 Outputs under `target/builds/` currently use
-`herdr-crossroads-0.3.0-x86_64-pc-windows-gnu` with `.tar.gz`, `.tar.gz.sha256`,
+`herdr-crossroads-0.3.1-x86_64-pc-windows-gnu` with `.tar.gz`, `.tar.gz.sha256`,
 `.provenance.json`, and `.link.map` suffixes. They derive from the canonical package
 version; historical 0.2.0 outputs below remain unchanged. CI uploads exactly
 these four files as a
@@ -750,7 +867,7 @@ there is no post-test signing, stripping or other binary mutation. These are
 authenticate a publisher or establish Gatekeeper acceptance.
 
 For each target, current local preparation output under `target/builds/` uses
-`herdr-crossroads-0.3.0-<target>` with `.tar.gz`, `.tar.gz.sha256`,
+`herdr-crossroads-0.3.1-<target>` with `.tar.gz`, `.tar.gz.sha256`,
 `.provenance.json`, and `.link.map` suffixes. The archive has the same four-member
 contract as Linux, normalized root ownership and modes 0755 (binary)/0644 (others).
 Handled build, notice, inspection, PTY or packaging failures remove the selected
@@ -903,13 +1020,13 @@ Only after all four full PTYs pass does it package the archive. A successful
 invocation leaves these ignored outputs (JSON/map are collected before the PTYs):
 
 ```text
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.link.map
 ```
 
-These names use the checkout version `0.3.0`, not a fixed literal in the
+These names use the checkout version `0.3.1`, not a fixed literal in the
 helper. Other versions' outputs are left untouched and never selected as this
 invocation's artifacts. The helper does not write `GITHUB_OUTPUT` or other workflow
 metadata into caller-selected files.
@@ -927,7 +1044,7 @@ Checksums detect corruption, not authenticity or publisher identity.
 
 This describes new local/CI builds, not a replacement of the published `v0.1.0`
 assets, which still contain `THIRD-PARTY-NOTICES.html`. They remain immutable;
-new 0.3.0 outputs are separate artifacts from both published 0.1.0 and 0.2.0.
+new 0.3.1 outputs are separate artifacts from both published 0.1.0 and 0.2.0.
 Do not publish or replace assets without separate approval. The current installer
 supports that exact historical HTML through the
 [pinned compatibility contract](installation.md#validation-and-failure-behavior).
@@ -1004,7 +1121,7 @@ this is not evidence of the Ubuntu 24.04 runner's glibc version.
 Verify the archive from the repository root:
 
 ```sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
+(cd target/builds && sha256sum -c herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
 ```
 
 After extracting the tar into a separate empty directory, run
