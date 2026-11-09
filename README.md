@@ -76,6 +76,9 @@ use the [current controls](#controls) below rather than the recorded key labels.
   (standard library only); no Rust/Cargo required.
 - Public downloads prefer existing **curl** on `PATH`; urllib is used only if curl
   is absent, never after a curl failure. See [download safeguards](docs/installation.md#validation-and-failure-behavior).
+- Windows Schannel revocation errors have a disabled-by-default, explicit
+  [best-effort workaround](docs/installation.md#optional-windows-schannel-revocation-workaround)
+  in updated installer source, not the pinned `v0.3.0` installer; review its security trade-off first.
 
 ### Source builds
 

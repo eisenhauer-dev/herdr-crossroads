@@ -48,10 +48,13 @@ def download(url, limit):
     require_https(url)
     curl = shutil.which("curl")
     if curl is not None:
-        # Keep curl's native TLS verification; ignore curlrc and inherited proxies.
+        # Keep native certificate-chain/hostname verification; ignore curlrc and inherited proxies.
         command = [curl, "--disable", "--proto", "=https", "--proto-redir", "=https",
                    "--disallow-username-in-url", "--location", "--fail", "--silent", "--show-error",
                    "--noproxy", "*", "--max-time", "30", "--url", url]
+        if (platform.system() == "Windows"
+                and os.environ.get("CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT") == "1"):
+            command.append("--ssl-revoke-best-effort")
         with subprocess.Popen(command, stdout=subprocess.PIPE) as child:
             try:
                 # Bound unknown-length responses too, including on older curl.
