@@ -11,6 +11,12 @@ launch binding. Opening or searching the popup invokes neither path and does not
 install/update binaries or change host configuration. There are no startup or
 event hooks. See [installation and setup safeguards](installation.md).
 
+`src/cli.rs` dispatches `--setup-keybind` before runtime initialization, using
+`python3` on Unix and `python` on Windows with inherited stdio/environment and
+no shell. This keeps one action ID/argv for all platforms despite Herdr's unique-ID
+constraint. It requires the updated 0.3.1 binary plus manifest/helper; 0.3.1 is
+pending release, and published 0.3.0 binaries remain immutable and lack this flag.
+
 Released 0.2.0 covers Linux x86_64 glibc and macOS 15.0+ ARM64/Intel;
 published 0.1.0 stays Linux-only. The following Unix distribution evidence does
 not cover the Windows WIP. Installation selects the running
@@ -25,10 +31,14 @@ acceptance waiver is not an automated-installation waiver.
 
 ### Windows preparation boundary
 
-Native Windows 10/11 x86_64 is intended for 0.3.0, **PREPARATION only**; the local
-package is unpublished 0.3.0. The manifest separates Unix `crossroads` from Windows
+Native Windows 10/11 x86_64 retains its **PREPARATION** verification limits; the local
+package is 0.3.1, pending release. The manifest separates Unix `crossroads` from Windows
 `crossroads-windows` (`./target/release/herdr-crossroads.exe`), with `python` for
-Windows installation and `python3` on Unix. `setup-keybind` remains Unix-only.
+Windows installation and `python3` on Unix. The updated `setup-keybind` action
+supports both, selecting the appropriate pane launch entry. Its Windows path uses
+`scripts/windows-files.py` directory pins and ACL-preserving native replacement,
+not Unix directory descriptors or mode bits. See the filesystem/race limitations
+in [keyboard launch setup](installation.md#keyboard-launch-setup).
 The Windows installer shares archive/checksum/notice validation but validates
 AMD64 PE32+ console headers and uses a native pinned-directory/reparse-rejecting
 replacement helper instead of Unix directory descriptors.
@@ -81,7 +91,7 @@ and release gates remain open.
 | `src/transport.rs` | CLI/socket transport, status-subscription ownership and readers, bounded reconnect execution and connection deadlines, reconnect cancellation |
 | `src/selection.rs` | Shared UI state, mode/keymap dispatch, pane filtering/navigation and selected pane identity |
 | `src/selection/help.rs` | Help entries/state, independent filter and search/navigation input |
-| `src/selection/mouse.rs` | Render-recorded hit regions, mouse state/gesture validation and existing-action dispatch |
+| `src/selection/mouse.rs` | Render-recorded hit regions, mouse state/gesture validation, viewport scrolling and existing-action dispatch |
 | `src/selection/themes.rs` | Theme-picker input, preview toggle, save/cancel transitions and Auto-transition notice |
 | `src/search.rs` | Case-insensitive per-field subsequence matching and greedy source-character match positions |
 | `src/theme.rs` | Internal theme facade preserving caller access to palettes, discovery and persistence |
@@ -90,11 +100,11 @@ and release gates remain open.
 | `src/theme/persistence.rs` | Plugin theme-file validation/diagnostics and explicit save/delete |
 | `src/status_colors.rs` | Status-color defaults, file validation/diagnostics, status lookup and explicit overrides of theme roles |
 | `src/presentation.rs` | Rendering facade: view dispatch, frame painting, size-only notices, shared text/style helpers and theme notices |
-| `src/presentation/table.rs` | Pane table and theme table preview: column budgets, rows, borders, match/status styling and selected-pane viewport |
+| `src/presentation/table.rs` | Pane table and theme table preview: column budgets, rows, borders, match/status styling, selection-following and wheel viewport bounds |
 | `src/presentation/diagnostics.rs` | Common configuration-error page, source-row cell clipping and diagnostic scrolling |
 | `src/presentation/footer.rs` | Effective-binding hint groups, footer row budgets, hint paging and shared search prompts |
-| `src/presentation/help.rs` | Help layout, category spacing, selected-entry viewport, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
-| `src/presentation/themes.rs` | Theme-list picker layout, visible choices and preview highlight; theme state/persistence remain in `selection`/`theme` |
+| `src/presentation/help.rs` | Help layout, category spacing, selection-following and wheel viewport bounds, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
+| `src/presentation/themes.rs` | Theme-list picker layout, viewport bounds, visible choices and preview highlight; theme state/persistence remain in `selection`/`theme` |
 | `src/terminal.rs` | Terminal sizing, raw-mode, Kitty and mouse ownership/restoration, stdout drawing and cursor placement |
 | `src/terminal/windows.rs` | Windows console-mode/VT ownership and restoration, native terminal sizing, no Kitty negotiation |
 | `src/terminal/windows_input.rs` | Console input flag policy, shared with portable flag tests and native ConPTY mode tests |
@@ -130,7 +140,7 @@ fixtures and fake hosts.
 plugin config files ──> config/keymap/theme/status_colors validation ──> Ui
 Herdr CLI snapshot + worktree list ──> topology rows ──────────> Ui
 stdin bytes ──> Keys decoder ──> context action / search ──────> Ui
-rendered hit regions + mouse event ──> selection/action ──────> Ui
+rendered layout + mouse event ──> selection/action/viewport ──> Ui
 local socket status events ──> validated row status ─────────> Ui
 Ui + theme + status_colors + terminal dimensions ──> presentation ──> terminal ──> stdout
 Select confirmation ──> chosen stable pane ID ──> local pane.focus request
@@ -196,8 +206,16 @@ reuse their visible entries; footer positions use rendered terminal-cell widths.
 The UI validates the rendered state before using coordinates, and the event loop
 rechecks terminal size before mouse dispatch to discard stale resize input.
 Mouse defaults on, with a read-only root `mouse_enabled` setting in keymaps.
-The wheel dispatches standard `j`/`k` behavior independent of custom bindings;
-hover only highlights rows (and previews a pending theme). A single left click
+The wheel changes only the active viewport offset within renderer-supplied bounds,
+independent of custom bindings, without wrapping or changing selection, pending
+theme choice, search editing state or host focus. It does nothing when all content
+fits. Table and Help reuse their viewport offsets; the theme list has a separate
+offset so it cannot overwrite the remembered pane viewport. After wheel scrolling,
+rendering preserves the offset within the current bounds; keyboard navigation
+resumes selection-following. Table layout reconciles the offset to changed viewport
+bounds even while following selection, so a taller resize cannot leave an invalid
+offset for the next wheel event.
+Hover only highlights rows (and previews a pending theme). A single left click
 focuses the clicked pane, saves the clicked theme or executes a Help action in
 its originating view. Pane hits include theme-table preview and its search.
 See [the input and cleanup contract](keymaps.md#mouse-controls), including

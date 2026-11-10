@@ -146,7 +146,10 @@ fn help_filter_matches_columns_independently_in_original_order() {
                 "Left click",
                 "focus clicked pane; Help runs action; footer or search"
             ),
-            ("Wheel", "highlight previous or next row, including search")
+            (
+                "Wheel",
+                "scroll viewport only; keep selection, including search"
+            )
         ]
     );
     for (query, expected) in [
@@ -315,7 +318,7 @@ fn themes_help_preserves_pending_preview_and_pane_state_without_saving() {
                     ),
                     (
                         "Wheel",
-                        "preview theme; Help/search highlights next or previous row"
+                        "scroll viewport only; keep selection, including search"
                     )
                 ]
             );

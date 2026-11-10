@@ -60,14 +60,17 @@ on:
         self.assertEqual(panes["crossroads-windows"]["platforms"], ["windows"])
         self.assertEqual(panes["crossroads-windows"]["command"], ["./target/release/herdr-crossroads.exe"])
         self.assertEqual(manifest["build"][1], {"platforms": ["windows"], "command": ["python", "scripts/install-binary.py"]})
-        self.assertEqual(manifest["actions"][0]["platforms"], ["linux", "macos"])
+        self.assertEqual(manifest["actions"][0]["platforms"], ["linux", "macos", "windows"])
+        self.assertEqual([action["id"] for action in manifest["actions"]], ["setup-keybind"])
+        self.assertEqual(manifest["actions"][0]["command"],
+                         ["./target/release/herdr-crossroads", "--setup-keybind"])
 
     def test_native_helper_runs_mouse_and_input_policy_groups_and_both_acceptance_passes(self):
         tree = ast.parse((ROOT / "scripts/build-windows.py").read_text(encoding="utf-8"))
         loop = next(node for node in ast.walk(tree) if isinstance(node, ast.For)
                     and isinstance(node.target, ast.Name) and node.target.id == "group")
         groups = ast.literal_eval(loop.iter)
-        for group in ("test_input", "test_search", "test_selection::navigation", "test_mouse",
+        for group in ("test_cli", "test_input", "test_search", "test_selection::navigation", "test_mouse",
                       "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
                       "test_keymap::enter_is_reserved", "test_keymap::lowercase_f"):
             self.assertIn(group, groups)
@@ -84,6 +87,26 @@ on:
         self.assertEqual(len(acceptance), 2, "final-linked and installed bytes both need native mouse acceptance")
         for command in acceptance:
             self.assertEqual(next(k.value.value for k in command.keywords if k.arg == "timeout"), 240)
+        source = (ROOT / "scripts/build-windows.py").read_text(encoding="utf-8")
+        for expected in ('"--test", "setup_dispatch"', '"tests/test_setup_keybind.py"',
+                         '"tests/test_windows_keybind.py"'):
+            self.assertIn(expected, source)
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == "run"
+                 and node.args and isinstance(node.args[0], ast.List)]
+        def script_call(path):
+            return next(node for node in calls if any(
+                isinstance(value, ast.Constant) and value.value == path for value in node.args[0].elts))
+        diagnostic = script_call("tests/diagnose_windows_security.py")
+        self.assertEqual([value.value if isinstance(value, ast.Constant) else ast.unparse(value)
+                          for value in diagnostic.args[0].elts],
+                         ["sys.executable", "-u", "-B", "tests/diagnose_windows_security.py"])
+        self.assertEqual(next(k.value.value for k in diagnostic.keywords if k.arg == "timeout"), 60)
+        self.assertEqual(next(k.value.id for k in diagnostic.keywords if k.arg == "env"), "environment")
+        ordered = sorted(calls, key=lambda node: node.lineno)
+        self.assertIs(ordered[ordered.index(diagnostic) + 1], script_call("tests/test_setup_keybind.py"))
+        self.assertLess(script_call("tests/test_setup_keybind.py").lineno,
+                        script_call("tests/test_windows_keybind.py").lineno)
 
 
 class WindowsWorkflowEncodingTests(unittest.TestCase):

@@ -3,11 +3,13 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 
 
@@ -60,6 +62,37 @@ class WindowsAcceptanceTests(unittest.TestCase):
         console.until(b"test result:")
         self.assertEqual(console.exited(), 0, bytes(console.output).decode("utf-8", "backslashreplace"))
         console.until(b"1 passed")
+
+    def test_manifest_setup_dispatch_finds_exe_and_writes_only_opt_in_config(self):
+        checkout = self.base / "plugin with spaces"
+        (checkout / "target/release").mkdir(parents=True)
+        (checkout / "scripts").mkdir()
+        shutil.copy2(self.binary, checkout / "target/release/herdr-crossroads.exe")
+        for name in ("setup-keybind.py", "windows-files.py"):
+            shutil.copy2(ROOT / "scripts" / name, checkout / "scripts" / name)
+        manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text(encoding="utf-8"))
+        action, = manifest["actions"]
+        argv = [str(checkout / action["command"][0]), *action["command"][1:]]
+        # Mirror Herdr v0.9.5 program_for_cwd: absolute plugin-root-relative
+        # argv, not shell resolution. The manifest deliberately omits .exe.
+        config = Path(self.env["HERDR_CONFIG_PATH"])
+        original = '# 配置\r\n[keys]\r\ngoto = "prefix+g" # keep'.encode()
+        config.write_bytes(original)
+        from windows_security_fixture import auto_inherit
+        auto_inherit(config)
+        for expected in ("Added prefix+f", "Already configured"):
+            output = subprocess.run(argv, cwd=checkout, env=self.env, input=b"",
+                                    capture_output=True, timeout=10)
+            self.assertEqual(output.returncode, 0, output.stderr)
+            self.assertIn(expected.encode(), output.stdout)
+            self.assertEqual(output.stderr, b"")
+            self.assertNotIn(b"\x1b", output.stdout)
+        self.assertTrue(config.read_bytes().startswith(original))
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+        self.assertEqual(data["keys"]["command"][0]["command"],
+                         "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows")
+        self.assertFalse(self.log.exists(), "setup must not invoke the Herdr CLI")
+        self.assertFalse(Path(self.env["HERDR_PLUGIN_CONFIG_DIR"]).exists())
 
     def test_console_handles_ignore_redirected_parent_stdio(self):
         # Force redirected stdin/stdout/stderr regardless of the launching shell.
@@ -158,16 +191,16 @@ class WindowsAcceptanceTests(unittest.TestCase):
         # The codex pane also matches through its full long pane name.
         filtered = ("pane 3", "pane 4", "pane 1", "codex (An extremel…", "pane 2")
         console.until_table(mode="Search", query="pane", selected=(0, "pane 3"), panes=filtered)
-        # Current cells plus the editing cursor prove both navigation and
+        # Current cells plus the editing cursor prove unchanged selection and
         # unchanged text/focus, not a historical emitted query label.
-        console.send(mouse(5, 5, button=64))
-        console.until_table(mode="Search", query="pane", selected=(4, "pane 2"), panes=filtered)
-        console.send(mouse(5, 5, button=65))
-        console.until_table(mode="Search", query="pane", selected=(0, "pane 3"), panes=filtered)
-        console.send(mouse(5, 5, button=65))
-        console.until_table(mode="Search", query="pane", selected=(1, "pane 4"), panes=filtered)
-        console.send(mouse(5, 5, button=64))
-        console.until_table(mode="Search", query="pane", selected=(0, "pane 3"), panes=filtered)
+        for button in (64, 65, 65, 64):
+            console.send(mouse(5, 5, button=button))
+            # All filtered rows fit. A keyboard mode barrier proves the no-op
+            # report was processed even when ConPTY emits no unchanged paint.
+            console.send(b"\r")
+            console.until_table(mode="Select", query="pane", selected=(0, "pane 3"), panes=filtered)
+            console.send(b"f")
+            console.until_table(mode="Search", query="pane", selected=(0, "pane 3"), panes=filtered)
         console.send(b"\x7f" * 4 + b"codex")
         console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",))
         console.send(b"\r")
@@ -191,15 +224,18 @@ class WindowsAcceptanceTests(unittest.TestCase):
         step(mouse(4, 4), b"codex")
         directory = Path(self.env["HERDR_PLUGIN_CONFIG_DIR"])
         self.assertEqual(json.loads((directory / "theme.jsonc").read_text())["theme"], "terminal")
-        # Reset clears the filter, not the stable ID last selected by the wheel.
+        # Reset clears the filter, not the stable ID preserved by the wheel.
         step(mouse(14, 29), "Keys — Select".encode())
         step(mouse(4, 14, button=35), b"reset search")
         step(b"\r", b"Claude")
         panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
-        console.until_table(mode="Select", query="f to search", selected=(2, "pane 3"), panes=panes)
+        console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=panes)
         console.reset_output()
         console.send(mouse(5, 5, button=65))
-        console.until_table(mode="Select", query="f to search", selected=(3, "pane 4"), panes=panes)
+        console.send(b"f")
+        console.until_table(mode="Search", query="", selected=(0, "Claude"), panes=panes)
+        console.send(b"\r")
+        console.until_table(mode="Select", query="f to search", selected=(0, "Claude"), panes=panes)
         console.reset_output()
         console.send(mouse(2, 29))
         self.assertEqual(console.exited(timeout=2), 0)

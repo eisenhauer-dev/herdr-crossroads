@@ -11,6 +11,15 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_NATIVE_CARGO_GATES = [
+    ["cargo", "test", "--locked", "--test", "windows_console", "--no-run", "--message-format=json"],
+    ["cargo", "test", "--locked", "--lib", "test_windows", "--", "--test-threads=1"],
+    *[["cargo", "test", "--locked", "--lib", group] for group in (
+        "test_cli", "test_input", "test_search", "test_selection::navigation", "test_mouse",
+        "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
+        "test_keymap::enter_is_reserved", "test_keymap::lowercase_f")],
+    ["cargo", "test", "--locked", "--test", "setup_dispatch"],
+]
 APPROVED_PREPARATION_IMPORTS = (
     "bcryptprimitives.dll",
     "api-ms-win-crt-environment-l1-1-0.dll",
@@ -191,7 +200,7 @@ class WindowsProvenanceTests(unittest.TestCase):
         self.assertIn("linker-messages", evidence["link_command"])
         self.assertIn("not original linker bytes", evidence["resolved_link_inputs"]["trace_capture"])
         groups = [args for args, kw in evidence["calls"] if args[:3] == ["cargo", "test", "--locked"]]
-        self.assertEqual(len(groups), 10)
+        self.assertEqual(groups, EXPECTED_NATIVE_CARGO_GATES)
         self.assertTrue(all(kw["timeout"] == 60 for args, kw in evidence["calls"] if args in groups and "--no-run" not in args))
 
     def test_large_pe_capture_parses_tail_and_hashes_complete_output(self):
@@ -575,7 +584,8 @@ class WindowsProvenanceTests(unittest.TestCase):
         self.assertEqual(evidence["archive_members"], ["herdr-crossroads.exe", "herdr-crossroads.exe.sha256",
                                                      "LICENSE", "THIRD-PARTY-NOTICES.md"])
         calls = [args for args, options in evidence["calls"]]
-        self.assertEqual(len([args for args in calls if args[:3] == ["cargo", "test", "--locked"]]), 10)
+        self.assertEqual([args for args in calls if args[:3] == ["cargo", "test", "--locked"]],
+                         EXPECTED_NATIVE_CARGO_GATES)
         for script in ("tests/test_windows_acceptance.py", "tests/test_windows_distribution.py"):
             self.assertTrue(any(script in args for args in calls))
 

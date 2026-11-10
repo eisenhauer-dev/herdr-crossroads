@@ -2,6 +2,7 @@
 import contextlib
 import copy
 import errno
+import json
 import os
 import pty
 import signal
@@ -211,6 +212,126 @@ class TerminalRestorationDiagnosticsTests(unittest.TestCase):
                         os.fstat(fd)
 
 
+class ModeColorFrameTests(unittest.TestCase):
+    def run_cases(self, delivery="delayed", missing=False, invalid_colors=False, read_ahead=False):
+        now = 0.0
+        emissions = []
+        popups = []
+        test = self
+        tail = b"next draw\x1b[?25l" if read_ahead else b""
+        transitions = (
+            (b"f", "SELECT", 0, "", True), (b"\r", "SELECT", 0, "f to search", False),
+            (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
+            (b"\r", "HELP", 0, "f to search", False), (b"q", "SELECT", 0, "f to search", False),
+            (b"t", None, 0, "", False), (b" ", "THEMES", 1, "", False),
+            (pty_keymaps.mouse_report(4, 1), "THEMES", 0, "", True),
+            (b"x", "THEMES", 0, "x", True), (b"\x7f", "THEMES", 0, "", True),
+            (b"\r", "THEMES", 1, "", False),
+            (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
+            (b"\r", "HELP", 0, "f to search", False), (b"q", "THEMES", 1, "", False),
+            (b"q", "SELECT", 0, "f to search", False),
+        )
+
+        def paint(popup, mode="SELECT", y=0, query="f to search", searching=False):
+            raw = "\x1b[H\x1b[J" + popup.style
+            if mode is None:
+                raw += "  Themes · selected: catppuccin · preview: catppuccin · keys"
+            else:
+                row = pty_render.expected_search_row(popup.width, query, mode)
+                badge = f"MODE: {mode}"
+                if y:
+                    raw += "  Themes · saved: catppuccin · preview: catppuccin\r\n"
+                raw += row.replace(badge, f"\x1b[7m{badge}\x1b[27m") + "\x1b[K"
+            raw += f"\x1b[1;{11 + len(query)}H\x1b[?25h" if searching else "\x1b[?25l"
+            return raw.encode()
+
+        class Popup:
+            def __init__(self, binary, directory, width, height):
+                nonlocal now
+                now = 0.0
+                theme = json.loads((directory / "theme.jsonc").read_text())["theme"]
+                self.style = {
+                    "catppuccin": "\x1b[38;2;205;214;244m\x1b[48;2;24;24;37m",
+                    "catppuccin-latte": "\x1b[38;2;76;79;105m\x1b[48;2;239;241;245m",
+                    "terminal": "\x1b[39;49m",
+                }[theme]
+                self.master, self.width, self.height = 123, width, height
+                self.output = pty_keymaps.DrawReader(self.master)
+                self.previous = paint(self)
+                self.initial = self.previous.decode()
+                self.step = 0
+                popups.append(self)
+
+            def finish(self, key):
+                test.assertFalse(emissions)
+                test.assertEqual(bytes(self.output.pending), tail)
+                test.assertEqual(self.step, len(transitions))
+
+            def abort(self):
+                pass
+
+        def write(fd, key):
+            popup = popups[-1]
+            self.assertFalse(emissions, "next input sent before matching mode/query/cursor draw")
+            self.assertEqual(bytes(popup.output.pending), b"")
+            expected_key, *state = transitions[popup.step]
+            self.assertEqual(key, expected_key)
+            final = paint(popup, *state)
+            popup.step += 1
+            if invalid_colors:
+                final = final.replace(b"\x1b[7m", b"")
+            wrong_cursor = final[:-1] + (b"l" if final.endswith(b"h") else b"h")
+            if delivery == "coalesced":
+                emissions.append((now, popup.previous + wrong_cursor + final + (tail if popup.step == len(transitions) else b"")))
+            else:
+                emissions.append((now, popup.previous + wrong_cursor))
+                if missing:
+                    emissions.extend([(now + 1, popup.previous), (now + 2, popup.previous), (now + 3.01, final)])
+                elif delivery == "fragmented":
+                    emissions.extend([(now + 0.02, final[:-1]), (now + 0.1, final[-1:])])
+                else:
+                    emissions.append((now + 2.99, final))
+            popup.previous = final
+            return len(key)
+
+        def ready(readers, writers, errors, timeout):
+            nonlocal now
+            if emissions and emissions[0][0] <= now + timeout:
+                now = max(now, emissions[0][0])
+                return readers, [], []
+            now += timeout
+            return [], [], []
+
+        with patch.object(pty_keymaps, "Popup", Popup), \
+             patch.object(pty_keymaps.time, "monotonic", side_effect=lambda: now), \
+             patch.object(pty_keymaps.select, "select", side_effect=ready), \
+             patch.object(pty_keymaps.os, "read", side_effect=lambda fd, size: emissions.pop(0)[1]), \
+             patch.object(pty_keymaps.os, "write", side_effect=write):
+            if missing:
+                with self.assertRaises(AssertionError):
+                    pty_render.mode_color_cases("unused")
+                self.assertEqual(now, 3.0, "stale draws must not shorten or extend the deadline")
+            elif invalid_colors:
+                with self.assertRaises(AssertionError):
+                    pty_render.mode_color_cases("unused")
+            else:
+                pty_render.mode_color_cases("unused")
+
+    def test_mode_colors_wait_for_matching_complete_mode_query_and_cursor(self):
+        for delivery in ("delayed", "coalesced", "fragmented"):
+            with self.subTest(delivery=delivery):
+                self.run_cases(delivery)
+
+    def test_stale_mode_frame_cannot_satisfy_transition_before_original_deadline(self):
+        self.run_cases(missing=True)
+
+    def test_matching_mode_state_does_not_skip_badge_color_assertions(self):
+        self.run_cases(delivery="coalesced", invalid_colors=True)
+
+    def test_matching_mode_frame_preserves_read_ahead(self):
+        self.run_cases(delivery="coalesced", read_ahead=True)
+
+
 class SearchCursorFrameTests(unittest.TestCase):
     @staticmethod
     def draw(width, mode, text, cursor_x):
@@ -418,12 +539,12 @@ class MouseReadinessTests(unittest.TestCase):
                 emissions.append((now, paint("pane", searching=True)))
             elif 3 <= len(sent) <= 6:
                 index = len(sent) - 3
-                button, selected, previous = [(64, 3, 0), (65, 0, 3), (65, 1, 0), (64, 0, 1)][index]
+                button, selected, previous = [(64, 0, 3), (65, 0, 1), (65, 0, 1), (64, 0, 3)][index]
                 self.assertEqual(data, pty_keymaps.mouse_report(5, 5, button=button))
                 self.assertEqual(len(emissions), 0, "next wheel sent before matching selection/query/cursor")
                 self.assertEqual(popup.output.pending, b"", "stale wheel draw was accepted")
                 final = paint("pane", searching=True, selected=selected)
-                # The right query/cursor with the old selection, or the right
+                # The right query/cursor with a changed selection, or the right
                 # selection with a wrong query/cursor, cannot complete a wheel.
                 stale = paint("pane", searching=True, selected=previous)
                 wrong_query = final.replace(b"Search: pane", b"Search: panj")

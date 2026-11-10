@@ -16,7 +16,7 @@ class VersionTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(ROOT / "scripts/check-version.py")],
                                 cwd="/tmp/opencode", text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "0.3.0\n")
+        self.assertEqual(result.stdout, "0.3.1\n")
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-version-")

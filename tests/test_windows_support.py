@@ -23,8 +23,7 @@ class ConsoleMarkerTests(unittest.TestCase):
         selections = [ast.literal_eval(keyword.value) for call in tables for keyword in call.keywords
                       if keyword.arg == "selected"]
         self.assertIn((0, "Claude"), selections)
-        self.assertIn((2, "pane 3"), selections)
-        self.assertIn((3, "pane 4"), selections)
+        self.assertIn((0, "pane 3"), selections)
         self.assertIn((0, "codex"), selections)
         self.assertGreaterEqual(sum(keyword.arg == "capture" and isinstance(keyword.value, ast.Constant)
                                     and keyword.value.value is False
@@ -177,16 +176,13 @@ class ConsoleTableTests(unittest.TestCase):
                     return actual
 
                 def send(data):
-                    nonlocal mode, query, selected_id, reset, theme_hovers
-                    visible = [i for i, field in enumerate(fields) if query.lower() in field.lower()]
-                    current = next((i for i in visible if ids[i] == selected_id), visible[0] if visible else None)
+                    nonlocal mode, query, reset, theme_hovers
                     if data.startswith(b"\x1b[<"):
                         for report in data.split(b"M")[:-1]:
                             button, x, y = map(int, report[3:].split(b";"))
                             if capture:
-                                if button in (64, 65) and visible:
-                                    at = (visible.index(current) + (1 if button == 65 else -1)) % len(visible)
-                                    selected_id = ids[visible[at]]
+                                if button in (64, 65):
+                                    pass  # All fixture rows fit; wheel preserves the stable ID.
                                 elif (x, y) == (5, 1):
                                     mode = "Search"
                                 elif (x, y) == (5, 15):
@@ -221,9 +217,9 @@ class ConsoleTableTests(unittest.TestCase):
             case.console = open_console
             case.test_mouse_search_help_origin_theme_save_wheel_optout_and_cleanup()
         self.assertEqual(len(consoles), 3)
-        self.assertEqual(len(tables), 18)
-        self.assertEqual(tables[7]["selected"], (2, "pane 3"))
-        self.assertEqual(tables[8]["selected"], (3, "pane 4"))
+        self.assertEqual(len(tables), 23)
+        self.assertEqual(tables[11]["selected"], (0, "Claude"))
+        self.assertEqual(tables[12]["selected"], (0, "Claude"))
 
     def paint(self, *, mode="Select", query="f to search", panes=None, selected=0, capture=False):
         panes = self.panes if panes is None else panes
@@ -252,11 +248,11 @@ class ConsoleTableTests(unittest.TestCase):
     def selected(self, console, selected):
         return console.until_table(mode="Select", query="f to search", selected=selected, panes=self.panes)
 
-    def test_ignored_wheel_passes_old_marker_but_fails_specific_next_pane(self):
-        console = self.console(self.paint(selected=0))
-        console.until(b"> ")  # The old assertion accepts an ignored-wheel repaint.
+    def test_selection_changing_wheel_fails_preserved_selection_contract(self):
+        console = self.console(self.paint(selected=1))
+        console.until(b"> ")  # A marker alone accepts a selection-changing wheel.
         with self.assertRaisesRegex(AssertionError, "closed before current table"):
-            self.selected(console, (1, "Same"))
+            self.selected(console, (0, "Claude"))
 
     def test_selected_pane_follows_cursor_only_native_diffs_across_output_resets(self):
         console = self.console(self.paint(selected=0), b"\x1b[5;3H  \x1b[6;3H> ")

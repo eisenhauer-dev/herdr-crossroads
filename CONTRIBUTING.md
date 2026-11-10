@@ -101,8 +101,8 @@ documentation verification.
 
 ### Windows preparation
 
-Native Windows 10/11 x86_64 is intended for **0.3.0**, currently **PREPARATION
-only**; the local package is **0.3.0**, unpublished on all four targets.
+Native Windows 10/11 x86_64 retains its **PREPARATION** verification limits;
+the local package is **0.3.1**, pending release. Published **0.3.0** assets remain immutable.
 The Linux/macOS 0.2.0 release is completed.
 Native Windows CI [completed successfully on 2026-10-21](docs/builds.md#windows-preparation-not-certification);
 no Windows support certification or release approval is claimed.
@@ -122,7 +122,16 @@ runs in CI. Separately, the user reported successful basic source-build/link/pop
 use on a physical Windows 11 PC with Herdr 0.9.5 on 2026-10-28; the exact OS build
 and per-function checklist were not recorded. This is not managed-install or
 Windows 10/11 certification evidence. [MSVC/SDK attribution review](docs/builds.md#msvc-and-sdk-attribution-gate)
-remains open. The Windows pane is `crossroads-windows`; `setup-keybind` is Unix-only.
+remains open. The Windows pane is `crossroads-windows`. The updated opt-in
+`setup-keybind` action dispatches through the binary before UI/IPC/config loading,
+using `python` on Windows and `python3` on Unix (3.11+). It requires the matching
+0.3.1 binary, manifest and helper; old 0.3.0 binaries cannot run the dispatcher.
+For source linking, rebuild first. No release assets for this fix are available yet.
+Focused setup checks are `cargo test --locked --test setup_dispatch`,
+`cargo test --locked --lib test_cli`, and `python -B tests/test_setup_keybind.py`
+(use `python3` on Unix). Native preparation additionally runs
+`tests/test_windows_keybind.py` for ACLs, sharing, reparse and recovery behavior.
+All helper writes stay inside isolated temporary test directories, not user config.
 
 ### macOS release preparation
 

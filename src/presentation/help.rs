@@ -75,6 +75,7 @@ impl Ui {
         if let Some(at) = contents
             .iter()
             .position(|(i, _)| i.is_some() && *i == selected)
+            .filter(|_| !ansi || self.follow_selection)
         {
             if at <= start {
                 start = if at > 0 && contents[at - 1].0.is_none() && !contents[at - 1].1.is_empty()
@@ -90,6 +91,7 @@ impl Ui {
         }
         if ansi {
             self.help.viewport_start.set(start);
+            self.mouse.borrow_mut().scroll_max = contents.len().saturating_sub(available);
         }
         let key_width = entries
             .iter()
@@ -273,7 +275,12 @@ impl Ui {
             content_hits.push(None);
         }
         let budget = height.saturating_sub(4 + footer_rows).max(1);
-        let start = if ansi {
+        let start = if ansi && !self.follow_selection {
+            self.help
+                .viewport_start
+                .get()
+                .min(contents.len().saturating_sub(budget))
+        } else if ansi {
             if selected_len > budget {
                 self.hint_more.set(true);
                 selected_start + self.hint_scroll.get() % selected_len
@@ -286,6 +293,9 @@ impl Ui {
             0
         };
         self.help.viewport_start.set(start);
+        if ansi {
+            self.mouse.borrow_mut().scroll_max = contents.len().saturating_sub(budget);
+        }
         let rule = format!("  {}", "─".repeat(width.saturating_sub(4)));
         let mut lines = vec![
             format!(

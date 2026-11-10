@@ -95,7 +95,15 @@ impl Ui {
             } else {
                 0
             };
-            if let Some(at) = selected_at {
+            if ansi {
+                let mut max_start = visible.len().saturating_sub(1);
+                while max_start > 0 && span(max_start - 1, visible.len() - 1) <= available {
+                    max_start -= 1;
+                }
+                self.mouse.borrow_mut().scroll_max = max_start;
+                start = start.min(max_start);
+            }
+            if let Some(at) = selected_at.filter(|_| !ansi || self.follow_selection) {
                 if ansi
                     && !self
                         .last_selected_at

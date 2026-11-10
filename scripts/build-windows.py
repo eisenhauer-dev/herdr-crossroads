@@ -426,10 +426,14 @@ def build():
             raise ValueError("could not select the native ConPTY console test executable")
         environment["CROSSROADS_WINDOWS_CONSOLE_TEST"] = console_tests[0]
         run(["cargo", "test", "--locked", "--lib", "test_windows", "--", "--test-threads=1"], env=environment, timeout=60)
-        for group in ("test_input", "test_search", "test_selection::navigation", "test_mouse",
+        for group in ("test_cli", "test_input", "test_search", "test_selection::navigation", "test_mouse",
                       "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
                       "test_keymap::enter_is_reserved", "test_keymap::lowercase_f"):
             run(["cargo", "test", "--locked", "--lib", group], env=environment, timeout=60)
+        run(["cargo", "test", "--locked", "--test", "setup_dispatch"], env=environment, timeout=60)
+        run([sys.executable, "-u", "-B", "tests/diagnose_windows_security.py"], env=environment, timeout=60)
+        run([sys.executable, "-B", "tests/test_setup_keybind.py"], env=environment, timeout=60)
+        run([sys.executable, "-B", "tests/test_windows_keybind.py"], env=environment, timeout=60)
         run([sys.executable, "-B", "tests/test_windows_acceptance.py"], env=environment, timeout=240)
         run([sys.executable, "-B", "tests/test_windows_distribution.py", "-v"], env=environment, timeout=60)
         verify_bound_inputs()

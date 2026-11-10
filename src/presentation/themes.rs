@@ -24,10 +24,18 @@ impl Ui {
         } else {
             names.len()
         };
-        let start = self
-            .theme_cursor
-            .saturating_sub(available / 2)
-            .min(names.len().saturating_sub(available));
+        let max_start = names.len().saturating_sub(available);
+        let start = if ansi && !self.follow_selection {
+            self.theme_viewport_start.get().min(max_start)
+        } else {
+            self.theme_cursor
+                .saturating_sub(available / 2)
+                .min(max_start)
+        };
+        if ansi {
+            self.theme_viewport_start.set(start);
+            self.mouse.borrow_mut().scroll_max = max_start;
+        }
         for (index, name) in names.iter().enumerate().skip(start).take(available) {
             self.hit(2, lines.len(), width.saturating_sub(4), Hit::Theme(index));
             let line = aligned(&format!(

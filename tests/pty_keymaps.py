@@ -273,7 +273,7 @@ def mouse_cases(binary, directory):
             lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, ""))
             assert lines[0].endswith("MODE: SELECT") and "Backspace: erase" in lines[-1], lines
             lines = popup.send(b"pane", expected=lambda raw: searching(raw, "pane", selected="pane 3"))
-            for button, selected in [(64, "pane 2"), (65, "pane 3"), (65, "pane 4"), (64, "pane 3")]:
+            for button, selected in [(64, "pane 3"), (65, "pane 3"), (65, "pane 3"), (64, "pane 3")]:
                 lines = popup.send(mouse_report(5, 5, button=button),
                                    expected=lambda raw, selected=selected: searching(raw, "pane", selected=selected))
             lines = popup.send(b"\x7f" * 4, expected=lambda raw: searching(raw, ""))
@@ -286,7 +286,7 @@ def mouse_cases(binary, directory):
             assert "Keys — Select" in lines[1], lines
             lines = popup.send(mouse_report(*point(lines, "Search:")), expected=lambda raw: searching(raw, "", "Help"))
             lines = popup.send(b"pane", expected=lambda raw: searching(raw, "pane", "Help", "next pane"))
-            for button, selected in [(64, "focus clicked pane"), (65, "next pane"), (65, "previous pane"), (64, "next pane")]:
+            for button, selected in [(64, "next pane"), (65, "next pane"), (65, "next pane"), (64, "next pane")]:
                 lines = popup.send(mouse_report(5, 5, button=button),
                                    expected=lambda raw, selected=selected: searching(raw, "pane", "Help", selected))
             lines = popup.send(b"\x7f" * 4, expected=lambda raw: searching(raw, "", "Help"))
@@ -310,7 +310,7 @@ def mouse_cases(binary, directory):
             assert "Enter/Esc: preview" in lines[-1], lines
             assert lines[0] == expected_search_row(120, "codex", "Themes"), lines
             lines = popup.send(b"\x7f" * 5 + b"pane", expected=lambda raw: searching(raw, "pane", "Themes", "pane 3"))
-            for button, selected in [(64, "pane 2"), (65, "pane 3")]:
+            for button, selected in [(64, "pane 3"), (65, "pane 3")]:
                 lines = popup.send(mouse_report(5, 5, button=button),
                                    expected=lambda raw, selected=selected: searching(raw, "pane", "Themes", selected))
             lines = popup.send(b"\x7f" * 4 + b"codex", expected=lambda raw: searching(raw, "codex", "Themes", "codex"))
@@ -332,11 +332,59 @@ def mouse_cases(binary, directory):
             assert "Search: f to search" in lines[0], lines
             before = [line for line in lines if line.startswith("  >")]
             lines = popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True)
-            assert [line for line in lines if line.startswith("  >")] != before, lines
+            assert [line for line in lines if line.startswith("  >")] == before, lines
             popup.finish(mouse_report(*point(lines, "Esc: exit")), expect_mouse=True)
         finally:
             popup.abort()
         (directory / "theme.jsonc").unlink()
+        # Extend the compact fixture to overflow both navigation and search.
+        # Scroll the highlighted first pane off screen without moving its ID.
+        fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+        snapshot = json.loads(fixture.read_text())
+        for n in range(3):
+            snapshot["result"]["snapshot"]["panes"].append({
+                "pane_id": f"scroll-extra-{n}", "terminal_id": f"scroll-extra-{n}",
+                "workspace_id": "w2", "tab_id": "t2", "focused": False,
+                "agent_status": "idle", "revision": 0, "label": f"extra pane {n}"})
+        scroll_fixture = directory / "scroll-topology.json"
+        scroll_fixture.write_text(json.dumps(snapshot))
+        fake = directory / "herdr"
+        original = fake.read_text()
+        fake.write_text(original.replace(str(fixture), str(scroll_fixture)))
+        popup = Popup(binary, directory, kitty=kitty)
+        try:
+            initial, _ = screen(popup.initial, 80, 15)
+            assert any(line.startswith("  >") and "Claude" in line for line in initial), initial
+            bottom = popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True)
+            assert bottom != initial and not any(line.startswith("  >") for line in bottom), bottom
+            assert any("pane 2" in line for line in bottom), bottom
+            for _ in range(10):
+                bottom = popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True)
+            assert popup.send(mouse_report(5, 5, button=65), expected=lambda raw: True) == bottom
+            for _ in range(10):
+                lines = popup.send(mouse_report(5, 5, button=64), expected=lambda raw: True)
+            assert lines == initial, lines
+            assert popup.send(mouse_report(5, 5, button=64), expected=lambda raw: True) == initial
+            # Empty search preserves all rows, with its editing cursor fixed.
+            popup.send(b"f", expected=lambda raw: screen(raw, 80, 15, track_cursor=True)[2] == (True, 10, 0))
+            def scrolled_search(raw):
+                lines, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
+                return (wraps == 0 and cursor == (True, 10, 0)
+                        and lines[0] == expected_search_row(80, "", "Select")
+                        and not any(line.startswith("  >") for line in lines))
+            lines = popup.send(mouse_report(5, 5, button=65), expected=scrolled_search)
+            # Hover now targets the first *visible* pane, not the off-screen Claude.
+            at = (4, 4)
+            assert "Same" in lines[at[1]], lines
+            lines = popup.send(mouse_report(*at, button=35), expected=lambda raw: any(line.startswith("  >") and "Same" in line for line in screen(raw, 80, 15)[0]))
+            assert popup.child.poll() is None, "scroll/hover must not focus a Herdr pane"
+            popup.send(b"\r", expected=lambda raw: "?: keys" in screen(raw, 80, 15)[0][-1])
+            lines = popup.send(b"k", expected=lambda raw: any(line.startswith("  >") and "Claude" in line for line in screen(raw, 80, 15)[0]))
+            assert lines == initial, lines
+            popup.finish(b"q", expect_mouse=True)
+        finally:
+            popup.abort()
+            fake.write_text(original)
         popup = Popup(binary, directory, {"mouse_enabled": False}, kitty=kitty)
         try:
             assert all(f"\x1b[?{mode}h" not in popup.initial for mode in (1000, 1003, 1006))
