@@ -1,5 +1,10 @@
 # Media provenance
 
+These records describe historical captures, not current controls or release
+verification. Recorded `/` search, mode labels and footer layouts predate later
+changes; use the [current controls](../../README.md#controls). Narration and
+capture records below retain their original wording.
+
 ## Current movie acceptance
 
 The current [guided demo](crossroads-circular-tour.mp4), SHA-256
@@ -117,7 +122,7 @@ apply only to these two synthetic assets, which remain byte-identical.
 
 ## Synthetic capture
 
-Captured on 2026-10-02, Linux x86_64, from the current implementation (base
+Captured on 2026-10-02, Linux x86_64, from the then-current implementation (base
 commit `6425d80`, with documentation-only working changes). Build from the
 repository root: `cargo build --release --locked --offline`. Rust/Cargo 1.93.1;
 release binary SHA-256:

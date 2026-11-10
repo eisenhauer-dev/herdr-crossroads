@@ -1,10 +1,15 @@
 # Binary installation
 
-Released **0.2.0** retains Linux x86_64 glibc and adds Apple Silicon/Intel
-**macOS 15.0+**. The local package is **0.3.1**, pending release for the native
-setup dispatcher and Windows keybinding fix. Published **0.3.0 binaries remain
-immutable** and cannot run the new dispatcher; do not mix them with the updated
-action manifest. Windows 10/11 certification is not established by this fix.
+Released **0.3.1** is the regular
+[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.1)
+(2026-11-10), with assets for Linux x86_64 glibc, Apple Silicon/Intel
+**macOS 15.0+**, and Windows x86_64 GNU. The package/manifest version is **0.3.1**.
+It includes the native setup dispatcher; **0.3.0 binaries remain immutable** and
+cannot run that dispatcher. The default-branch source additionally contains the
+post-tag Windows ACL append fix from [PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20).
+An existing 0.3.1 binary needs only the updated actual plugin checkout's helper
+scripts for that fix, not a rebuild; `--ref v0.3.1` retains the pre-fix scripts.
+Windows 10/11 certification is not established by the release or fix.
 The published `--ref v0.2.0` Linux/macOS fallback retains its original behavior.
 Published **0.1.0 remains
 Linux-only and immutable**. Historical 0.2.0 native packaging and isolated real-Herdr
@@ -14,7 +19,7 @@ gates; they are not public-install proof or final-tree release approval.
 
 Crossroads `0.1.0` is the first regular Linux release, for
 `x86_64-unknown-linux-gnu` only, published as
-[Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
+the then-[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Its [public installation checks](#regular-010-public-installation) passed on Herdr 0.9.5.
 
@@ -49,12 +54,15 @@ There is no short-name registry.
 
 ## Windows preparation limitations
 
-The current 0.3.1 fix is not released. The manifest uses
+The released 0.3.1 dispatcher and current helper support Windows. The manifest uses
 `python scripts/install-binary.py` on Windows (not `python3`) and a separate
 `crossroads-windows` pane pointing to `./target/release/herdr-crossroads.exe`.
 The `crossroads` pane remains **Linux/macOS-only**. The updated `setup-keybind`
 action supports all three platforms and selects `crossroads-windows` on Windows;
-it requires the new binary as well as the manifest/helper. Do not copy the Unix
+it requires a 0.3.1 binary as well as the matching manifest/helper. For the post-tag
+ACL fix, update the scripts in the checkout Herdr actually uses (or the linked
+source checkout), not an unrelated clone; no new 0.3.1 binary is needed. A pinned
+`v0.3.1` checkout does not contain that later fix. Do not copy the Unix
 quickstart's manual launch entry unchanged on Windows.
 The source-declared Windows launch command is:
 
@@ -75,20 +83,25 @@ of the testing scope, not execution of those tests or Windows 10 certification;
 native GNU preparation subsequently passed on Windows Server 2025 at the `b5a86ed`
 source tree, including packaging, exact installed-byte checks and fake-host ConPTY
 acceptance, not real-Herdr integration. See the [first GNU success receipt](builds.md#first-successful-gnu-preparation).
-The full MinGW ZPL notice addition requires fresh final-tree packages; the earlier
-assets are not rewritten. Private UCRT Windows 10/11 compatibility, independent
-review and distribution/release approval remain open.
+The earlier prior-notice preparation assets are not rewritten by subsequent
+releases. Private UCRT Windows 10/11 compatibility is not established; historical
+provenance flags and licensing/source-attribution limits remain as recorded.
 Source preparation needs Git, Python 3.11+, Rust `1.99.0-x86_64-pc-windows-gnu`
 and the [approved MinGW-w64 builder](builds.md#windows-gnu-toolchain-and-attribution);
 historical MSVC success does not validate the GNU migration. This does not
-certify Windows 10/11. Automated Windows host-keybinding setup is now implemented
-for the updated source tree; native execution of this change and the personal-host
-shortcut sequence remain unverified here.
+certify Windows 10/11. Native CI passed for the post-tag helper change; on
+2026-11-10 the user also reported successful setup and `prefix+f` popup launch
+after choosing **Reload config** in Herdr's menu. The action log showed
+`status = "succeeded"`, exit 0, empty stderr and `Added prefix+f` at the expected
+`AppData/Roaming/herdr/config.toml` path. The exact Windows version/build was not
+recorded. This bounded source-checkout report is not managed-install acceptance,
+an all-functions test or Windows-version certification. See the
+[post-tag checkpoint](releases.md#post-tag-windows-helper-checkpoint).
 
 The installer selects `x86_64-pc-windows-gnu` for an AMD64/x86_64 host reporting
 Windows version 10 or newer; old/unknown versions and other architectures fail.
 It expects the current version's `.tar.gz` plus checksum, currently
-`herdr-crossroads-0.3.1-x86_64-pc-windows-gnu.tar.gz[.sha256]` (pending release), with exactly
+`herdr-crossroads-0.3.1-x86_64-pc-windows-gnu.tar.gz[.sha256]`, with exactly
 `herdr-crossroads.exe`, `herdr-crossroads.exe.sha256`, `LICENSE`, and
 `THIRD-PARTY-NOTICES.md`. Common checksum/notice/member checks precede native
 writes; the binary must pass AMD64 PE32+ console-executable header checks, not
@@ -145,20 +158,23 @@ alias is required on Windows. Rust `Command` permits omitting `.exe` here;
 Herdr v0.9.5 resolves this relative program against the plugin root.
 Installation/build hooks, startup and opening Crossroads never run this helper;
 only explicit invocation opts into the host-config write. Existing installs need
-a reviewed **0.3.1 binary, manifest and helper** containing this change. Source-checkout
-users must rebuild the binary first. Published 0.3.0 binaries do not implement
-`--setup-keybind`; they remain immutable, and 0.3.1 release assets are not yet available.
+a **0.3.1 binary, manifest and helper** for dispatch. Published 0.3.0 binaries do
+not implement `--setup-keybind`: upgrade that binary (or rebuild from current
+source) before using the action. Published 0.3.1 binaries already dispatch the
+helper at runtime. To gain the later Windows ACL append fix, update the actual
+plugin checkout's scripts, including `scripts/windows-files.py`; do not rebuild
+or replace an existing 0.3.1 binary just for this Python-only fix.
 The helper appends the Unix `crossroads` or Windows `crossroads-windows` launch entry.
 
 **Wait for completion before reloading.** A successful invoke response means the
 action started, not that setup succeeded. Repeat the log command and match the
 invocation's `log_id`; require `status = "succeeded"`, `exit_code = 0`, and stdout
 confirming the added/already-configured binding and target path. On `failed`, read
-stderr/error and resolve the problem instead. Only after success run:
-
-```sh
-herdr server reload-config
-```
+stderr/error and resolve the problem instead. Only after success choose
+**Reload config** in Herdr's menu. In Herdr v0.9.5 this menu
+action reloads both server and client configuration; `herdr server reload-config`
+alone reloads only the server and can leave the client's keymap stale. If using
+that CLI route, restart the client as well.
 
 Then press `Ctrl+b`, followed by `f` (or your configured prefix). There is no
 automatic reload or launch, avoiding a race with asynchronous setup.
@@ -253,7 +269,7 @@ owner/group/DACL before retrying. No recovery copy is created for in-place appen
 leave a partial binding. Inspect and repair that suffix before retrying; malformed
 TOML is refused. Do not edit or run setup concurrently. Sharing does not exclude
 all metadata/security access and is not a hostile-filesystem sandbox.
-If setup refuses, manually add the [README launch binding](../README.md#3-reload-and-open)
+If setup refuses, manually add the [README launch binding](../README.md#add-the-launch-binding-reload-and-open)
 using `--entrypoint crossroads-windows` and a method preserving file identity and
 ACL. Do not enable inheritance or loosen permissions to make setup work.
 
@@ -294,7 +310,8 @@ only on synthetic test files. Separate unchanged legacy/protected descriptors
 exercise actual setup, byte-prefix/identity/security preservation and idempotency;
 native append checks also cover sharing exclusion, concurrent changes and flush
 rollback. `scripts/build-windows.py` runs `tests/test_windows_keybind.py` in its
-existing native gate. These new native checks have not run on the Linux writing host.
+existing native gate. The [post-tag native CI](releases.md#post-tag-windows-helper-checkpoint)
+passed on Windows; it was not run natively on the Linux documentation host.
 Append API contracts checked 2026-11-10: the `CreateFileW` sharing/open rules below,
 [CRT handle ownership](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/open-osfhandle?view=msvc-170),
 [CPython 3.12.10 unbuffered write/truncate](https://github.com/python/cpython/blob/v3.12.10/Modules/_io/fileio.c),
@@ -341,9 +358,10 @@ Herdr v0.9.1, v0.9.3, and v0.9.5 have no native install-time launch-binding
 mechanism; Crossroads supplies an opt-in action instead. The host
 `[[keys.command]]` entry uses `type = "shell"` to run the pane-open command
 detached. Plugin-owned `keymaps.jsonc` only controls the UI after launch and
-cannot provide this host shortcut. No personal Herdr config was edited and the
-personal-host binding/reload/key-launch sequence remains unexecuted; isolated
-installation and popup evidence below does not verify that sequence.
+cannot provide this host shortcut. The 2026-11-10 user report above verifies a
+bounded Windows setup/reload/key-launch sequence; the documentation audit itself
+did not edit personal configuration or invoke Herdr. Earlier isolated installation
+and popup evidence below does not verify that sequence.
 
 Source compatibility checked 2026-10-16 against Herdr v0.9.1
 (`065ef9d6a531c49fb8bee7e818ef837065b21ee9`), v0.9.3
@@ -361,6 +379,7 @@ primary contracts:
 - [Rust 1.99.1 Command executable extension rules](https://doc.rust-lang.org/1.99.1/std/process/struct.Command.html#method.new)
 - [Action invoke and log list --plugin syntax](https://github.com/herdrdev/herdr/blob/v0.9.1/src/cli/plugin.rs)
 - [Config-path presence precedence](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/io.rs)
+- [Menu reload updates the client and requests server reload](https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/actions.rs#L69-L78) (checked 2026-11-10)
 - [Binding normalization, shell default, and reserved prefix keys](https://github.com/herdrdev/herdr/blob/v0.9.5/src/config/keybinds.rs)
 - [Legacy indexed table fields](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/model.rs#L857-L866)
 - [Indexed number expansion](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/keybinds.rs#L998-L1036) and [modifier syntax](https://github.com/herdrdev/herdr/blob/2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01/src/config/keybinds.rs#L1231-L1279)
@@ -370,9 +389,9 @@ README contracts, isolated subprocess success/idempotence/path selection, confli
 and malformed-config rejection, permissions/comment and symlink preservation,
 dangling/loop/nonregular target rejection, and injected staging/replace,
 concurrent-edit and path-redirection failures under `/tmp/opencode`.
-No real Herdr invocation, personal config write, reload or host key launch was
-executed for this feature. The historical installation/runtime evidence below is
-unchanged and does not verify the new action end-to-end.
+These isolated tests do not invoke real Herdr, write personal config, reload or
+launch a host shortcut. The later user report above supplies separately bounded
+manual evidence; historical installation/runtime receipts below remain unchanged.
 
 ## Requirements and local use
 
@@ -396,9 +415,10 @@ herdr-crossroads-0.3.1-x86_64-apple-darwin.tar.gz[.sha256]
 ```
 
 `[.sha256]` denotes the additional checksum file, not a literal filename.
-These are local preparation names, not available public 0.3.1 assets. Use trusted
-fresh local assets with the explicit override below; absent that override, this
-checkout requests unpublished 0.3.1 assets and fails rather than selecting 0.2.0.
+These 0.3.1 archives and checksums are publicly available from the release linked
+above. Without an override, this checkout downloads its exact version's assets;
+it never silently selects an older release. Use the explicit override below for
+trusted offline assets.
 Selection uses the **running Python process architecture**, not physical hardware:
 ARM64 selects `aarch64-apple-darwin`; an x86_64 process under Rosetta selects the
 Intel asset. Actual Rosetta execution has **not** been proven. Older or unknown
@@ -430,7 +450,8 @@ the binary first. Linking is user-global registration, not an isolated test.
 See [README installation](../README.md#installation) for launch and
 [update and uninstall](../README.md#update-and-uninstall) for local-link cleanup.
 The isolated [native managed lifecycle test](#native-distribution-acceptance)
-passed on Herdr 0.9.3; personal-host setup remains untested. Public CLI-install
+passed on Herdr 0.9.3; the later Windows personal-host report has the bounded scope
+described above. Public CLI-install
 and native public full-cycle evidence are recorded separately below.
 
 ## Validation and failure behavior
@@ -483,10 +504,9 @@ your corporate security policy permits; prefer restoring revocation access.
 It has no Schannel effect on other TLS backends and does not alter urllib's
 secure behavior when curl is absent. Unsupported curl options still fail closed.
 
-This is a source change, not a delivered update to the immutable `v0.3.0`
-installer. Obtain reviewed installer source containing the change after it is
-published; installing with `--ref v0.3.0` does not gain this option. Once the
-public default branch contains that source, a one-install PowerShell opt-in is:
+This option is included in the published `v0.3.1` installer and the public default
+branch, not the immutable `v0.3.0` installer. Installing with `--ref v0.3.0` does
+not gain it. A one-install PowerShell opt-in is:
 
 ```powershell
 $previous = $env:CROSSROADS_WINDOWS_SSL_REVOKE_BEST_EFFORT
@@ -602,9 +622,11 @@ clone/build/link alternative.
 **Publication order matters:** do not move the default branch to a new version without
 matching approved assets available, unless a separately approved, controlled
 publication window explicitly handles that gap. Otherwise the normal install
-command fails closed. The released Linux/macOS fallback is
-`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`;
-there is no released Windows fallback. Close the popup before update/reinstall;
+command fails closed. To pin the released four-target source, use
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.3.1`, noting that
+this omits the later Windows ACL helper fix. The unpinned default-branch route
+includes that fix while still installing 0.3.1 binary assets. The older Linux/macOS
+`--ref v0.2.0` fallback retains its historical behavior. Close the popup before update/reinstall;
 Herdr 0.9.5's `herdr plugin update herdr-crossroads` follows the installed source
 ref (an unpinned install follows default HEAD). To return to published Linux
 0.1.0, reinstall with `--ref v0.1.0` and its retained matching assets. Prefer a
@@ -650,8 +672,9 @@ Additional primary contracts (Herdr **v0.9.5**, checked 2026-10-15):
 `tests/test_release_install.py` takes an explicit Herdr 0.9.5 executable and the
 host's packaged archive as positional arguments. CI pins the Herdr download and
 SHA256 separately on Linux, native Apple Silicon and native Intel. This gate
-passed on all three targets in the [current candidate runs](builds.md#current-020-three-platform-ci-evidence);
-independent review and final acceptance remain pending.
+passed on all three targets in the [historical 0.2.0 candidate runs](builds.md#current-020-three-platform-ci-evidence).
+See the [0.3.1 checkpoint](releases.md#post-tag-windows-helper-checkpoint) for later CI;
+these local-fixture gates are not public-download or live-popup acceptance.
 
 It uses temporary HOME/XDG/config paths, a local Git fixture pinned by full commit,
 file-only Git URL rewriting and trusted local assets. Real Herdr installs and
@@ -739,9 +762,10 @@ target, using actual locally built release assets. No Rust commands, network,
 real registry, or new session topology were used; temporary fixture cleanup
 succeeded. The fake API is not a real Herdr server or plugin runtime. Older
 v0.9.1 source evidence establishes contracts only, not execution. Isolated
-synthetic installer tests also pass. The direct installation, intended managed
-install, and host-link examples above remain unexecuted against the personal
-environment. This fake-API run alone does not establish native installation;
+synthetic installer tests also pass. At that checkpoint, the direct installation,
+managed-install and host-link examples had not been executed against the personal
+environment; the later bounded Windows source-link reports above are separate.
+This fake-API run alone does not establish native installation;
 the later native run below supplies that separately scoped evidence.
 
 **0.9.5 status (2026-10-15):** all five cases passed with the current four-member
@@ -952,7 +976,7 @@ the current complete contract: current Markdown bytes, `f` search, and
 strict current contract; it never auto-detects historical compatibility.
 
 These helper regressions and retained-archive checks do not rerun public
-installation/cycles, certify old releases as current 0.3.0 candidates, or change
+installation/cycles, certify old releases as current candidates, or change
 the production installer's notice exceptions or fallback route.
 
 **Execution evidence (2026-10-16):** the owning primary completed the full public

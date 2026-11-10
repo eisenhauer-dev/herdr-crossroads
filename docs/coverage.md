@@ -107,7 +107,7 @@ tests = sorted({item["executable"] for item in artifacts(test_log)
                 if item["profile"]["test"]})
 binary, = {item["executable"] for item in artifacts(build_log)
            if "bin" in item["target"]["kind"] and not item["profile"]["test"]}
-assert len(tests) == 4, tests
+assert tests, "No Cargo test executables found"
 (run / "objects.json").write_text(json.dumps({"binary": binary, "tests": tests}, indent=2))
 sources = sorted(str(path.resolve()) for path in (root / "src").rglob("*.rs"))
 selection = ["--include-filename-regex=^" + re.escape(str(root / "src") + "/"),
@@ -136,6 +136,8 @@ complete harness result. The report `TOTAL` rows and export `data[].totals` give
 the source-only aggregate metrics; exports retain per-file details for review.
 The absolute `%m-%p.profraw` pattern distinguishes instrumented binaries and
 processes, including subprocesses launched by Cargo tests and the PTY harnesses.
+Test executables are discovered from Cargo's artifact stream rather than assuming
+the historical baseline's fixed number of suites.
 Both the explicit canonical source inventory and anchored filename filter keep
 test/dependency mappings out of the report. Always use a fresh run directory;
 never merge stale profiles or reuse objects from a different build.

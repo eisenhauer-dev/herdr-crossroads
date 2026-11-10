@@ -49,8 +49,7 @@ use the [current controls](#controls) below rather than the recorded key labels.
 
 ## Requirements and compatibility
 
-[![Published: 0.2.0](https://img.shields.io/badge/published-0.2.0-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.2.0)
-[![Preparing: 0.3.1](https://img.shields.io/badge/preparing-0.3.1-orange?style=flat)](docs/installation.md#keyboard-launch-setup)
+[![Published: 0.3.1](https://img.shields.io/badge/published-0.3.1-blue?style=flat)](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.1)
 [![Herdr: ≥ 0.9.1](https://img.shields.io/badge/Herdr-%E2%89%A5%200.9.1-5865a3?style=flat)](https://herdr.dev)
 [![Managed installation: Python ≥ 3.11](https://img.shields.io/badge/managed_install-Python_%E2%89%A5_3.11-3776ab?style=flat&logo=python&logoColor=white)](docs/installation.md)
 [![Supported: Linux x86_64 glibc](https://img.shields.io/badge/Linux-x86__64_glibc-2ea44f?style=flat&logo=linux&logoColor=white)](docs/builds.md#runtime-and-verification-limits)
@@ -61,13 +60,17 @@ use the [current controls](#controls) below rather than the recorded key labels.
   and a running Herdr session; manifest minimum **Herdr 0.9.1**.
 - Released **0.2.0** adds **macOS 15.0+**, Apple Silicon and Intel, with explicit
   `MACOSX_DEPLOYMENT_TARGET=15.0`. Published 0.1.0 remains Linux-only.
-- Native **Windows 10/11 x86_64** remains subject to the
-  **PREPARATION** limitations below, not Windows 10/11 certification. The local package
-  version is **0.3.1**, pending release; published **0.3.0** assets remain immutable.
+- **0.3.1**, published on **2026-11-10**, provides binaries for Linux x86_64 glibc,
+  macOS Apple Silicon/Intel and native Windows x86_64 GNU.
+- Native **Windows 10/11 x86_64** is the intended Windows target; published assets
+  do not establish Windows 10/11 certification or resolve the compatibility limits below.
   Native GNU Windows preparation CI
   passed on Windows Server 2025 on 2026-11-05; a user-reported basic
   Windows 11 source-build/link/live-popup test with Herdr 0.9.5 succeeded on
-  2026-10-28. Neither establishes Windows 10/11 certification or release approval.
+  2026-10-28. On 2026-11-10 the user also confirmed successful Windows keybinding
+  setup and launch after Herdr's **Reload config** menu action using an updated
+  source/linked checkout (exact OS build unrecorded). These are bounded user reports,
+  not all-function, all-version or managed-install acceptance.
   See [Windows evidence and remaining gates](docs/builds.md#windows-preparation-not-certification).
 - **80×15 popup content cells** minimum, excluding host borders; enlarge your terminal if needed.
 
@@ -98,18 +101,18 @@ use the [current controls](#controls) below rather than the recorded key labels.
   retain 1 MiB.
   Offline comparison matched reported tool/input hashes to a public toolchain
   archive, not its historical download identity or exact source/patch state.
-  The added full MinGW ZPL notices require fresh final-tree packages; the `b5a86ed`
-  assets remain immutable prior-notice evidence, not distribution approval.
+  The `b5a86ed` assets predate the added full MinGW ZPL notices and remain
+  immutable prior-notice evidence, not current-release assets or distribution approval.
   The native preparation helper has
   [additional prerequisites](docs/builds.md#windows-preparation-not-certification).
 
 ### Compatibility status
 
-- No released Windows, other-architecture, or SSH support is claimed; no minimum glibc
+- No architectures beyond the four published targets or SSH support are claimed; no minimum glibc
   or distribution compatibility guarantee. See [runtime limits](docs/builds.md#runtime-and-verification-limits)
   and [terminal limits](docs/keymaps.md#terminal-limits).
 - **[0.1.0](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
-  is the first regular Linux release**, published as Latest with reviewed clean CI assets.
+  is the first regular Linux release**, originally published as Latest with reviewed clean CI assets.
   [Public installation evidence](docs/installation.md#regular-010-public-installation)
   distinguishes pinned native navigation from unpinned CLI installation; no `0.1.0` upgrade cycle is claimed.
 - Current Linux/Apple Silicon/Intel CI passed packaging, provenance and isolated
@@ -134,14 +137,16 @@ code and registers a plugin globally for your user, not in a sandbox.**
 herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
 
-This follows the public default branch and downloads the checkout's matching
-version and platform binary. To select released Linux/macOS 0.2.0 rather than
-the development branch, use `herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.2.0`.
-The Windows WIP is not a released Windows installation route. See [installation options and safeguards](docs/installation.md) and
-[public installation evidence](docs/installation.md#regular-010-public-installation).
-Local **0.3.1** preparation is pending release: do not expect `v0.3.1` download
-assets yet. Advancing the default branch requires matching approved assets
-or a separately approved controlled publication window.
+This follows the public default branch (`main`) and downloads the checkout's matching
+version and platform binary, currently **0.3.1** on all four published targets.
+To pin the release checkout, use
+`herdr plugin install eisenhauer-dev/herdr-crossroads --ref v0.3.1`.
+However, the Windows config-ACL helper fix was merged after that tag in
+[PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20): the unpinned
+install includes it, while `--ref v0.3.1` retains the earlier scripts.
+The fix uses the existing 0.3.1 binary; it does not require a new release or rebuild.
+See [installation options and safeguards](docs/installation.md) and
+[historical public installation evidence](docs/installation.md#regular-010-public-installation).
 
 <a id="add-the-launch-binding-reload-and-open"></a>
 
@@ -150,10 +155,13 @@ or a separately approved controlled publication window.
 Installation alone does not write a host binding. Explicitly opt in to adding
 `prefix+f` to Herdr's user config:
 
-**Updated source action:** requires the matching **0.3.1 binary, manifest and helper**.
-Build the updated binary first when using a source checkout. Published 0.3.0 binaries
-do not implement `--setup-keybind`; changing only the manifest/helper is insufficient.
-The 0.3.1 fix is pending release, not available through older immutable release assets.
+**Setup action:** requires the matching **0.3.1 binary, manifest and helper**.
+Published 0.3.0 binaries do not implement `--setup-keybind`; upgrade the binary too
+when coming from 0.3.0. With a 0.3.1 binary already installed/built, the later Windows
+ACL fix needs only the updated scripts in the actual managed/linked checkout,
+including `scripts/setup-keybind.py` and `scripts/windows-files.py`.
+See [Windows config safeguards](docs/installation.md#keyboard-launch-setup);
+do not loosen ACLs to make setup work.
 On Windows the action uses `python`; on Linux/macOS it uses `python3`, both **3.11+**
 on the server's `PATH`. No interpreter alias is needed.
 
@@ -170,19 +178,26 @@ See [config paths, conflict handling, and safeguards](docs/installation.md#keybo
 
 #### 3. Reload and open
 
-Only after setup succeeds:
+Only after setup succeeds, choose **Reload config** in the **Herdr menu**.
+In [Herdr 0.9.5][herdr-client-reload-095], this reloads both server configuration
+and the current client's keymap. The server-only CLI command below can leave an
+already-running client's shortcuts stale; if using it, restart the Herdr client too:
 
 ```sh
 herdr server reload-config
 ```
 
-Press `Ctrl+b`, then `f` (or your configured prefix).
+Check `prefix+?` for the Crossroads binding, then press `Ctrl+b`, then `f`
+(or your configured prefix). If the binding is missing, verify the successful
+setup log's config path matches the running host before retrying.
 
 <details>
 <summary>Manual keybinding setup</summary>
 
-Edit `~/.config/herdr/config.toml` (default path;
-`herdr --help` shows the resolved path), following
+Edit `~/.config/herdr/config.toml` on Linux/macOS or
+`%APPDATA%\herdr\config.toml` on Windows by default.
+Overrides can change this: `herdr --help` shows the resolved path; see
+[config-path selection](docs/installation.md#keyboard-launch-setup). Follow
 [Herdr's versioned configuration guide][herdr-config].
 
 First check `prefix+?` and your existing config for collisions. `prefix+f` is unused
@@ -204,8 +219,8 @@ For a manual Windows binding, replace `--entrypoint crossroads` above with
 `--entrypoint crossroads-windows`; the updated setup action does this itself.
 After manual setup, reload as above and press your configured prefix and chosen key.
 This host launch binding is separate from `keymaps.jsonc`, which changes only
-controls inside Crossroads. Personal-host configuration and key launch remain
-unexecuted; see [installation evidence and source contracts](docs/installation.md#keyboard-launch-setup).
+controls inside Crossroads. This manual-edit alternative is source-verified only;
+see [setup source contracts](docs/installation.md#keyboard-launch-setup).
 
 </details>
 
@@ -264,7 +279,7 @@ herdr plugin link "$PWD"
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
 ```
 
-**Windows (preparation on `develop`, not a released Windows installation):**
+**Windows (use the Windows-specific entrypoint):**
 
 ```powershell
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
@@ -278,8 +293,9 @@ with `platform_unsupported`. Windows must use `crossroads-windows`; the updated
   For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's
   `[[panes]]` table set defaults; use the per-invocation CLI overrides above instead
   when you do not want to change the manifest. Neither size guarantees 80×15 content cells.
-- These source clone/build/link examples remain unexecuted;
-  isolated installation evidence is recorded in the [installation guide](docs/installation.md).
+- Basic Windows source-build/link/live-popup use was user-reported on 2026-10-28;
+  the exact clone/build/link command sequence above has not been independently
+  rerun here. Isolated installation evidence is recorded in the [installation guide](docs/installation.md).
 
 </details>
 
@@ -341,7 +357,12 @@ Crossroads after editing.
   0.9.3 instead needs reinstalling a reviewed ref with matching assets.
   See [managed lifecycle and evidence](docs/installation.md#native-distribution-acceptance).
 - Linked checkout: inspect local changes and the intended revision, update it,
-  then rerun `cargo build --release --locked`. The link still points to that checkout.
+  then rerun `cargo build --release --locked` if binary inputs (Rust code,
+  dependencies or build settings) or the version change. Helper-only fixes use the
+  existing matching binary: update the scripts in that linked checkout, not a
+  separate clone. The link still points to that checkout. In particular, the
+  post-v0.3.1 Windows ACL fix needs no rebuild
+  when the binary is already 0.3.1; rerun setup and reload the client as above.
 - Uninstall: `herdr plugin uninstall herdr-crossroads`. A local link leaves the
   checkout intact; managed checkout retention depends on Herdr's version and live leases.
   Plugin config/state remains: back up your files before any manual cleanup.
@@ -358,6 +379,7 @@ Crossroads after editing.
   [separate provider restrictions](docs/media/README.md#narration-use-and-attribution).
 
 [herdr-config]: https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx
+[herdr-client-reload-095]: https://github.com/herdrdev/herdr/blob/v0.9.5/src/client/shell/actions.rs#L69-L78
 [herdr-size-cli-094]: https://github.com/herdrdev/herdr/blob/v0.9.4/src/cli/plugin.rs#L725-L741
 [herdr-size-cli-095]: https://github.com/herdrdev/herdr/blob/v0.9.5/src/cli/plugin.rs#L725-L741
 [herdr-size-parser-094]: https://github.com/herdrdev/herdr/blob/v0.9.4/src/popup_size.rs#L20-L34

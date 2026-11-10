@@ -1,5 +1,9 @@
 # Crossroads Demo — voiceover by elevenlabs.io
 
+This is the accepted movie's historical script, not a current interaction guide.
+Its narration says to search with `/`; the current default is `f`. See the
+[current controls](../../README.md#controls); no narration or movie bytes are changed here.
+
 ## Current guided edition — 2026-10-13
 
 The [current accepted movie](crossroads-circular-tour.mp4) is **101.20 seconds**,

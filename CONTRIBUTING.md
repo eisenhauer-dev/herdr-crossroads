@@ -17,9 +17,9 @@ The owner controls which changes and commits move from development into a
 release, and when. This routing policy does not automatically merge, close, tag,
 or release anything. The source-repository check in
 `.github/workflows/pr-source-policy.yml` is active and required on `main`.
-The local workflow additionally requires the exact internal `develop` head for
-`main`; this tighter rule is not remotely active until the trusted base workflow
-is updated. The required check blocks merging, not PR creation, and never closes
+It additionally requires the exact internal `develop` head for `main`; the trusted
+default-branch workflow matches the local policy as verified on 2026-11-10.
+The required check blocks merging, not PR creation, and never closes
 a PR. Fork-to-`develop` contributions remain allowed.
 
 CI runs for pull requests targeting both `develop` and `main`, including fork
@@ -33,7 +33,7 @@ force pushes and branch deletion are disabled. No independent approval is
 required solely to let the owner merge their own pull request. All five platform
 and policy checks from the GitHub Actions app (ID `15368`) remain mandatory for
 pull requests targeting `main`, including the owner's own branches. The local
-workflows use these renamed contexts:
+workflows and `main` protection use these renamed contexts (read back on 2026-11-10):
 
 | Previous required context | Renamed context |
 | --- | --- |
@@ -43,10 +43,10 @@ workflows use these renamed contexts:
 | `Windows x86_64 preparation (not certification)` | `Windows x64 · Build & Tests (x86_64)` |
 | `PR source policy` | `PR · Branch Rules` |
 
-The remote required-context update is pending; renaming workflow files alone
-does not change branch protection. That update must retain all five gates, their
-app binding, strict up-to-date checks, administrator enforcement and no bypass.
-The local `PR · Branch Rules` job implements the source-repository metadata policy
+The remote protection requires all five renamed gates with their app binding,
+strict up-to-date checks and administrator enforcement. Renaming workflow files
+alone does not change branch protection; preserve these settings when changing it.
+The active `PR · Branch Rules` job implements the source-repository metadata policy
 above. Branches must be up to date with `main` before merging. Pending, missing or failed required
 checks block merging, including for administrators. GitHub also treats `skipped`
 and `neutral` check conclusions as passing; do not weaken the public CI job with
@@ -101,11 +101,11 @@ documentation verification.
 
 ### Windows preparation
 
-Native Windows 10/11 x86_64 retains its **PREPARATION** verification limits;
-the local package is **0.3.1**, pending release. Published **0.3.0** assets remain immutable.
-The Linux/macOS 0.2.0 release is completed.
+Published **0.3.1** provides native Windows x86_64 GNU binaries as well as the
+Linux/macOS targets. Native Windows 10/11 x86_64 retains the bounded verification
+limits below; publication does not establish Windows certification.
 Native Windows CI [completed successfully on 2026-10-21](docs/builds.md#windows-preparation-not-certification);
-no Windows support certification or release approval is claimed.
+that historical run did not itself certify Windows support or approve publication.
 `.github/workflows/windows.yml` uses the standard free
 public `windows-2025` runner, public-only/read-only, not a paid larger runner.
 It configures Rust/Cargo 1.99.0, Python 3.11+, formatting, native library/binary
@@ -121,12 +121,17 @@ temporary checkout; **no actual Herdr managed-install/live-popup integration**
 runs in CI. Separately, the user reported successful basic source-build/link/popup
 use on a physical Windows 11 PC with Herdr 0.9.5 on 2026-10-28; the exact OS build
 and per-function checklist were not recorded. This is not managed-install or
-Windows 10/11 certification evidence. [MSVC/SDK attribution review](docs/builds.md#msvc-and-sdk-attribution-gate)
-remains open. The Windows pane is `crossroads-windows`. The updated opt-in
+Windows 10/11 certification evidence. On 2026-11-10 the user also confirmed successful
+keybinding setup and `prefix+f` launch after the Herdr menu's **Reload config**
+action in an updated source/linked checkout; the exact Windows build was unrecorded.
+See the historical [MSVC/SDK attribution boundary](docs/builds.md#msvc-and-sdk-attribution-gate)
+and the current GNU evidence in the build guide. The Windows pane is `crossroads-windows`. The opt-in
 `setup-keybind` action dispatches through the binary before UI/IPC/config loading,
 using `python` on Windows and `python3` on Unix (3.11+). It requires the matching
 0.3.1 binary, manifest and helper; old 0.3.0 binaries cannot run the dispatcher.
-For source linking, rebuild first. No release assets for this fix are available yet.
+Upgrade/rebuild a 0.3.0 binary before using this action. With 0.3.1 already present,
+the post-tag Windows ACL fix in [PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20)
+needs updated checkout scripts, not a rebuilt binary; pinned `v0.3.1` scripts lack it.
 Focused setup checks are `cargo test --locked --test setup_dispatch`,
 `cargo test --locked --lib test_cli`, and `python -B tests/test_setup_keybind.py`
 (use `python3` on Unix). Native preparation additionally runs
@@ -281,11 +286,11 @@ builders fail rather than generating host-specific distribution notices; see
 See [local release preparation](docs/releases.md) for matching Cargo/plugin versions,
 the complete gate sequence, asset review, and separate remote approvals. This
 prepares versioned artifacts; publication remains a separately authorized action.
-Released `0.2.0` covers the three Linux/macOS targets; Windows remains preparation
-only for intended `0.3.0`. The local package is `0.3.0`, unpublished on all four
-targets; no merge, tag or publication is authorized. Published `0.1.0` is the
+Released `0.3.1` covers all four Linux/macOS/Windows GNU targets; the local
+manifest/package version is also `0.3.1`. Publication does not broaden the
+platform verification limits above or authorize further remote actions. Published `0.1.0` is the
 first regular Linux release for
-`x86_64-unknown-linux-gnu` only, published as Latest on 2026-10-16 with four
+`x86_64-unknown-linux-gnu` only, originally published as Latest on 2026-10-16 with four
 [reviewed clean CI assets](docs/builds.md#regular-010-public-pipeline-evidence),
 not the local personal-path-bearing binary or reused historical assets.
 Its [public installation evidence](docs/installation.md#regular-010-public-installation)
@@ -321,8 +326,9 @@ installed binary. It starts no server/popup and is not a public-download gate.
 Native execution passed on all three targets in the
 [current candidate CI](docs/builds.md#current-020-three-platform-ci-evidence). Its fixture-helper checks are
 `python3 tests/test_release_install_helpers.py`; see [scope and limitations](docs/installation.md#automated-release-installation-gate).
-The recorded CI does not substitute for independent combined review approval,
-which remains pending regardless of the Mac live-popup waiver. Primary acceptance and
+The historical pre-release CI did not itself grant independent combined review
+approval; its then-pending checkpoint is not the status of the published 0.3.1 release.
+For future releases, primary acceptance and
 push/merge/tag/manual publication each remain separate decisions; see
 [manual release gates and default-branch ordering](docs/releases.md#020-manual-release-gates).
 
@@ -468,7 +474,7 @@ passed their Linux gates, including binary packaging and artifact upload.
 The later [pipeline download verification](docs/builds.md#downloaded-public-pipeline-verification)
 checks that historical main artifact separately. See the
 [contribution workflow](#public-contribution-workflow) for all five required
-GitHub Actions contexts, their pending name migration and accepted check-conclusion
+GitHub Actions contexts, their verified names and accepted check-conclusion
 limits. Local hooks alone cannot enforce this protection.
 No private-repository Actions execution is claimed or required.
 
@@ -480,8 +486,7 @@ start with the [contribution workflow](#public-contribution-workflow) and
 
 ### Active PR source merge gate
 
-The active **PR source policy** job (renamed **PR · Branch Rules** in the local
-`develop` workflow, pending an update to `main`) uses `pull_request_target` for
+The active **PR · Branch Rules** job (historically **PR source policy**) uses `pull_request_target` for
 `opened`, `synchronize`, `reopened`, and `edited` events targeting `main` or `develop`.
 Unlike the ordinary CI workflow, GitHub takes this workflow from the base
 repository's **default branch**, not from the PR's merge commit. The reviewed
@@ -494,13 +499,15 @@ and `permissions: {}`. It runs only inline Python standard-library code against
 `GITHUB_EVENT_PATH`: no checkout, PR code, actions, dependencies, downloads,
 caches, secrets, or API access. For `main`, the event repository, PR base repository,
 and PR head repository must all have matching positive integer repository IDs.
-Missing, null, malformed or mismatched identities fail closed. The local workflow
+Missing, null, malformed or mismatched identities fail closed. The active workflow
 also requires the head ref to be exactly `develop`; missing, null, malformed or
 other refs fail closed. Branch and owner names cannot substitute for repository
 identity: a fork branch named `develop` is denied. For `develop`, internal and
 fork sources from any head branch are allowed. The check never closes a PR.
-The historical remote evidence below predates the exact-head restriction; editing
-the local `develop` workflow alone does not activate it on `main`.
+The historical remote evidence below predates the exact-head restriction. On
+2026-11-10 the `main` workflow blob matched the local policy, and
+[PR #20's policy check](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831283907)
+passed. Local edits alone do not activate a policy on `main`.
 
 On 2026-10-16, `main` protection was configured and read back with strict required
 **PR source policy** and **Linux gates** checks, both bound to GitHub Actions app
@@ -527,9 +534,10 @@ passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d
 including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
 all four full PTYs, packaging and upload.
 
-GitHub's documentation checked on 2026-10-16 says the default public-repository
-`pull_request_target` event policy is currently in evaluate mode and will be
-enforced for affected repositories on **2026-11-02**. An applicable event policy
+GitHub's documentation checked on 2026-10-16 described the default public-repository
+`pull_request_target` event policy as being in evaluate mode, with enforcement
+scheduled for affected repositories on **2026-11-02**. That is a dated receipt,
+not verification of the current event-policy setting. An applicable event policy
 explicitly allowing this trusted workflow's event may therefore also require
 separate remote approval/configuration. Missing or blocked runs must not be
 mistaken for passing enforcement. GitHub may also suppress this event for certain
