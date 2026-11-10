@@ -222,32 +222,55 @@ portable metadata regressions in `python3 -B tests/test_windows_keybind.py`, not
 native Windows acceptance. Source checked 2026-11-09:
 [CPython 3.12.10 path-stat compatibility](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L2138-L2150)
 and [handle metadata](https://github.com/python/cpython/blob/v3.12.10/Python/fileutils.c#L1108-L1127).
-**Existing configs can be updated only when their DACL is already auto-inherited**
-(`SE_DACL_AUTO_INHERITED`, `0x0400`), including protected auto-inherited DACLs.
-Legacy unprotected (`0x8004`) and protected non-auto-inherited (`0x9004`)
-descriptors are refused before staging or replacement: native replacement can add
-parent grants or change descriptor control bits even after exact staging readback.
-An already-configured no-op remains allowed without this write prerequisite.
-Setup never converts or normalizes a user's ACL. If refused, stop concurrent editors
-and manually add the [README launch binding](../README.md#3-reload-and-open),
-using `--entrypoint crossroads-windows` and an editor/write method that
-preserves the existing file identity and ACL (no temporary-file replacement).
-Check owner/group/DACL and inheritance before and after; do not enable inheritance
-or loosen permissions just to make automated setup work.
+**Existing configs retain their original ACL without conversion.** Auto-inherited
+DACLs (`SE_DACL_AUTO_INHERITED`, `0x0400`), including protected auto-inherited
+descriptors, use the staged replacement described below. Legacy unprotected
+(`0x8004`) and protected non-auto-inherited (`0x9004`) descriptors instead use
+an **in-place append**: `ReplaceFileW` can add parent grants or change descriptor
+control bits for these descriptors even after exact staging readback.
+An already-configured binding remains a no-op on either path.
 
-Existing owner/group/DACL information is applied to exclusive staging at creation
-with inheritance temporarily blocked, so no additional parent grants expose config
-bytes. Before writing, the still-empty staging file receives the original DACL
+The append path requires a strict byte extension of the original config; it
+cannot rewrite or truncate existing content as an update. It opens only the
+existing file with `GENERIC_READ | GENERIC_WRITE`, `OPEN_EXISTING`,
+`FILE_FLAG_OPEN_REPARSE_POINT` and **no sharing**. Existing readers, writers or
+delete handles prevent that open; new data readers/writers/deleters are excluded
+until the handle closes. Ancestor pins remain held. Before writing any suffix,
+the held handle must match the original identity, edit metadata, bytes and exact
+owner/group/DACL. After writing and `fsync`, the same handle verifies the complete
+bytes, size, file identity, safe attributes and exact security descriptor again.
+Setup does not create staging, replace/recreate the target, or set its ACL on
+this path. File identity and original bytes remain intact; edit timestamps may change.
+
+A short write, flush failure or final verification error fails setup, never
+reports success. Rollback truncates only the appended suffix, and only if
+readback still proves the original prefix, a recognized suffix, file identity and
+exact descriptor. It then flushes and verifies the restored bytes. If rollback
+cannot complete or be verified, stderr names the target and original byte length,
+warns that appended bytes may remain, and requires inspection of bytes and
+owner/group/DACL before retrying. No recovery copy is created for in-place append.
+**This append is not atomic or termination/power-loss safe**: interruption can
+leave a partial binding. Inspect and repair that suffix before retrying; malformed
+TOML is refused. Do not edit or run setup concurrently. Sharing does not exclude
+all metadata/security access and is not a hostile-filesystem sandbox.
+If setup refuses, manually add the [README launch binding](../README.md#3-reload-and-open)
+using `--entrypoint crossroads-windows` and a method preserving file identity and
+ACL. Do not enable inheritance or loosen permissions to make setup work.
+
+For auto-inherited replacement, existing owner/group/DACL information is applied
+to exclusive staging at creation with inheritance temporarily blocked, so no
+additional parent grants expose config bytes. Before writing, the still-empty
+staging file receives the original DACL
 and protection state via low-level `SetFileSecurityW`; a handle-based readback must
 match the original owner/group/DACL snapshot byte-for-byte, including inheritance
 control bits. Restoration/readback failure closes and removes staging without
 changing the config. This deliberately uses the older descriptor setter, not
 `SetSecurityInfo`, which recomputes inheritance. New files/directories inherit
 Windows parent security rather than Unix mode bits; creation does not convert the
-resulting ACL. A later write to that new file must meet the same auto-inherited
-prerequisite (an unchanged binding still returns a no-op). Existing files use
-`ReplaceFileW` with **no flags that ignore ACL/merge errors**, not truncation or a
-non-atomic rewrite fallback.
+resulting ACL. Later updates select replacement or append from that descriptor
+(an unchanged binding still returns a no-op). Auto-inherited existing files use
+`ReplaceFileW` with **no flags that ignore ACL/merge errors**; replacement failure
+never falls back to in-place writing.
 A concurrent creation cannot be replaced when creating a new config.
 Win32 replacement can fail partially: a private recovery directory provides the
 backup destination. On a partial failure, staging and any backup are retained;
@@ -262,14 +285,21 @@ Ordinary pre-replacement failures remove owned staging; empty new parents can re
 The final file check/replacement is **not a hostile-filesystem lock**, and audit
 SACL/power-loss guarantees are not claimed. Do not edit or run setup concurrently.
 Portable staging regressions cover legacy, auto-inherited and protected descriptors,
-restore/readback failures and cleanup. Commit regressions cover legacy refusal,
-no-op/new-file behavior, exact final verification and recovery retention on errors.
-Native success fixtures explicitly establish modern inheritance only on synthetic
-test files, retaining exact staging/final descriptor assertions, including protected
-auto-inherited updates. A separate unchanged legacy fixture checks refusal and
-preservation of bytes, security and identity without staging or replacement.
-Native Windows ACL/reparse/sharing/recovery tests are wired into preparation but
-this follow-up has not been executed on Windows from the Linux writing host.
+restore/readback failures and cleanup. Commit regressions cover no-op/new-file
+behavior, exact final verification and recovery retention on replacement errors.
+Portable append regressions cover legacy/protected routing, invalid transforms,
+metadata/bytes/ACL drift, short writes, IO/readback errors and safe rollback or
+explicit manual recovery. Native replacement fixtures establish modern inheritance
+only on synthetic test files. Separate unchanged legacy/protected descriptors
+exercise actual setup, byte-prefix/identity/security preservation and idempotency;
+native append checks also cover sharing exclusion, concurrent changes and flush
+rollback. `scripts/build-windows.py` runs `tests/test_windows_keybind.py` in its
+existing native gate. These new native checks have not run on the Linux writing host.
+Append API contracts checked 2026-11-10: the `CreateFileW` sharing/open rules below,
+[CRT handle ownership](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/open-osfhandle?view=msvc-170),
+[CPython 3.12.10 unbuffered write/truncate](https://github.com/python/cpython/blob/v3.12.10/Modules/_io/fileio.c),
+and [Windows `fsync` via `_commit`](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L371)
+([CRT flush contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/commit?view=msvc-170)).
 Native API contracts checked 2026-11-09: Microsoft's
 [CreateFileW security/sharing rules](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew),
 [GetKernelObjectSecurity](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-getkernelobjectsecurity),

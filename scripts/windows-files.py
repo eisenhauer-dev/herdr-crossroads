@@ -241,8 +241,76 @@ def config_staging(path, security):
         raise
 
 
+def append_config(path, original, data, security, result):
+    """Append through one exclusive existing-file handle; never set its ACL.
+
+    This is not atomic against termination/power loss. Handled IO failures remove
+    only our suffix when readback proves that truncation preserves original bytes.
+    """
+    import msvcrt
+
+    if not isinstance(result, bytes) or len(result) <= len(data) or not result.startswith(data):
+        raise ValueError("Windows in-place config update must only append bytes")
+    # GENERIC_READ|GENERIC_WRITE, no sharing, OPEN_EXISTING, OPEN_REPARSE_POINT.
+    # Refuse existing readers/writers/deleters and hold exclusion until verified.
+    handle = KERNEL.CreateFileW(str(path), 0xc0000000, 0, None, 3, 0x00200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
+    except BaseException:
+        KERNEL.CloseHandle(handle)
+        raise
+    with os.fdopen(descriptor, "r+b", buffering=0) as output:
+        # Only size/edit timestamps may change as a result of our own append.
+        identity = config_identity(original, creation_time=True)
+
+        def verify(expected, *, unchanged=False):
+            tag = AttributeTag()
+            if not KERNEL.GetFileInformationByHandleEx(handle, 9, ctypes.byref(tag), ctypes.sizeof(tag)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            opened = os.fstat(output.fileno())
+            current = config_identity(opened, creation_time=True)
+            if (tag.attributes & (0x400 | 0x10 | 1)
+                    or current[:4] + current[-1:] != identity[:4] + identity[-1:]
+                    or (unchanged and config_identity(opened) != config_identity(original))):
+                raise ValueError("config identity/metadata changed on append handle")
+            output.seek(0)
+            contents = output.read()
+            if (contents != expected or opened.st_size != len(expected)
+                    or config_security(handle).raw != security.raw
+                    or config_identity(os.fstat(output.fileno())) != config_identity(opened)):
+                raise ValueError("config bytes/owner/group/DACL or metadata changed on append handle")
+
+        verify(data, unchanged=True)
+        output.seek(len(data))
+        try:
+            suffix = result[len(data):]
+            if output.write(suffix) != len(suffix):
+                raise OSError("short config append write")
+            os.fsync(output.fileno())
+            verify(result)
+        except (OSError, ValueError) as error:
+            try:
+                output.seek(0)
+                current = output.read()
+                if not current.startswith(data) or not result.startswith(current):
+                    raise ValueError("cannot safely remove an unrecognized append")
+                verify(current)
+                output.truncate(len(data))
+                os.fsync(output.fileno())
+                verify(data)
+            except (OSError, ValueError) as recovery_error:
+                raise OSError(f"in-place append failed; rollback incomplete or unverified at {path}; "
+                              f"original length {len(data)} bytes, appended bytes may remain. "
+                              "Stop editors and inspect bytes and owner/group/DACL before retrying: "
+                              f"{recovery_error}") from error
+            raise OSError(f"in-place append failed; original bytes restored at {path}: {error}") from error
+    return True
+
+
 def update_config(path, proposed):
-    """Append opt-in config through native replacement, preserving existing DACLs.
+    """Append opt-in config, preserving existing DACLs without conversion.
 
     Directory pins prevent ancestor swaps; the final file check/replace is not a
     lock against hostile actors with delete access. Never run concurrent editors.
@@ -280,10 +348,9 @@ def update_config(path, proposed):
             if not SECURITY.GetSecurityDescriptorControl(security, ctypes.byref(control), ctypes.byref(revision)):
                 raise ctypes.WinError(ctypes.get_last_error())
             # ReplaceFileW can broaden legacy DACLs through parent inheritance,
-            # even when staging is an exact copy. Never expose config bytes first.
+            # even when staging is an exact copy. Keep the existing file instead.
             if not control.value & 0x400:
-                raise ValueError("Windows config updates require an auto-inherited DACL; "
-                                 "edit the binding manually without replacing the file or changing its ACL")
+                return append_config(path, original, data, security, result)
         staging = parent / (".crossroads-keybind-" + secrets.token_hex(12))
         recovery = None
         descriptor = config_staging(staging, security)
