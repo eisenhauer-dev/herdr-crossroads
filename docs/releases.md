@@ -107,9 +107,36 @@ Inspect exact archive members, checksums, canonical notice bytes, tested binary/
 bindings, source identities and platform-specific provenance/attribution for each.
 Do not rename historical assets or alter published **v0.3.0**, its tag or binaries.
 
-Fresh final-tree CI and artifact inspection, independent combined review, primary
-acceptance of the exact source/notes/16 hashes, and separate merge/tag/publication
-approval remain pending. The ignored draft is `target/release-0.3.1-notes.md`;
+On **2026-11-10**, native CI passed for source
+`f7101d454f583ce9962c98f4256bcddb9692460a`:
+[Linux run 42800411616](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42800411616)
+(7m 36s),
+[Windows run 42800411454](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42800411454)
+(4m 12s), and
+[macOS run 42800411473](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42800411473)
+(ARM 12m; Intel 15m 38s). Their actual checkout was
+`2212a5c4c642fea8c432b5558d546e4be1306012`, whose tree
+`813c36b7bcc41069ffb46446527d4e19c97b8018` equals that source's tree.
+Static inspection passed for all 16 assets: exact four-member archives, canonical
+notices, checksums, tested binary/map and source bindings, platform headers and
+provenance/attribution. The archive SHA256 receipts are:
+
+| Target | Archive SHA256 |
+| --- | --- |
+| `x86_64-unknown-linux-gnu` | `93550133655b39525a18db26b407ef34730bbfed029f2401a1704d96bd429ede` |
+| `aarch64-apple-darwin` | `f769c25cbb9f19d3366f15dc535c94c96b7873e5e9e6a9dcccd7c92c6cbb7f3f` |
+| `x86_64-apple-darwin` | `f12f2bd7d6e56472489f76c0b440176cc629d61e8db8354201ccd04aacf44ed0` |
+| `x86_64-pc-windows-gnu` | `d38278985f5f61b07dd849df6d1cd4f687510fbcbc2c55f027c1b346936e4e54` |
+
+For that source and Linux CI archive, independent isolated install/reinstall with
+real Herdr **0.9.5**, all four installed-binary PTYs and installer rejection checks
+passed. Independent combined review of that source completed with only the
+documentation-status inconsistency corrected here; no production, test or licensing
+blocker was found. These dated receipts do not validate later changed trees:
+recheck native CI, artifacts and review against the exact candidate before primary
+acceptance of its source/notes/16 hashes. That acceptance and separate
+merge/tag/publication approval remain pending, not granted by these checks.
+The ignored draft is `target/release-0.3.1-notes.md`;
 it is not public release notes. Coordinate the default-branch/matching-asset window
 before advancing public installation, then verify public hashes and native install
 routes after approved publication. Historical Windows testing waivers remain

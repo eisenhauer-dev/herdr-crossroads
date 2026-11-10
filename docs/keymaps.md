@@ -522,8 +522,13 @@ and `tests/test_windows_keybind.py` (ACLs/staging, sharing, pinned ancestors,
 reparse/hardlink/read-only refusal and partial-failure recovery), each within a
 60-second command deadline. Both acceptance passes test manifest dispatch without
 an `.exe` suffix and opt-in/idempotent Windows binding setup in a temporary checkout.
-These new checks still require native execution for the 0.3.1 change; Linux runs
-skip Windows-only APIs. They do not reload Herdr or edit personal host config.
+Native dispatcher and ACL/setup checks passed on 2026-11-10 in
+[Windows run 42800411454](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42800411454),
+whose checkout `2212a5c4c642fea8c432b5558d546e4be1306012` has the same tree as
+source `f7101d454f583ce9962c98f4256bcddb9692460a`; see the
+[source-pinned release receipts](releases.md#031-current-preparation).
+Recheck later changed trees; Linux skips of Windows-only APIs do not validate
+Windows behavior. These checks do not reload Herdr or edit personal host config.
 The Unix four-PTY commands below are not Windows gates; a plain Windows
 `cargo test` does not run this ConPTY suite (its console test is ignored unless
 explicitly launched by the harness).
