@@ -1,5 +1,8 @@
 # Native navigation and theme loops
 
+These historical recordings use `/` for search and older mode labels; the
+current default is `f`. See the [current controls](../../../README.md#controls).
+
 Recorded native Crossroads UI, with editorial captions **below** the original
 1656×812 image. Both silent GIFs are 1656×896, sampled at 12 fps, and loop forever.
 No UI pixels are painted, scaled or replaced before GIF palette quantization.

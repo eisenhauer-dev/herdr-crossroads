@@ -24,8 +24,10 @@ The temporary config binds `prefix+f` to the absolute binary
 `HERDR_PLUGIN_CONFIG_DIR` pointing to the isolated root's `plugin-config/`, and
 `width = "90%"`, `height = "90%"`. Ctrl+B then `f` launches it directly.
 This is **demo-only**, not a shipped/default binding or standard plugin
-registration. Published installation, plugin-link, and plugin-pane-open commands
-remain unexecuted examples. Release binary SHA-256:
+registration. This 2026-10-02 capture did not execute published installation,
+plugin-link, or plugin-pane-open commands. Its `/` search key predates the
+current `f` default; see the [current controls](../../README.md#controls).
+Captured binary SHA-256:
 `75a3e52dfcbdc3975a4b90cd4a5705b771ef4a0d12778c04574761b7741144ea`.
 
 Tokyo Night is already selected in isolated `plugin-config/theme.jsonc` from an

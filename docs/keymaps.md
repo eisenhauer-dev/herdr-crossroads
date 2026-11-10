@@ -498,7 +498,7 @@ Verification sources: [Herdr v0.9.3 input routing](https://github.com/herdrdev/h
 
 ### Windows preparation verification
 
-The Windows WIP uses native console modes and VT input/output, not `stty`.
+The Windows implementation uses native console modes and VT input/output, not `stty`.
 It saves/restores the original input/output modes, uses native terminal sizing
 with an 80×24 fallback, and does **not** send Kitty query/push/pop sequences.
 Shared decoding and keymap rules remain in place; this is not a guarantee that
@@ -527,6 +527,8 @@ Native dispatcher and ACL/setup checks passed on 2026-11-10 in
 whose checkout `2212a5c4c642fea8c432b5558d546e4be1306012` has the same tree as
 source `f7101d454f583ce9962c98f4256bcddb9692460a`; see the
 [source-pinned release receipts](releases.md#031-current-preparation).
+The later [PR #20 Windows run](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831284072)
+also passed, including the post-tag legacy-ACL append integration checks.
 Recheck later changed trees; Linux skips of Windows-only APIs do not validate
 Windows behavior. These checks do not reload Herdr or edit personal host config.
 The Unix four-PTY commands below are not Windows gates; a plain Windows
@@ -626,12 +628,16 @@ passed). That failed run did not reach the installed-binary second pass; the
 subsequent successful run above passed the access-mask correction, expanded
 regressions and both acceptance passes.
 Portable synthetic PE/workflow and supervisor checks are not Windows 10/11
-certification. Windows is
-preparation for intended 0.3.0; the local package is unpublished 0.3.0. Separately, on 2026-10-28 the
+certification. Published 0.3.1 includes Windows x86_64 GNU binaries, but publication
+does not expand that verification scope. Separately, on 2026-10-28 the
 user reported successful basic source-build/link/popup use with real Herdr 0.9.5
 on a physical Windows 11 PC. The exact OS build and per-function checklist were
 not recorded, so this does not establish every key/theme/resize behavior on that
-PC, Windows 10 coverage or managed installation. On 2026-11-04 the user accepted
+PC, Windows 10 coverage or managed installation. On 2026-11-10 the user additionally
+confirmed successful keybinding setup and `prefix+f` launch after the Herdr menu's
+**Reload config** action with an updated source/linked checkout; the exact Windows
+build was unrecorded. This does not establish all key/theme/resize behaviors.
+On 2026-11-04 the user accepted
 the existing Windows tests as sufficient and waived additional Windows 10/11
 managed-install/live-popup testing, not licensing or release review. This is not
 new execution evidence or certification. See

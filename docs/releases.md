@@ -3,15 +3,19 @@
 This process prepares reviewable versioned assets locally and configures
 the same gates for public CI. It does not implement GitHub release automation,
 publish assets, create tags, push refs, run Actions, or install/activate the plugin.
-**0.3.0 is released** for all four targets as the regular
-[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.0),
-with the disclosed Windows compatibility and provenance limits. The local package
-version is **0.3.1**, unpublished and preparing cross-platform `setup-keybind`
-and viewport-only wheel scrolling.
-Its native dispatcher requires new binaries; never replace the published 0.3.0
-assets or move that tag. No new tag, merge or publication is approved by this
-preparation. The 0.3.0 preparation sections below are historical receipts,
-not statements of current release availability.
+**0.3.1 is released** for all four targets as the regular
+[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.1)
+(published 2026-11-10 at 12:44:16Z), with the disclosed Windows compatibility and
+provenance limits. The package/manifest version remains **0.3.1**. The release
+includes cross-platform `setup-keybind` dispatch and viewport-only wheel scrolling.
+The default branch additionally contains a post-tag, Python-only Windows ACL
+append fix; the [checkpoint below](#post-tag-windows-helper-checkpoint) distinguishes
+that fix from immutable release content. Existing 0.3.1 binaries need updated
+helper scripts, not a rebuild; 0.3.0 binaries require an upgrade for dispatch.
+**0.3.0**, published 2026-11-09, remains a regular release but is no longer Latest.
+Never replace published assets or move their tags. This documentation grants no
+new merge, tag or publication approval. Dated preparation sections below preserve
+their historical receipts and open-gate status, not current release availability.
 The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
 tag `v0.1.0` at reviewed source `490b0d74dc866b6ed83786f7aaa5657c35db5c51` and
@@ -75,16 +79,19 @@ including formatting, Clippy, Rust/helper tests, the builder-profile gate, build
 all four full PTYs, packaging and upload. These are test-version results, not the
 fresh gates or separate publication approval for the regular `0.1.0` release above.
 
-## 0.3.1 current preparation
+<a id="031-current-preparation"></a>
 
-**Pending release, not published.** Cargo manifest, lock entry and plugin manifest
-declare `0.3.1`. This preparation adds no dependencies. It covers:
+## 0.3.1 release and subsequent source update
+
+Cargo manifest, lock entry and plugin manifest declare `0.3.1`. The published
+release has archive, checksum, provenance and link-map assets for all four targets
+(16 assets). Its preparation added no dependencies. Current behavior comprises:
 
 - The native `--setup-keybind` dispatcher for the explicit global action on
   Linux/macOS/Windows: `python3` on Unix, `python` on Windows, both **3.11+**.
   Windows selects `crossroads-windows`. The matching new binary, manifest and
   helper are required; changing the manifest alone cannot update a 0.3.0 binary.
-- The [Windows config ACL preservation](installation.md#keyboard-launch-setup):
+- The **post-tag source-only** [Windows config ACL preservation fix](installation.md#keyboard-launch-setup):
   auto-inherited descriptors retain staged replacement and exact staging/final
   security checks with recovery-file retention on partial failures. Legacy and
   protected non-auto-inherited descriptors use exclusive-handle append without
@@ -98,17 +105,17 @@ declare `0.3.1`. This preparation adds no dependencies. It covers:
 - The disabled-by-default [Windows Schannel revocation workaround](installation.md#optional-windows-schannel-revocation-workaround),
   with its explicit security trade-off; it is not part of the immutable 0.3.0 installer.
 
-Use the historical [0.3.0 manual checklist](#030-manual-release-checklist) as the
-process template, substituting `0.3.1` identities and filenames, not reusing its
-receipts or open-gate status as current evidence. Require fresh final-tree native
-CI for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
-`x86_64-apple-darwin` and `x86_64-pc-windows-gnu`: **16 assets**, one `.tar.gz`,
+The [0.3.0 manual checklist](#030-manual-release-checklist) is retained as a
+historical process template, not authority to republish either release. Each new
+candidate requires its own final-tree native CI for `x86_64-unknown-linux-gnu`,
+`aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-gnu`:
+**16 assets**, one `.tar.gz`,
 `.tar.gz.sha256`, `.provenance.json` and `.link.map` per versioned target stem.
 Inspect exact archive members, checksums, canonical notice bytes, tested binary/map
 bindings, source identities and platform-specific provenance/attribution for each.
 Do not rename historical assets or alter published **v0.3.0**, its tag or binaries.
 
-On **2026-11-10**, native CI passed for source
+**Pre-publication receipt (2026-11-10):** native CI passed for source
 `f7101d454f583ce9962c98f4256bcddb9692460a`:
 [Linux run 42800411616](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42800411616)
 (7m 36s),
@@ -133,21 +140,54 @@ For that source and Linux CI archive, independent isolated install/reinstall wit
 real Herdr **0.9.5**, all four installed-binary PTYs and installer rejection checks
 passed. Independent combined review of that source completed with only the
 documentation-status inconsistency corrected here; no production, test or licensing
-blocker was found. These dated receipts do not validate later changed trees:
-recheck native CI, artifacts and review against the exact candidate before primary
-acceptance of its source/notes/16 hashes. That acceptance and separate
-merge/tag/publication approval remain pending, not granted by these checks.
-The ignored draft is `target/release-0.3.1-notes.md`;
-it is not public release notes. Coordinate the default-branch/matching-asset window
-before advancing public installation, then verify public hashes and native install
-routes after approved publication. Historical Windows testing waivers remain
+blocker was found. At that checkpoint, primary acceptance and separate
+merge/tag/publication approval remained pending; the subsequent publication is
+recorded above. These dated receipts do not validate later changed trees or
+establish a post-publication public-download/install run. The ignored
+`target/release-0.3.1-notes.md` was a local draft, not the public release-notes route.
+Historical Windows testing waivers remain
 waivers, not Windows 10/11 certification or proof of this candidate's execution;
 retain disclosed runtime/provenance limits without silently rewriting old receipts.
 
+### Post-tag Windows helper checkpoint
+
+On 2026-11-10, [PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20)
+merged to main at 14:23:01Z as `8d23532`; its tree equals local
+`develop@fa83bf4a858b83a62c7ea6363c29227445fbf434`. Its only production change is
+`scripts/windows-files.py`: legacy/protected non-auto-inherited configs use an
+ACL-preserving append instead of being refused. It does not change Rust binary
+behavior or retroactively alter the `v0.3.1` source tag/assets. The 0.3.1 dispatcher
+loads `scripts/setup-keybind.py` at runtime, which loads `scripts/windows-files.py`.
+Update the actual managed or linked plugin checkout's scripts for this fix; an
+existing 0.3.1 binary does not need rebuilding. An immutable `--ref v0.3.1` install
+retains the earlier helpers, while the unpinned default-branch route includes the fix.
+
+The owning session verified all five required PR checks as **SUCCESS** for that
+head (not a claim that CI directly checked out the head rather than a PR merge):
+
+| Check | Receipt | Result |
+| --- | --- | --- |
+| Windows GNU | [42831284072](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831284072) | Passed, 3m26s; native helper/build/installed-byte acceptance gate |
+| Linux | [42831283908](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831283908) | Passed, 8m12s |
+| macOS ARM64 / Intel | [42831283940](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831283940) | Passed, 10m9s / 12m30s |
+| PR policy | [42831283907](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831283907) | Passed |
+
+The user separately reported successful setup and `prefix+f` popup launch from
+an updated Windows source/linked checkout that day, after choosing Herdr's menu
+**Reload config**. The action log showed `succeeded`, exit 0, empty stderr and
+`Added prefix+f` at the expected `AppData/Roaming/herdr/config.toml` path. Exact
+Windows version/build and a per-function checklist were not recorded. This is
+bounded user-reported live evidence, not managed-install acceptance, Windows 10/11
+certification or private UCRT compatibility proof. No public release assets were
+reverified or live Herdr commands executed by this documentation audit; original
+provenance flags, attribution limits and historical receipts remain unchanged.
+
 ## 0.3.0 local preparation
 
-The canonical Cargo manifest, unique lock entry and plugin manifest agree on
-`0.3.0`. Preparation covers Linux x86_64 glibc, native Apple Silicon and Intel
+**Historical pre-publication record:** this section and its dated subsections
+describe 0.3.0 preparation, not the current manifest or remaining release status.
+At that checkpoint, the canonical Cargo manifest, unique lock entry and plugin
+manifest agreed on `0.3.0`. Preparation covers Linux x86_64 glibc, native Apple Silicon and Intel
 macOS, and native Windows x86_64. This is not four-platform support or release
 approval. Runtime code, dependencies, installer policies and CI gates are unchanged
 by the version bump. macOS retains minimum **15.0**; Linux retains its existing
@@ -293,8 +333,11 @@ review, primary acceptance and explicit distribution/release approval remain ope
 
 ## Windows release boundary
 
-The Windows workflow/helper currently prepare evidence, not releasable or
-certified assets. The first two native Windows CI attempts reached the 30-minute
+The Windows workflow/helper prepare evidence and never publish or certify assets;
+Windows GNU assets have since been published in 0.3.0 and 0.3.1. Publication does
+not convert preparation-only provenance into Windows 10/11 certification. The
+following is historical gate progression, not current release availability.
+The first two native Windows CI attempts reached the 30-minute
 job timeout. The third (`343144f`, run `39603155778`) failed in 2m 50s at the initial
 console-mode check, with bounded cleanup/fail-fast and no artifact upload. There
 was no native Windows GREEN at that checkpoint. The fourth (`bcbd93e`, run `39605428457`) passed
@@ -314,11 +357,11 @@ checks passed. Exact artifact verification also passed; the
 [historical artifact receipt](builds.md#successful-windows-preparation-evidence)
 retains preparation-only provenance and limited retention, not release approval.
 Those historical versioned outputs use **0.2.0** and must not be relabeled.
-Fresh local preparation now derives **0.3.0** names from the canonical version;
+Fresh local preparation derives **0.3.1** names from the current canonical version;
 that does not verify new assets. See [the exact helper and artifact contract](builds.md#windows-preparation-not-certification).
 
 Historical MSVC pipeline success and exact artifact verification are recorded above.
-Before a Windows release, the remaining gates include
+For a new Windows candidate, gates still include
 [fresh final-notice GNU packages and linked-input attribution review](builds.md#windows-gnu-toolchain-and-attribution),
 independent combined review and primary acceptance. Additional Windows 10/11
 managed-install/live-popup testing is waived as recorded above, not certified. The helper's
@@ -327,8 +370,9 @@ managed-install/live-popup integration. Separately, the user reported successful
 basic source-build/link/live-popup use with Herdr 0.9.5 on a physical Windows 11
 PC on 2026-10-28; the exact OS build and per-function checklist were not recorded.
 That report does not certify all features, Windows 10 or managed installation,
-and does not close the attribution gate or approve a release. Host keybinding
-setup is Unix-only and Windows uses `crossroads-windows`; reconcile those
+and does not close the attribution gate or approve a release. Current host keybinding
+setup supports Windows and selects `crossroads-windows`; the later 2026-11-10
+setup/reload/launch report above remains separately bounded. Reconcile those
 [launch limits](installation.md#windows-preparation-limitations) before acceptance.
 Version changes, remote actions and release/publication approval remain separate.
 
@@ -351,23 +395,23 @@ the prepared route downloads the exact version from GitHub Releases. Publication
 of both test prereleases and execution of the full public cycle are recorded
 above; this verified test cycle is not regular-release approval.
 
-For local `0.3.0` preparation, each of `x86_64-unknown-linux-gnu`,
+For current local `0.3.1` preparation, each of `x86_64-unknown-linux-gnu`,
 `aarch64-apple-darwin`, `x86_64-apple-darwin`, and `x86_64-pc-windows-gnu`
 produces four distinct assets: 16 target-specific names if all four gates pass,
 not a claim that those assets exist or are approved. Linux example:
 
 ```text
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.provenance.json
-target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.link.map
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.provenance.json
+target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.link.map
 ```
 
 New Unix builds' tar contains the exact tested executable, preserving its executable mode,
 `herdr-crossroads.sha256`, the project's `LICENSE`, and `THIRD-PARTY-NOTICES.md`.
 The installer requires all four files and retains both notices beside the binary.
 The already-published `v0.1.0` archive still contains `THIRD-PARTY-NOTICES.html`;
-it is not replaced or relabeled by this conversion. New 0.3.0 artifacts are
+it is not replaced or relabeled by this conversion. New 0.3.1 builds are
 separate; never replace v0.1.0 or v0.2.0 assets. When the checkout version is 0.1.0, the
 installer accepts only the exact historical HTML paired with the pinned equivalent Markdown;
 [installation](installation.md#validation-and-failure-behavior) specifies the hashes
@@ -381,6 +425,10 @@ the [Windows contract](builds.md#windows-preparation-not-certification) remains
 preparation only, with the same two notice files.
 
 ## 0.3.0 manual release checklist
+
+**Historical checklist:** 0.3.0 is already published; its publication-window and
+fallback statements below describe that preparation. Do not rerun it against the
+immutable tag/assets. Future releases need new identities and separate approvals.
 
 This reuses the 0.2.0 manual process below; it is a checklist, not authorization or
 release automation. Stop on any identity/hash mismatch or unresolved release gate.
@@ -441,6 +489,9 @@ release automation. Stop on any identity/hash mismatch or unresolved release gat
    There is no published Windows fallback; do not claim one.
 
 ## 0.2.0 manual release gates
+
+**Historical checklist:** 0.2.0 was subsequently published. Statements about
+missing assets/fallbacks and pending checks below retain their original scope.
 
 1. Freeze the reviewed candidate source/tree and record its full commit identity.
    Run complete final Linux, native Apple Silicon and native Intel CI against that
@@ -504,8 +555,8 @@ python3 tests/test_distribution_helpers.py
 python3 tests/test_release_install_helpers.py
 python3 tests/test_notices.py
 sh scripts/build-linux.sh
-(cd target/builds && sha256sum -c herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256)
-tar -tvzf target/builds/herdr-crossroads-0.3.0-x86_64-unknown-linux-gnu.tar.gz
+(cd target/builds && sha256sum -c herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz.sha256)
+tar -tvzf target/builds/herdr-crossroads-0.3.1-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 This block is the Linux preflight. On each native Mac use the corresponding

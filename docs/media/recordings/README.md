@@ -1,5 +1,9 @@
 # Native recording provenance
 
+These captures predate the current `f` search default and later UI changes.
+Recorded keys and layouts are historical evidence; use the
+[current controls](../../../README.md#controls) for today's behavior.
+
 The current accepted movie is the approximately 1:40
 [Crossroads demo](../crossroads-circular-tour.mp4), documented in
 [guided-tour.md](guided-tour.md). Speech-matched title, pane cards and hierarchy

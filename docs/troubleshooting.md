@@ -6,17 +6,19 @@ Key names below are defaults; use your effective [keymaps](keymaps.md) if change
 
 ## Crossroads does not open: missing binary or host context
 
-The manifest starts `./target/release/herdr-crossroads` from the plugin root;
+The manifest starts `./target/release/herdr-crossroads` on Linux/macOS, or
+`./target/release/herdr-crossroads.exe` via `crossroads-windows` on Windows, from the plugin root;
 a source-only clone is not ready to launch. Either build from source or use the
 [binary installer](installation.md). The manifest's Python build hook needs no
 Rust/Cargo: by default it downloads the matching version's archive and checksum
 from `https://github.com/eisenhauer-dev/herdr-crossroads/releases/download/v<VERSION>/`.
 An explicit `CROSSROADS_ASSET_DIR` selects trusted local assets instead, with no
 network fallback; linking does not execute the hook. Keep the plugin root and
-executable in place. The regular `v0.1.0` release and test prereleases are public;
-see [public installation evidence](installation.md#regular-010-public-installation).
+executable in place. The current regular release is `v0.3.1`, with all four
+Linux/macOS/Windows GNU targets; see [installation](installation.md) for current
+setup requirements and bounded public-installation evidence.
 
-These read-only checks belong in the **linked checkout root**, in a shell inside
+These Unix-only read-only checks belong in the **linked checkout root**, in a shell inside
 the intended running Herdr session:
 
 ```sh
@@ -42,7 +44,7 @@ For managed installation, an unset `CROSSROADS_ASSET_DIR` selects the public
 download route. A supplied value must be a nonempty absolute trusted directory
 containing the matching version's archive and checksum. Invalid overrides,
 download failures, mismatched versions, missing archives/checksums, or rejected
-hashes/ELF headers prevent registration. Do not bypass validation or fall back to
+hashes or platform-specific ELF/Mach-O/PE headers prevent registration. Do not bypass validation or fall back to
 an untrusted download. Close Crossroads before reinstalling a reviewed ref or
 uninstalling: uninstall does not terminate an already running popup. Herdr 0.9.3
 managed uninstall removes its checkout; 0.9.5 clears registration but can retain
@@ -54,6 +56,23 @@ test [passed locally](installation.md#native-distribution-acceptance). It does
 not itself establish public installation or personal-host setup; the earlier fake-API
 CLI tests retain their narrower scope.
 
+## The launch binding is missing or still does nothing after setup
+
+Setup requires the 0.3.1 binary and matching manifest/helper; 0.3.0 does not
+implement `--setup-keybind`. The later Windows ACL fix needs updated scripts in
+the actual managed/linked checkout, not a rebuilt 0.3.1 binary. Pinned `v0.3.1`
+scripts predate that fix. Do not loosen permissions to make setup work; use the
+[setup safeguards](installation.md#keyboard-launch-setup) and record the exact
+setup error if it fails.
+
+After setup succeeds, choose **Reload config** in the **Herdr menu**, then check
+`prefix+?` for the binding and use `prefix+f`. In Herdr 0.9.5 this menu action
+reloads server and client keymaps; `herdr server reload-config` alone can leave
+the current client's shortcuts stale. Restart that client if using the CLI-only
+reload. Check that the successful setup log names the running host's config file
+rather than another checkout's or environment's file. See the
+[versioned reload source and setup steps](../README.md#add-the-launch-binding-reload-and-open).
+
 ## The open command returns, but no popup is visible
 
 There is no established Crossroads-specific cause for this symptom. Record the
@@ -62,11 +81,14 @@ and executable before changing anything. `herdr plugin list` is the host's
 registration inspection example. If the host reports `ui_busy`, close the other
 modal before trying again. The shipped manifest supplies no dimensions and the
 host default is half-size. The installed Herdr 0.9.3 CLI help used for local acceptance
-does not list sizing flags on `plugin pane open`; see the README's
-[manifest sizing guidance](../README.md#installation) instead.
+does not list sizing flags on `plugin pane open`. Herdr 0.9.4/0.9.5 sources do
+support `--width` and `--height` per invocation; see the README's
+[versioned sizing guidance](../README.md#optional-customize-the-popup-size) for those flags
+and manifest defaults. Neither guarantees the required popup content size.
 
-Host commands here and in the README were statically checked against Herdr
-v0.9.3 sources. Managed lifecycle and popup commands also passed in an isolated
+The original host-command checks used Herdr v0.9.3 sources; later reload and
+sizing guidance uses the versioned 0.9.4/0.9.5 sources linked in the README.
+Managed lifecycle and popup commands also passed in an isolated
 native 0.9.3 sandbox, not a personal session. Opening changes the host UI;
 it is not a read-only probe. Do not infer that a missing popup is caused by size,
 theme, or terminal protocol without evidence. Include versions, the command,
@@ -140,7 +162,9 @@ can be stale. Crossroads does not retry another pane on failure. Reopen for a ne
 snapshot and select again; never assume a same-named row is the same pane.
 
 Focus requires the local `HERDR_SOCKET_PATH`. The following read-only shell check
-reveals only whether a socket path was supplied and is currently a socket:
+is Unix-only and reveals only whether a socket path was supplied and is currently
+a socket. Windows uses a named pipe derived from Herdr's socket marker, not a
+Unix socket file; this `-S` check cannot validate Windows transport:
 
 ```sh
 if [ -z "${HERDR_SOCKET_PATH:-}" ]; then
@@ -181,8 +205,8 @@ override theme colors, so unexpected colors may be intentional configuration.
 Auto conservatively recognizes a simple manual built-in Herdr theme. SSH context,
 missing/unreadable config, custom settings, ambiguous syntax, and auto-switching
 fall back to Mocha; Auto does not follow live host theme changes. Config path
-precedence is `HERDR_CONFIG_PATH`, then `$XDG_CONFIG_HOME/herdr/config.toml`, then
-`$HOME/.config/herdr/config.toml`—not retry-after-read-failure fallbacks.
+selection follows the platform-aware [Auto theme path precedence](themes.md#auto-config-path-selection),
+including `%APPDATA%` on Windows—not retry-after-read-failure fallbacks.
 
 `theme.jsonc` accepts exactly one `theme` field with an explicit offered built-in
 name; `Auto (Herdr)` is a picker entry, not a file value. Invalid/unreadable theme

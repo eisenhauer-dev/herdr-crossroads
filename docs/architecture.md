@@ -14,12 +14,16 @@ event hooks. See [installation and setup safeguards](installation.md).
 `src/cli.rs` dispatches `--setup-keybind` before runtime initialization, using
 `python3` on Unix and `python` on Windows with inherited stdio/environment and
 no shell. This keeps one action ID/argv for all platforms despite Herdr's unique-ID
-constraint. It requires the updated 0.3.1 binary plus manifest/helper; 0.3.1 is
-pending release, and published 0.3.0 binaries remain immutable and lack this flag.
+constraint. It requires the published 0.3.1 binary plus manifest/helper;
+published 0.3.0 binaries remain immutable and lack this flag. The later Windows
+ACL fix in [PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20)
+updates runtime-loaded scripts only: an existing 0.3.1 binary needs no rebuild,
+but the pinned `v0.3.1` checkout lacks those updated scripts.
 
 Released 0.2.0 covers Linux x86_64 glibc and macOS 15.0+ ARM64/Intel;
-published 0.1.0 stays Linux-only. The following Unix distribution evidence does
-not cover the Windows WIP. Installation selects the running
+published 0.1.0 stays Linux-only. Published 0.3.1 covers those three targets and
+Windows x86_64 GNU. The following Unix distribution evidence does
+not cover Windows. Installation selects the running
 process architecture, validates ELF/Mach-O and archive/checksum/notice contracts,
 and places the payload at the same entrypoint path without Cargo. Native release
 helpers bind a fresh final link/map to the exact four-PTY-tested executable;
@@ -31,8 +35,8 @@ acceptance waiver is not an automated-installation waiver.
 
 ### Windows preparation boundary
 
-Native Windows 10/11 x86_64 retains its **PREPARATION** verification limits; the local
-package is 0.3.1, pending release. The manifest separates Unix `crossroads` from Windows
+Native Windows 10/11 x86_64 retains bounded verification limits despite the
+published 0.3.1 assets. The manifest separates Unix `crossroads` from Windows
 `crossroads-windows` (`./target/release/herdr-crossroads.exe`), with `python` for
 Windows installation and `python3` on Unix. The updated `setup-keybind` action
 supports both, selecting the appropriate pane launch entry. Its Windows path uses
@@ -73,8 +77,14 @@ verification also passed; see [build evidence](builds.md#windows-preparation-not
 CI remains fake-host evidence, not actual Herdr integration or Windows certification.
 Separately, the user reported successful basic source-build/link/popup use with
 Herdr 0.9.5 on a physical Windows 11 PC on 2026-10-28; the exact OS build and
-per-function checklist were not recorded. [MSVC/SDK attribution review](builds.md#msvc-and-sdk-attribution-gate)
-and release gates remain open.
+per-function checklist were not recorded. On 2026-11-10 the user also confirmed
+successful setup and `prefix+f` launch after the Herdr menu's **Reload config**
+action in an updated source/linked checkout (exact Windows build unrecorded).
+[PR #20's native GNU CI](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831284072)
+passed the post-tag ACL append fix, including isolated native integration checks.
+These are not all-function, all-version or managed-install live acceptance.
+See the [historical MSVC/SDK boundary](builds.md#msvc-and-sdk-attribution-gate)
+and current GNU evidence in the build guide.
 
 ## Module responsibilities
 

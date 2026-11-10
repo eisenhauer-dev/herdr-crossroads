@@ -6,10 +6,16 @@ preparation; building does not publish releases. The build helper makes no tags,
 plugin activation, or installation changes. See [release preparation](releases.md)
 for the version contract and separate approval/verification boundaries.
 
-**0.3.0 is released** for Linux, macOS and Windows GNU with the disclosed Windows
+**0.3.1 is released** as the regular
+[Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.1)
+(2026-11-10) for Linux, macOS and Windows GNU, with the disclosed Windows
 compatibility and provenance limits. The checkout's package/manifest version is
-**0.3.1**, currently local preparation only; current commands prepare new assets,
-not published 0.3.1 downloads. The historical `0.1.0` Linux
+**0.3.1**; current commands prepare local assets without changing public releases.
+The default branch's post-tag Windows ACL helper fix requires updated scripts in
+the actual plugin checkout, not a rebuilt 0.3.1 binary. A pinned `v0.3.1` checkout
+does not contain that fix; 0.3.0 binaries lack setup dispatch and must be upgraded.
+See the [release/source checkpoint](releases.md#post-tag-windows-helper-checkpoint).
+The historical `0.1.0` Linux
 release was published as
 [Latest](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.1.0)
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
@@ -17,11 +23,13 @@ Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 
 ## Windows preparation (not certification)
 
-The current WIP target is `x86_64-pc-windows-gnu`. The [first successful GNU preparation](#first-successful-gnu-preparation)
+The current Windows target is `x86_64-pc-windows-gnu`. Published assets exist for
+0.3.0 and 0.3.1; the workflow still prepares evidence, not publication or certification.
+The [first successful GNU preparation](#first-successful-gnu-preparation)
 passed native linking, runtime acceptance, packaging, exact installed-byte checks
 and upload on Windows Server 2025 on 2026-11-05 at the `b5a86ed` source tree.
-Its prior-notice assets remain immutable; the added full ZPL notices require fresh
-final-tree packages. This is not Windows 10/11 certification or distribution approval.
+Its prior-notice assets remain immutable and are not the later corrected release
+packages. This historical run is not Windows 10/11 certification or distribution approval.
 The earlier successful receipts below used the retired MSVC target and do not
 validate this migration.
 The first two native Windows CI attempts
@@ -93,6 +101,9 @@ command deadlines with bounded process-tree cleanup. Each acceptance method is
 isolated in a process with a 30-second deadline, including fixture teardown;
 the overall job timeout is unchanged. See [native test scope and timeout limits](keymaps.md#windows-preparation-verification).
 
+**Diagnostic and staging-fix history (2026-11-09):** the observations and failure
+receipts below explain the earlier replacement-only implementation. Current
+legacy/protected handling uses append, as summarized after those receipts.
 Immediately before `tests/test_setup_keybind.py`, the helper runs
 `tests/diagnose_windows_security.py` unbuffered under the same supervisor with a
 60-second deadline. This diagnostic uses only standard-library ctypes and isolated
@@ -170,45 +181,61 @@ derives protection flags from the unchanged original, and still refuses any raw
 readback mismatch before descriptor handoff or config-byte writes. Portable
 regressions model the missing-request bit loss, copy isolation, conditional
 request, protection flags and failure cleanup. A native regression checks exact
-staging/target security and bytes over three auto-inherited updates; execution
-of the changed product and full native setup/keybind GREEN remain open. The
-run's unchanged-product setup suite still had 11 failures and 5 skips
+staging/target security and bytes over three auto-inherited updates; at that
+checkpoint, changed-product execution and full native setup/keybind GREEN remained
+open. The run's unchanged-product setup suite still had 11 failures and 5 skips
 among 26 tests.
 
-**Legacy replacement observation and fail-closed support boundary:** the diagnostic legacy fixture's final replacement
+**Historical legacy replacement observation and refusal boundary:** the diagnostic legacy fixture's final replacement
 actually adds inherited Administrators-full, SYSTEM-full and Everyone-read ACEs
 to its original three explicit ACEs. The controlled parent grants those
 inheritable permissions; original/staging `0x8004` (144 bytes) becomes final
 `0x8404` (208 bytes). This demonstrates permission broadening in a synthetic
 fixture, not exploitation of real user configuration. The staging fix alone does
-not prevent it. Product updates now refuse descriptors without
+not prevent it. At that checkpoint, product updates refused descriptors without
 `SE_DACL_AUTO_INHERITED` (`0x0400`) before staging/replacement, including both
 legacy `0x8004` and protected non-auto-inherited `0x9004`. The latter's observed
 `0x9004` to `0x9404` change alone is not a permission-broadening proof, but violates
-the exact-descriptor contract. No-op setup is still allowed; new configs still
-inherit parent security and must meet the same prerequisite for subsequent writes.
-User ACLs are never normalized. Use the [manual ACL-preserving setup alternative](installation.md#keyboard-launch-setup)
-when refused, not permission changes to bypass the guard.
+the exact-descriptor contract. No-op setup was still allowed; new configs
+inherited parent security and required that prerequisite for subsequent writes.
+This refusal was superseded by the post-tag append path below; user ACLs are
+never normalized. Use the [manual ACL-preserving setup alternative](installation.md#keyboard-launch-setup)
+if current setup refuses, not permission changes to bypass safeguards.
 
 After native replacement, exact final descriptor readback is required before
 backup deletion and success. Mismatch/readback failure retains the original backup
 and any remaining staging, reports recovery paths and fails without automatic
 retry or restoration. This is a detection/recovery gate, not prevention of an
-unexpected post-replacement exposure; refusing known unsupported descriptors
-before replacement is the preventive fix. Portable commit regressions cover these
-boundaries, with success fixtures explicitly modern and a separate native legacy
-refusal regression. Protected-auto-inherited `0x9404` retains the exact descriptor
-guards. Native [run 42682540431](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42682540431)
+unexpected post-replacement exposure; at that checkpoint, refusing known unsupported
+descriptors before replacement was the preventive fix. The then-current portable
+commit regressions covered these boundaries, with explicitly modern success fixtures
+and a separate native legacy refusal regression. Protected-auto-inherited `0x9404`
+retains the exact descriptor guards. Native [run 42682540431](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42682540431)
 at `fd06120fa6dc60905256e8927048a49a9e7e2cca` passed all 29 keybind tests,
 including protected auto-inherited updates, legacy refusal and recovery checks.
 The setup suite passed 26 tests with five Unix-only skips. The subsequent manifest
 dispatch acceptance case still used a legacy success fixture and was refused;
 that synthetic fixture now explicitly establishes modern inheritance using the
-same test-only helper. Full native acceptance and packaging remain unverified.
+same test-only helper. Full native acceptance and packaging remained unverified
+at that checkpoint, not after the later successful runs below.
 Fixture/API checkpoints and infrastructure-error code locations distinguish
 setup steps without dumping exception messages, personal paths, source lines or
 locals. The probe's completion record remains `acceptance: "not evaluated"`;
 existing setup/keybind assertions, deadlines and fail-closed gates are unchanged.
+
+**Current post-tag helper checkpoint (2026-11-10):** legacy `0x8004` and protected
+non-auto-inherited `0x9004` descriptors now use exclusive-handle append without
+replacement or ACL conversion. Auto-inherited configs retain exact staged/final
+descriptor checks and recovery retention. Append is not atomic or power-loss safe;
+handled failures restore only a verified suffix or require manual inspection.
+The [full contract](installation.md#keyboard-launch-setup) describes sharing,
+identity/byte/security checks and rollback limits. Native Windows
+[run 42831284072](https://github.com/eisenhauer-dev/herdr-crossroads/actions/runs/42831284072)
+passed in 3m26s, including the native helper gate, packaging and installed-byte
+acceptance. Linux and both macOS checks also passed; see
+[PR #20 receipts and bounded user live report](releases.md#post-tag-windows-helper-checkpoint).
+This is not new real-Herdr Windows managed-install CI, Windows 10/11 certification
+or a rewrite of the historical diagnostic/refusal receipts.
 
 Outputs under `target/builds/` currently use
 `herdr-crossroads-0.3.1-x86_64-pc-windows-gnu` with `.tar.gz`, `.tar.gz.sha256`,
@@ -607,8 +634,10 @@ copyright lines differ. Both retain vendor trailing whitespace after `DATA, `.
 The archive copyright discrepancy is not resolved as source identity. The older
 `b5a86ed` packages lack these full root notices and need fresh final-tree builds;
 do not rewrite, relabel or distribute those prior-notice assets as corrected ones.
-Private UCRT compatibility, independent combined review, primary acceptance and
-explicit distribution/release approval remain open; this is not legal clearance.
+At that checkpoint, private UCRT compatibility, independent combined review,
+primary acceptance and explicit distribution/release approval remained open.
+Later publication does not establish private UCRT compatibility or legal clearance,
+nor change the original preparation/distribution flags.
 
 **Approved bounded builder-security exception (2026-11-04; exact builder approved 2026-11-05):**
 GCC 15.2.0 and the exact observed Binutils **2.46.0.20260210** builder are not
@@ -672,14 +701,17 @@ or Herdr managed-install acceptance. See [launch details](installation.md#window
 On 2026-11-04 the user accepted the existing Windows tests as sufficient and waived
 additional Windows 10/11 managed-install/live-popup testing. This is a testing
 waiver, not a new run, Windows 10 coverage or certification. The
-[latest candidate receipts](releases.md#first-gnu-success-and-four-target-preparation)
-retain exact source/run scope and require fresh final-notice packages.
+[historical candidate receipts](releases.md#first-gnu-success-and-four-target-preparation)
+retain their exact source/run scope; fresh final-notice packages were still required
+at that checkpoint.
 
-**Open gates:** fresh final-notice packages/CI, private UCRT compatibility and GNU attribution review;
-independent combined review, primary acceptance and separate
-release approval. No approved Windows release or
-managed-install route exists. Neither the runner label nor synthetic PE tests
-establish Windows 10/11 support.
+**Historical open gates:** these MSVC/early-GNU receipts predate corrected
+final-notice packages and the later 0.3.0/0.3.1 releases. Windows GNU releases and
+a managed installer route now exist, but real-Herdr Windows managed-install
+acceptance is not established by these fake-host gates. Private UCRT compatibility
+and recorded attribution/source-identity limits remain; neither publication, the
+runner label nor synthetic PE tests establish Windows 10/11 certification. A new
+candidate still needs its own final-tree checks, review, acceptance and release approval.
 See [installer and launch limitations](installation.md#windows-preparation-limitations)
 and [native test scope](keymaps.md#windows-preparation-verification).
 
@@ -857,7 +889,8 @@ Separate bounded operation counts measured 16.032 seconds in post-exit drains
 before and 0.002 seconds after, with all 80 popups and four interactive drains
 retained. These are local harness measurements, not native macOS timings or a
 claim that CI is under ten minutes. Native final-linked and byte-identical
-installed-binary verification remains pending for this change.
+installed-binary verification was pending at that measurement checkpoint; later
+[0.3.1 native CI](releases.md#post-tag-windows-helper-checkpoint) passed both macOS gates.
 CI relies on these final-binary gates instead
 of a duplicate ordinary release build/PTY pass, then retains the separate
 installed-package real-Herdr acceptance before upload. The job limit remains
