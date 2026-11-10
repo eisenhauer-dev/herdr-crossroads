@@ -539,12 +539,12 @@ class MouseReadinessTests(unittest.TestCase):
                 emissions.append((now, paint("pane", searching=True)))
             elif 3 <= len(sent) <= 6:
                 index = len(sent) - 3
-                button, selected, previous = [(64, 3, 0), (65, 0, 3), (65, 1, 0), (64, 0, 1)][index]
+                button, selected, previous = [(64, 0, 3), (65, 0, 1), (65, 0, 1), (64, 0, 3)][index]
                 self.assertEqual(data, pty_keymaps.mouse_report(5, 5, button=button))
                 self.assertEqual(len(emissions), 0, "next wheel sent before matching selection/query/cursor")
                 self.assertEqual(popup.output.pending, b"", "stale wheel draw was accepted")
                 final = paint("pane", searching=True, selected=selected)
-                # The right query/cursor with the old selection, or the right
+                # The right query/cursor with a changed selection, or the right
                 # selection with a wrong query/cursor, cannot complete a wheel.
                 stale = paint("pane", searching=True, selected=previous)
                 wrong_query = final.replace(b"Search: pane", b"Search: panj")

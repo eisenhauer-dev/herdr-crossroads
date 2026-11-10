@@ -163,8 +163,10 @@ retaining space for the table/list and any notice. Default bindings are fully
 visible without automatic paging at the supported minimum size of 80×15 and at
 wider sizes (for example, two Select footer rows at 80 columns, two at 120,
 and one at 240). Custom footers requiring more than that budget page every two
-seconds. Oversized selected help entries also scroll automatically; normal help
-entry navigation is unchanged. Plain-text footers include all wrapped lines.
+seconds. Oversized selected help entries also scroll automatically while the
+viewport follows selection; wheel scrolling suspends that following until keyboard
+input resumes it. Normal help entry navigation is unchanged. Plain-text footers
+include all wrapped lines.
 
 Within one action, `/` separates displayed keys, as in `j/↓`. Every footer action
 uses `Keybind(s): action`, with direction markers after the colon and ` · `
@@ -203,9 +205,9 @@ Keys help filters and highlights the displayed key labels and meanings with the
 same case-insensitive subsequence search. Arrow labels (`→`, `←`) and quotes
 around custom literal separator keys are searchable too,
 including in wrapped custom-binding entries. Entries retain their original order.
-Help navigation wraps from the first matching entry to the last and vice versa,
+Keyboard Help navigation wraps from the first matching entry to the last and vice versa,
 with the viewport following selection. No matches leaves selection remembered
-without moving; one matching entry remains selected. Themes navigation also wraps
+without moving; one matching entry remains selected. Keyboard Themes navigation also wraps
 through all offered themes in either view, changing only the unsaved preview.
 Configured navigation keys have the same wrapping behavior as the defaults.
 
@@ -288,17 +290,17 @@ and custom bindings remain available. Crossroads does not write this setting.
   Search return/erase and configuration-error scroll/close controls are clickable.
   Actions absent from a footer (including theme opening and filter reset) remain
   reachable through executable Help entries.
-- Wheel down/up dispatches **next/previous navigation actions**, independently of
-  remapped bindings, without synthesizing text keys. During pane search (including
-  Themes table-preview search), it moves through the filtered panes; during
-  independent Help search, it moves through matching Help entries. The full query,
-  editing focus and query cursor remain unchanged. Typed `j`/`k` still enter search
-  text. Outside search, the wheel navigates panes, Help entries or pending themes
-  in the active view; Themes list and non-editing table preview both navigate
-  themes without saving. Existing wrapping and selection-following scrolling
-  apply: no matches do not move, and one match stays selected. Diagnostics scroll;
-  undersized ordinary views retain their inert-navigation behavior. The wheel is
-  not an independent viewport scroller and never focuses a pane or saves a theme.
+- Wheel down/up scrolls **only the active viewport**, one row at a time, independently
+  of remapped bindings. It preserves the selected/highlighted pane, Help entry or
+  pending theme, even when that item scrolls off screen, and never changes actual
+  host focus or saves a theme. This applies to Select and pane search, Help and its
+  independent search (including wrapped entries), and the Themes list, table preview
+  and preview search. The full query, editing focus and query cursor remain unchanged;
+  typed `j`/`k` still enter search text. Scrolling clamps at the start/end without
+  wrapping and is a no-op when all content fits or there are no matches. Rendering
+  alone does not bring the selection back into view; keyboard navigation does.
+  Hover still highlights the row under the pointer in the scrolled viewport.
+  Diagnostics retain viewport scrolling; undersized ordinary views remain inert.
 - Header rules, group separators, noninteractive blank space and out-of-bounds
   coordinates do not select or activate anything. Hit regions are recorded by the
   actual rendered layout, including filtered/scrolled rows and terminal-cell widths
@@ -708,23 +710,29 @@ footer and hidden cursor before the Help click. The shared `MODE: SELECT` badge
 alone cannot distinguish editing from navigation. Deterministic regressions replay
 delayed, coalesced and fragmented typing plus stale search/Select repaints, retaining
 the original three-second deadline and read-ahead rather than waiting for quiet.
-Search-wheel PTY checks require the unchanged query, editing cursor and expected
-filtered selected row together, in both directions, for pane, independent Help and
+Search-wheel PTY checks require the unchanged query, editing cursor and preserved
+filtered highlight together, in both directions, for pane, independent Help and
 theme-preview search with remapped navigation bindings. Reader regressions reject
-stale selections and incorrect queries/cursors without extending the deadline.
-The native ConPTY suite
-also requires current filtered pane rows and the editing cursor after each wheel
-direction. Its `pane` fixture query includes five rows: the long pane name behind
-the `codex` agent also matches, so the table shows its clipped pane-name context.
+selection-changing wheel repaints and incorrect queries/cursors without extending
+the deadline. Compact Unix PTY checks add overflowing pane content: the selected
+pane can scroll off screen, both bounds clamp, search keeps its editing cursor,
+hover targets the scrolled row and keyboard navigation restores selection visibility.
+The native ConPTY suite requires preserved selection, current filtered pane rows
+and the editing cursor after each wheel direction. Its `pane` fixture query includes
+five rows that all fit: the long pane name behind the `codex` agent also matches,
+so the table shows its clipped pane-name context. Keyboard mode barriers prove each
+no-op wheel report was processed even when ConPTY emits no unchanged paint.
 Portable replay checks all current-table assertions in the mouse acceptance method,
-including five-row wraparound, filter reset and the following wheel step, then
-fresh-console opt-out and keyboard filtering. A Rust UI regression exercises the
-wheel/filter/theme round trip and both keyboard and Help-origin reset: `pane 3`
-remains selected after reset, and wheel-down moves to `pane 4`. The portable replay
-models stable selection separately from the visible filter fallback; it does not
-verify native controls or theme persistence. The corrected expectations passed in
-the later `676c087` native Windows preparation run recorded in the
-[0.3.0 receipts](releases.md#fresh-030-ci-preparation).
+including preserved selection across both wheel directions, filter reset and the
+following no-op wheel step, then fresh-console opt-out and keyboard filtering.
+A Rust UI regression exercises the wheel/filter/theme round trip and both keyboard
+and Help-origin reset: the remembered `Claude` pane ID survives filtering and reset,
+and wheel-down leaves it selected. The portable replay models stable selection
+separately from the visible filter fallback; it does not verify native controls or
+theme persistence. The historical `676c087` native Windows
+preparation run recorded in the [0.3.0 receipts](releases.md#fresh-030-ci-preparation)
+passed the earlier selection-changing wheel expectations, not this viewport-only
+contract; that receipt does not establish native verification of the new behavior.
 Long-query render checks await the exact visible query tail and editing cursor
 in a complete frame within the original three-second deadline, retaining read-ahead
 and rejecting intermediate query repaints. Each predicate parses only the latest

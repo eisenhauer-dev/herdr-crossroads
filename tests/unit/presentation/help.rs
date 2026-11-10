@@ -10,7 +10,7 @@ fn help_category_spacing_tracks_only_visible_groups() {
         for (query, headings) in [
             ("", vec!["Navigation", "Actions", "Mouse (fixed)"]),
             ("pane", vec!["Navigation", "Actions", "Mouse (fixed)"]),
-            ("previous", vec!["Navigation", "Mouse (fixed)"]),
+            ("previous", vec!["Navigation"]),
             ("focus", vec!["Actions", "Mouse (fixed)"]),
             ("Navigation", vec![]),
             ("not-a-key", vec![]),
@@ -114,7 +114,7 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
         if height == 15 {
             assert!(
                 bottom[height - budget - 2]
-                    .contains("highlight previous or next row, including search"),
+                    .contains("scroll viewport only; keep selection, including search"),
                 "{bottom:?}"
             );
             state.help.viewport_start.set(10);
@@ -201,10 +201,9 @@ fn help_fixed_chrome_scroll_alignment_and_theme_matches() {
                 assert_eq!(frame.split("\r\n").count(), height);
                 state.key(Key::Down);
             }
-            assert!(state
-                .layout(width, height, true)
-                .iter()
-                .any(|line| line.contains("highlight previous or next row, including search")));
+            assert!(state.layout(width, height, true).iter().any(
+                |line| line.contains("scroll viewport only; keep selection, including search")
+            ));
             for _ in 1..state.help.entries.len() {
                 state.key(Key::Up);
                 state.layout(width, height, true);

@@ -60,12 +60,7 @@ impl HelpContext {
                     action: None,
                     category: "Mouse (fixed)",
                     keys: "Wheel".into(),
-                    meaning: match self {
-                        Self::Select => "highlight previous or next row, including search",
-                        Self::Themes => {
-                            "preview theme; Help/search highlights next or previous row"
-                        }
-                    },
+                    meaning: "scroll viewport only; keep selection, including search",
                 },
             ])
             .collect()

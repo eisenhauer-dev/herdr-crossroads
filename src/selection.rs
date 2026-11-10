@@ -43,9 +43,11 @@ pub(super) struct Ui {
     pub(super) width: usize,
     pub(super) popup_size: Option<(usize, usize)>,
     pub(super) viewport_start: Cell<usize>,
+    pub(super) follow_selection: bool,
     pub(super) last_selected_at: Cell<Option<usize>>,
     pub(super) theme_index: usize,
     pub(super) theme_cursor: usize,
+    pub(super) theme_viewport_start: Cell<usize>,
     pub(super) theme_table_preview: bool,
     pub(super) theme_error: Option<String>,
     pub(super) theme_invalid: bool,
@@ -87,9 +89,11 @@ impl Ui {
             width: 160,
             popup_size: None,
             viewport_start: Cell::new(0),
+            follow_selection: true,
             last_selected_at: Cell::new(None),
             theme_index: 0,
             theme_cursor: 0,
+            theme_viewport_start: Cell::new(0),
             theme_table_preview: false,
             theme_error: None,
             theme_invalid: false,
@@ -165,6 +169,7 @@ impl Ui {
     }
 
     fn keyboard(&mut self, key: Key) -> Option<String> {
+        self.follow_selection = true;
         if self.configuration_failed() {
             match key {
                 Key::Up | Key::Char('k') => self

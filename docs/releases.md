@@ -6,10 +6,11 @@ publish assets, create tags, push refs, run Actions, or install/activate the plu
 **0.3.0 is released** for all four targets as the regular
 [Latest release](https://github.com/eisenhauer-dev/herdr-crossroads/releases/tag/v0.3.0),
 with the disclosed Windows compatibility and provenance limits. The local package
-version is **0.3.1**, unpublished and preparing cross-platform `setup-keybind`.
+version is **0.3.1**, unpublished and preparing cross-platform `setup-keybind`
+and viewport-only wheel scrolling.
 Its native dispatcher requires new binaries; never replace the published 0.3.0
-assets or move that tag. No new tag, merge, push or publication is approved by
-this preparation. The 0.3.0 preparation sections below are historical receipts,
+assets or move that tag. No new tag, merge or publication is approved by this
+preparation. The 0.3.0 preparation sections below are historical receipts,
 not statements of current release availability.
 The historical `0.1.0` first regular Linux release was for
 `x86_64-unknown-linux-gnu` only. On 2026-10-16, explicit user approval authorized
@@ -73,6 +74,47 @@ passed in 4m 5s at exact merged commit `80a15b34bbfc247b26f8f9737e8d84ba76a71e1d
 including formatting, Clippy, Rust/helper tests, the builder-profile gate, build,
 all four full PTYs, packaging and upload. These are test-version results, not the
 fresh gates or separate publication approval for the regular `0.1.0` release above.
+
+## 0.3.1 current preparation
+
+**Pending release, not published.** Cargo manifest, lock entry and plugin manifest
+declare `0.3.1`. This preparation adds no dependencies. It covers:
+
+- The native `--setup-keybind` dispatcher for the explicit global action on
+  Linux/macOS/Windows: `python3` on Unix, `python` on Windows, both **3.11+**.
+  Windows selects `crossroads-windows`. The matching new binary, manifest and
+  helper are required; changing the manifest alone cannot update a 0.3.0 binary.
+- The [Windows config ACL guard](installation.md#keyboard-launch-setup): changes
+  to existing configs require an already auto-inherited DACL, including protected
+  auto-inherited descriptors. An already-configured no-op is allowed without that
+  prerequisite. Setup never normalizes user ACLs; unsupported descriptors require
+  manual ACL-preserving editing, not relaxed permissions. Exact staging/final
+  security checks and recovery-file retention remain required.
+- Viewport-only wheel scrolling in pane tables, Help and Themes, including search
+  and table previews: selection, filters, pending theme and host focus are retained,
+  and scrolling clamps rather than wraps. Hover still highlights without activation;
+  keyboard input resumes selection-following. See [mouse controls](keymaps.md#mouse-controls).
+- The disabled-by-default [Windows Schannel revocation workaround](installation.md#optional-windows-schannel-revocation-workaround),
+  with its explicit security trade-off; it is not part of the immutable 0.3.0 installer.
+
+Use the historical [0.3.0 manual checklist](#030-manual-release-checklist) as the
+process template, substituting `0.3.1` identities and filenames, not reusing its
+receipts or open-gate status as current evidence. Require fresh final-tree native
+CI for `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+`x86_64-apple-darwin` and `x86_64-pc-windows-gnu`: **16 assets**, one `.tar.gz`,
+`.tar.gz.sha256`, `.provenance.json` and `.link.map` per versioned target stem.
+Inspect exact archive members, checksums, canonical notice bytes, tested binary/map
+bindings, source identities and platform-specific provenance/attribution for each.
+Do not rename historical assets or alter published **v0.3.0**, its tag or binaries.
+
+Fresh final-tree CI and artifact inspection, independent combined review, primary
+acceptance of the exact source/notes/16 hashes, and separate merge/tag/publication
+approval remain pending. The ignored draft is `target/release-0.3.1-notes.md`;
+it is not public release notes. Coordinate the default-branch/matching-asset window
+before advancing public installation, then verify public hashes and native install
+routes after approved publication. Historical Windows testing waivers remain
+waivers, not Windows 10/11 certification or proof of this candidate's execution;
+retain disclosed runtime/provenance limits without silently rewriting old receipts.
 
 ## 0.3.0 local preparation
 

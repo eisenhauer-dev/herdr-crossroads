@@ -17,12 +17,13 @@ pub(crate) enum Hit {
 pub(crate) struct MouseState {
     pub(crate) hits: Vec<(usize, usize, usize, Hit)>,
     pub(crate) signature: String,
+    pub(crate) scroll_max: usize,
 }
 
 impl Ui {
     fn mouse_signature(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{}:{}:{:?}:{}:{:?}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{}:{}:{:?}:{}:{:?}:{:?}",
             self.mode,
             self.selected,
             self.query,
@@ -36,7 +37,12 @@ impl Ui {
             self.rows
                 .iter()
                 .map(|r| (&r.id, &r.workspace_id, &r.tab_id, &r.status))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            (
+                self.viewport_start.get(),
+                self.help.viewport_start.get(),
+                self.theme_viewport_start.get()
+            )
         )
     }
 
@@ -45,6 +51,7 @@ impl Ui {
         let mut mouse = self.mouse.borrow_mut();
         mouse.signature = signature;
         mouse.hits.clear();
+        mouse.scroll_max = 0;
     }
 
     pub(crate) fn finish_mouse_layout(&self) {
@@ -59,6 +66,7 @@ impl Ui {
     }
 
     pub(super) fn action(&mut self, action: Action) -> Option<String> {
+        self.follow_selection = true;
         self.theme_error = None;
         self.auto_toast = None;
         match self.mode {
@@ -88,20 +96,21 @@ impl Ui {
             if self.configuration_failed() || width < 80 || height < 15 {
                 return self.keyboard(if down { Key::Down } else { Key::Up });
             }
-            let action = match (self.mode, down) {
-                (Mode::Select | Mode::Search, true) => Action::NextRow,
-                (Mode::Select | Mode::Search, false) => Action::PreviousRow,
-                (Mode::Help, true) => Action::NextCategory,
-                (Mode::Help, false) => Action::PreviousCategory,
-                (Mode::Themes, true) => Action::NextTheme,
-                (Mode::Themes, false) => Action::PreviousTheme,
+            let start = if self.mode == Mode::Help {
+                &self.help.viewport_start
+            } else if self.mode == Mode::Themes && !self.theme_table_preview {
+                &self.theme_viewport_start
+            } else {
+                &self.viewport_start
             };
-            if self.mode == Mode::Search {
-                self.theme_error = None;
-                self.auto_toast = None;
-                return self.select_action(action, &self.visible());
-            }
-            return self.action(action);
+            let max = self.mouse.borrow().scroll_max;
+            start.set(if down {
+                start.get().saturating_add(1).min(max)
+            } else {
+                start.get().saturating_sub(1).min(max)
+            });
+            self.follow_selection = false;
+            return None;
         }
         let target = self
             .mouse

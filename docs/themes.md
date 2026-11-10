@@ -12,10 +12,11 @@ default Esc or q returns to the same list/table preview, theme cursor and saved
 choice without saving, canceling or focusing a pane. Pane query, selection and
 viewport remain untouched. Esc during help search first ends editing, then a
 second Esc returns to Themes. In pane/help search, `?` is ordinary text.
-Theme navigation wraps in both directions: previous from Auto selects `vesper`,
-and next from `vesper` selects Auto, in both list and table preview. The palette
+Keyboard theme navigation wraps in both directions: previous from Auto selects
+`vesper`, and next from `vesper` selects Auto, in both list and table preview. The palette
 changes immediately, but neither navigation nor preview toggling writes a theme
-file. Help cycles only through matching entries, without changing its query.
+file. Keyboard Help navigation cycles only through matching entries, without
+changing its query.
 Enter in Help navigation executes the marked action **after restoring that same
 Themes view**, so save/cancel/navigation/preview retain their normal meanings.
 Hover highlights Help rows without executing them and previews themes without
@@ -26,6 +27,10 @@ Clicking a pane in the table preview focuses it and closes Crossroads.
 The theme-list heading's `keys` control opens Help;
 footer controls work on one click. Clicking the table-preview search bar edits
 the pane filter; Enter/Esc returns to the pending preview without saving.
+The wheel scrolls only the active viewport in the list, table preview and either
+search, keeping the pending theme and pane/Help highlight unchanged. It clamps
+without wrapping; hover still changes the highlight, and keyboard navigation
+brings the selected item back into view.
 See [mouse controls and opt-out](keymaps.md#mouse-controls) for the full contract.
 The table preview's search row has a right-aligned `MODE: THEMES` badge; help's
 search row shows `MODE: HELP`, separately from `Keys — Themes`. These informational,

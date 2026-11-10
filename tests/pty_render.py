@@ -533,7 +533,7 @@ def main(binary):
             for keys, meaning in (
                 ("Hover", "highlight row; theme preview only, never activate"),
                 ("Left click", "focus clicked pane; Help runs action; footer or search"),
-                ("Wheel", "highlight previous or next row, including search"),
+                ("Wheel", "scroll viewport only; keep selection, including search"),
             ):
                 os.write(master, b"\x1b[B")
                 lines = assert_help_frame(frame(master, b"Esc: close"))
@@ -548,7 +548,7 @@ def main(binary):
             assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines
             os.write(master, b"\x1b[A")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert any(line.startswith("  > Wheel") and "highlight previous or next row" in line for line in lines), lines
+            assert any(line.startswith("  > Wheel") and "scroll viewport" in line for line in lines), lines
             os.write(master, b"\x1b[106;5u")
             assert_help_frame(frame(master, b"Esc: close"))
             assert child.poll() is None, "Ctrl+j in Help focused or closed"
@@ -586,7 +586,7 @@ def main(binary):
             assert lines[4].startswith("  > j/↓"), lines
             os.write(master, b"k")
             lines = assert_help_frame(frame(master, b"Esc: close"))
-            assert any(line.startswith("  > Wheel") and "highlight previous or next row" in line for line in lines), lines
+            assert any(line.startswith("  > Wheel") and "scroll viewport" in line for line in lines), lines
             os.write(master, b"j")
             lines = assert_help_frame(frame(master, b"Esc: close"))
             assert lines[3] == "  Navigation" and lines[4].startswith("  > j/↓"), lines

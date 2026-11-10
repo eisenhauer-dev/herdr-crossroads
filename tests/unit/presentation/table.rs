@@ -1239,6 +1239,12 @@ fn scrolling_across_roomy_workspace_border_keeps_selected_pane_visible() {
 fn viewport_start_inside_workspace_repeats_context_without_selecting_it() {
     for (width, height) in [(60, 15), (150, 45)] {
         let mut state = ui();
+        // Keep offset one within bounds even in the taller viewport.
+        for n in 0..40 {
+            let mut row = ui().rows.pop().unwrap();
+            row.id = format!("overflow-{n}");
+            state.rows.push(row);
+        }
         state.selected = Some("p-untitled".into());
         state.viewport_start.set(1);
         state.last_selected_at.set(Some(2));

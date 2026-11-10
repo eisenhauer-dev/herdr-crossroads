@@ -297,7 +297,7 @@ with `platform_unsupported`. Windows must use `crossroads-windows`; the updated
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
 
-- Movement wraps through visible panes/blocks without changing host focus.
+- Keyboard movement wraps through visible panes/blocks without changing host focus.
 - While editing search, printable keys are text; Enter/Esc ends editing but retains
   the filter. Press Enter again to focus; no matches means no focus.
 - Themes: `j`/`k` or arrows to preview, Space for list/table view, Enter to save,
@@ -305,8 +305,9 @@ with `platform_unsupported`. Windows must use `crossroads-windows`; the updated
 - Help: Enter executes the marked action after returning to its calling view.
   A single left click executes the clicked action. Separate fixed mouse rows are informational.
 - Mouse is enabled by default: hover highlights only; a single left click focuses
-  a pane or saves a theme. Click the search bar to edit; the wheel changes the
-  highlighted row without activating it. Mouse gestures are not configurable bindings.
+  a pane or saves a theme. Click the search bar to edit; the wheel scrolls only the
+  viewport, preserving the highlighted item and host focus, without wrapping.
+  Mouse gestures are not configurable bindings.
   See [mouse controls and opt-out](docs/keymaps.md#mouse-controls).
 - See [complete controls, customization and input limits](docs/keymaps.md#actions-and-defaults).
 
