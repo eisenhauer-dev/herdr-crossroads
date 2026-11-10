@@ -84,12 +84,13 @@ declare `0.3.1`. This preparation adds no dependencies. It covers:
   Linux/macOS/Windows: `python3` on Unix, `python` on Windows, both **3.11+**.
   Windows selects `crossroads-windows`. The matching new binary, manifest and
   helper are required; changing the manifest alone cannot update a 0.3.0 binary.
-- The [Windows config ACL guard](installation.md#keyboard-launch-setup): changes
-  to existing configs require an already auto-inherited DACL, including protected
-  auto-inherited descriptors. An already-configured no-op is allowed without that
-  prerequisite. Setup never normalizes user ACLs; unsupported descriptors require
-  manual ACL-preserving editing, not relaxed permissions. Exact staging/final
-  security checks and recovery-file retention remain required.
+- The [Windows config ACL preservation](installation.md#keyboard-launch-setup):
+  auto-inherited descriptors retain staged replacement and exact staging/final
+  security checks with recovery-file retention on partial failures. Legacy and
+  protected non-auto-inherited descriptors use exclusive-handle append without
+  replacing the file or changing its ACL. Handled append failures roll back only
+  a verified suffix or report manual recovery; in-place append is not atomic or
+  power-loss safe. An already-configured binding is a no-op on either path.
 - Viewport-only wheel scrolling in pane tables, Help and Themes, including search
   and table previews: selection, filters, pending theme and host focus are retained,
   and scrolling clamps rather than wraps. Hover still highlights without activation;

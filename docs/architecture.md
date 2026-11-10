@@ -36,7 +36,9 @@ package is 0.3.1, pending release. The manifest separates Unix `crossroads` from
 `crossroads-windows` (`./target/release/herdr-crossroads.exe`), with `python` for
 Windows installation and `python3` on Unix. The updated `setup-keybind` action
 supports both, selecting the appropriate pane launch entry. Its Windows path uses
-`scripts/windows-files.py` directory pins and ACL-preserving native replacement,
+`scripts/windows-files.py` directory pins and ACL-preserving native replacement
+for auto-inherited descriptors, or exclusive-handle in-place append for legacy
+descriptors without replacing the file or changing its ACL,
 not Unix directory descriptors or mode bits. See the filesystem/race limitations
 in [keyboard launch setup](installation.md#keyboard-launch-setup).
 The Windows installer shares archive/checksum/notice validation but validates

@@ -1,5 +1,6 @@
 """Native Windows host-config safety, confined to temporary directories."""
 import ctypes
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import runpy
@@ -199,12 +200,14 @@ class WindowsCommitSecurityTests(unittest.TestCase):
                              config_staging=self.stage):
             return self.helper["update_config"](self.selected, self.transform)
 
-    def test_legacy_unprotected_and_protected_descriptors_refused_before_staging(self):
+    def test_legacy_unprotected_and_protected_descriptors_route_to_append_without_staging(self):
         for control in (0x8004, 0x9004):
             with self.subTest(control=hex(control)):
                 self.control = control
-                with self.assertRaisesRegex(ValueError, "auto-inherited DACL"):
-                    self.update()
+                append = mock.Mock(return_value=True)
+                with mock.patch.dict(self.helper["update_config"].__globals__, append_config=append):
+                    self.assertTrue(self.update())
+                append.assert_called_once_with(self.selected, *self.original, self.transform.return_value)
                 self.assertEqual(self.target.read_bytes(), self.data)
                 self.assertEqual(self.target.stat(), self.original[0])
                 self.assertEqual(self.security.raw, self.original[2].raw)
@@ -289,6 +292,238 @@ class WindowsCommitSecurityTests(unittest.TestCase):
         self.assertEqual(staged[0].read_bytes(), self.transform.return_value)
         self.assertFalse(self.target.exists())
         self.assertEqual(self.final_reads, 0)
+
+
+class WindowsAppendTests(unittest.TestCase):
+    """Use real unbuffered file IO while modeling the exclusive Win32 open/ACLs."""
+
+    setUp = WindowsCommitSecurityTests.setUp
+    update = WindowsCommitSecurityTests.update
+
+    @contextmanager
+    def native_append(self):
+        self.control = 0x8004
+        self.crt = mock.Mock()
+        self.crt.open_osfhandle.side_effect = lambda handle, flags: handle
+        self.acl = mock.Mock(return_value=self.security)
+
+        def create(path, access, share, attributes, disposition, flags, template):
+            self.assertEqual((access, share, attributes, disposition, flags, template),
+                             (0xc0000000, 0, None, 3, 0x00200000, None))
+            return os.open(self.target, os.O_RDWR)
+
+        self.helper["KERNEL"].CreateFileW.side_effect = create
+        self.helper["KERNEL"].CloseHandle.side_effect = os.close
+        real_fstat = os.fstat
+        birthtime = getattr(self.original[0], "st_birthtime_ns", self.original[0].st_ctime_ns)
+
+        def metadata(info):
+            fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")
+            return SimpleNamespace(**{field: getattr(info, field) for field in fields},
+                                   st_birthtime_ns=birthtime)
+
+        with self.target.open("rb") as source:
+            self.original = (metadata(real_fstat(source.fileno())), self.data, self.security)
+        with mock.patch.dict(sys.modules, msvcrt=self.crt), \
+                mock.patch.object(os, "O_BINARY", 0, create=True), \
+                mock.patch.object(os, "fstat", side_effect=lambda fd: metadata(real_fstat(fd))), \
+                mock.patch.dict(self.helper["update_config"].__globals__, config_security=self.acl):
+            yield
+        self.stage.assert_not_called()
+        self.helper["KERNEL"].ReplaceFileW.assert_not_called()
+        self.helper["SECURITY"].SetFileSecurityW.assert_not_called()
+        self.helper["SECURITY"].SetSecurityDescriptorControl.assert_not_called()
+
+    def test_legacy_and_protected_append_preserves_prefix_identity_security_and_retry_is_noop(self):
+        for control in (0x8004, 0x9004):
+            self.target.write_bytes(self.data)
+            self.original = (self.target.stat(), self.data, self.security)
+            with self.subTest(control=hex(control)), self.native_append():
+                self.control = control
+                self.transform.return_value = self.data + b"# appended\n"
+                self.assertTrue(self.update())
+                self.assertEqual(self.target.read_bytes(), self.transform.return_value)
+                self.assertEqual(self.target.stat().st_ino, self.original[0].st_ino)
+                self.assertGreaterEqual(self.acl.call_count, 2)
+                self.assertEqual(self.security.raw, self.original[2].raw)
+                self.assertEqual(list(self.parent.glob(".crossroads-keybind-*")), [])
+                self.transform.return_value = None
+                opens = self.helper["KERNEL"].CreateFileW.call_count
+                self.assertFalse(self.update())
+                self.assertEqual(self.helper["KERNEL"].CreateFileW.call_count, opens)
+
+    @contextmanager
+    def io_faults(self, **faults):
+        fdopen = os.fdopen
+
+        def opened(*args, **kwargs):
+            output = fdopen(*args, **kwargs)
+            self.io = mock.MagicMock(wraps=output)
+            self.io.__enter__.return_value = self.io
+            self.io.__exit__.side_effect = output.__exit__
+            for operation, effect in faults.items():
+                getattr(self.io, operation).side_effect = lambda *a, effect=effect: effect(output, *a)
+            return self.io
+
+        with mock.patch.object(os, "fdopen", side_effect=opened):
+            yield
+
+    def test_non_append_transforms_are_refused_before_open(self):
+        with self.native_append():
+            for result in (b"", b"replacement", self.data, self.data[:-1] + b"!suffix",
+                           bytearray(self.data + b"suffix"), "not bytes"):
+                with self.subTest(result=result):
+                    self.transform.return_value = result
+                    with self.assertRaisesRegex(ValueError, "must only append bytes"):
+                        self.update()
+                    self.assertEqual(self.target.read_bytes(), self.data)
+            self.helper["KERNEL"].CreateFileW.assert_not_called()
+
+    def test_exclusive_open_or_crt_handoff_failure_never_changes_target(self):
+        with self.native_append(), \
+                mock.patch.object(ctypes, "WinError", side_effect=OSError("sharing violation"), create=True), \
+                mock.patch.object(ctypes, "get_last_error", return_value=32, create=True):
+            create = self.helper["KERNEL"].CreateFileW.side_effect
+            self.helper["KERNEL"].CreateFileW.side_effect = None
+            self.helper["KERNEL"].CreateFileW.return_value = ctypes.c_void_p(-1).value
+            with self.assertRaisesRegex(OSError, "sharing violation"):
+                self.update()
+            self.helper["KERNEL"].CloseHandle.assert_not_called()
+            self.helper["KERNEL"].CreateFileW.side_effect = create
+            self.crt.open_osfhandle.side_effect = OSError("handoff failure")
+            with self.assertRaisesRegex(OSError, "handoff failure"):
+                self.update()
+            self.helper["KERNEL"].CloseHandle.assert_called_once()
+            self.assertEqual(self.target.read_bytes(), self.data)
+
+    def test_identity_edit_metadata_and_attributes_are_rechecked_before_writing(self):
+        with self.native_append(), self.io_faults():
+            for field in ("st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
+                          "st_mtime_ns", "st_ctime_ns", "st_birthtime_ns"):
+                with self.subTest(field=field):
+                    info = self.original[0]
+                    old = getattr(info, field)
+                    setattr(info, field, old + 1)
+                    with self.assertRaisesRegex(ValueError, "identity/metadata changed"):
+                        self.update()
+                    setattr(info, field, old)
+                    self.io.write.assert_not_called()
+            for attribute in (1, 0x10, 0x400):
+                def tag(handle, kind, value, length):
+                    value._obj.attributes = attribute
+                    return 1
+                self.helper["KERNEL"].GetFileInformationByHandleEx.side_effect = tag
+                with self.subTest(attribute=attribute), self.assertRaisesRegex(ValueError, "identity/metadata"):
+                    self.update()
+                self.io.write.assert_not_called()
+            self.assertEqual(self.target.read_bytes(), self.data)
+
+    def test_bytes_and_acl_changes_before_writing_are_refused(self):
+        with self.native_append(), self.io_faults(read=lambda output: b"changed"):
+            with self.assertRaisesRegex(ValueError, "bytes/owner/group/DACL"):
+                self.update()
+            self.io.write.assert_not_called()
+        with self.native_append(), self.io_faults():
+            self.acl.return_value = ctypes.create_string_buffer(b"changed ACL")
+            with self.assertRaisesRegex(ValueError, "bytes/owner/group/DACL"):
+                self.update()
+            self.io.write.assert_not_called()
+        self.assertEqual(self.target.read_bytes(), self.data)
+
+    def test_short_write_and_write_error_remove_only_our_suffix(self):
+        def partial(output, suffix):
+            return output.write(suffix[:3])
+
+        def failed(output, suffix):
+            output.write(suffix[:3])
+            raise OSError("write failure after partial append")
+
+        with self.native_append():
+            for write in (partial, failed):
+                with self.subTest(write=write.__name__), self.io_faults(write=write):
+                    # The prior rollback legitimately changed edit timestamps.
+                    with self.target.open("rb") as source:
+                        self.original = (os.fstat(source.fileno()), self.data, self.security)
+                    with self.assertRaisesRegex(OSError, "original bytes restored"):
+                        self.update()
+                    self.io.truncate.assert_called_once_with(len(self.data))
+                    self.assertEqual(self.target.read_bytes(), self.data)
+                    self.assertEqual(self.target.stat().st_ino, self.original[0].st_ino)
+
+    def test_flush_and_final_readback_errors_roll_back_without_false_success(self):
+        with self.native_append(), mock.patch.object(os, "fsync", side_effect=[OSError("flush failure"), None]):
+            with self.assertRaisesRegex(OSError, "original bytes restored.*flush failure"):
+                self.update()
+        self.assertEqual(self.target.read_bytes(), self.data)
+        self.original = (self.target.stat(), self.data, self.security)
+
+        reads = 0
+
+        def read(output):
+            nonlocal reads
+            reads += 1
+            if reads == 2:
+                raise OSError("verification read failure")
+            return output.read()
+
+        with self.native_append(), self.io_faults(read=read):
+            with self.assertRaisesRegex(OSError, "original bytes restored.*verification read failure"):
+                self.update()
+        self.assertEqual(self.target.read_bytes(), self.data)
+
+    def test_final_acl_change_is_reported_without_setting_acl_or_unsafe_rollback(self):
+        with self.native_append(), self.io_faults():
+            changed = ctypes.create_string_buffer(b"changed ACL")
+            self.acl.side_effect = [self.security, changed, changed]
+            with self.assertRaisesRegex(OSError, "rollback incomplete or unverified") as error:
+                self.update()
+            self.assertIn(str(self.target), str(error.exception))
+            self.assertIn(f"original length {len(self.data)} bytes", str(error.exception))
+            self.io.truncate.assert_not_called()
+        self.assertEqual(self.target.read_bytes(), self.transform.return_value)
+
+    def test_unrecognized_bytes_are_not_removed_by_rollback(self):
+        def corrupted(output, suffix):
+            output.write(b"!" * len(suffix))
+            return len(suffix)
+
+        with self.native_append(), self.io_faults(write=corrupted):
+            with self.assertRaisesRegex(OSError, "rollback incomplete or unverified.*unrecognized append"):
+                self.update()
+            self.io.truncate.assert_not_called()
+        self.assertEqual(self.target.read_bytes(), self.data + b"!" * len(b"# appended\n"))
+
+    def test_unreadable_final_and_rollback_state_never_reports_restoration(self):
+        reads = 0
+
+        def read(output):
+            nonlocal reads
+            reads += 1
+            if reads > 1:
+                raise OSError("read failure")
+            return output.read()
+
+        with self.native_append(), self.io_faults(read=read):
+            with self.assertRaisesRegex(OSError, "rollback incomplete or unverified.*read failure"):
+                self.update()
+            self.io.truncate.assert_not_called()
+        self.assertEqual(self.target.read_bytes(), self.transform.return_value)
+
+    def test_rollback_truncate_or_flush_failure_reports_precise_manual_recovery(self):
+        for operation in ("truncate", "flush"):
+            self.target.write_bytes(self.data)
+            self.original = (self.target.stat(), self.data, self.security)
+            with self.subTest(operation=operation), self.native_append():
+                faults = ({"truncate": mock.Mock(side_effect=OSError("truncate failure"))}
+                          if operation == "truncate" else {})
+                with self.io_faults(**faults), mock.patch.object(
+                        os, "fsync", side_effect=OSError("flush failure")):
+                    with self.assertRaisesRegex(OSError, "rollback incomplete or unverified") as error:
+                        self.update()
+                    self.assertIn(str(self.target), str(error.exception))
+                    self.assertIn(f"original length {len(self.data)} bytes", str(error.exception))
+                expected = self.transform.return_value if operation == "truncate" else self.data
+                self.assertEqual(self.target.read_bytes(), expected)
 
 
 class WindowsStagingSecurityTests(unittest.TestCase):
@@ -471,26 +706,126 @@ class WindowsKeybindTests(unittest.TestCase):
     def update(self, transform=lambda data: data + b"# appended\r\n"):
         self.helper["update_config"](self.path, transform)
 
-    def test_legacy_fixture_refused_without_bytes_security_identity_or_staging_changes(self):
+    @contextmanager
+    def legacy_fixture(self, case="legacy-default-unprotected"):
         probe = runpy.run_path(str(ROOT / "tests/diagnose_windows_security.py"))
         with mock.patch.dict(probe["Native"].__init__.__globals__, checkpoint=lambda *a, **k: None):
             api = probe["Native"]()
-            with api.fixture("legacy-default-unprotected") as fixture:
-                path = fixture["original"]
+            with api.fixture(case) as fixture:
+                yield fixture["original"]
+
+    def test_legacy_and_protected_setup_appends_without_replacement_acl_or_identity_changes(self):
+        setup = runpy.run_path(str(ROOT / "scripts/setup-keybind.py"))
+        for case in ("legacy-default-unprotected", "protected"):
+            with self.subTest(case=case), self.legacy_fixture(case) as path:
+                path.write_bytes(b"# original\r\n[keys]\r\ngoto = 'prefix+g'\r\n")
                 before, data, security = self.helper["config_snapshot"](path)
                 self.assertFalse(struct.unpack_from("<H", security.raw, 2)[0] & 0x400)
                 with mock.patch.object(self.helper["KERNEL"], "ReplaceFileW") as replace, \
                         mock.patch.dict(self.helper["update_config"].__globals__,
-                                        config_staging=mock.Mock()) as patched:
-                    with self.assertRaisesRegex(ValueError, "auto-inherited DACL"):
-                        self.helper["update_config"](path, lambda data: data + b"# appended\n")
+                                        config_staging=mock.Mock()) as patched, \
+                        mock.patch.object(self.helper["SECURITY"], "SetFileSecurityW") as setter, \
+                        mock.patch.object(self.helper["SECURITY"], "SetSecurityDescriptorControl") as control, \
+                        mock.patch.object(runpy, "run_path", return_value=self.helper), \
+                        mock.patch.dict(os.environ, HERDR_CONFIG_PATH=str(path)), \
+                        mock.patch("builtins.print") as printed:
+                    setup["setup"]()
+                    self.assertIn("Added prefix+f", printed.call_args.args[0])
+                    after, current, current_security = self.helper["config_snapshot"](path)
+                    self.assertEqual(current, data + setup["BINDING"])
+                    self.assertTrue(setup["has_launch_binding"](current))
+                    self.assertEqual((after.st_dev, after.st_ino, after.st_nlink, after.st_mode),
+                                     (before.st_dev, before.st_ino, before.st_nlink, before.st_mode))
+                    self.assertEqual(current_security.raw, security.raw)
+                    setup["setup"]()
+                    self.assertIn("Already configured", printed.call_args.args[0])
                     replace.assert_not_called()
                     patched["config_staging"].assert_not_called()
-                after, current, current_security = self.helper["config_snapshot"](path)
-                self.assertEqual(self.helper["config_identity"](after),
-                                 self.helper["config_identity"](before))
-                self.assertEqual(current, data)
-                self.assertEqual(current_security.raw, security.raw)
+                    setter.assert_not_called()
+                    control.assert_not_called()
+                retry, retried, retry_security = self.helper["config_snapshot"](path)
+                self.assertEqual(self.helper["config_identity"](retry), self.helper["config_identity"](after))
+                self.assertEqual(retried, current)
+                self.assertEqual(retry_security.raw, security.raw)
+                self.assertEqual(list(path.parent.glob(".crossroads-keybind-*")), [])
+
+    def test_legacy_append_excludes_readers_writers_deleters_and_parent_rename(self):
+        with self.legacy_fixture() as path:
+            _, data, security = self.helper["config_snapshot"](path)
+            real_fsync = os.fsync
+
+            def exclusive(descriptor):
+                for mode in ("rb", "ab"):
+                    with self.subTest(mode=mode), self.assertRaises(OSError):
+                        path.open(mode)
+                with self.assertRaises(OSError):
+                    path.rename(path.with_suffix(".moved"))
+                with self.assertRaises(OSError):
+                    path.parent.rename(path.parent.with_name("moved-parent"))
+                real_fsync(descriptor)
+
+            with mock.patch.object(os, "fsync", side_effect=exclusive):
+                self.assertTrue(self.helper["update_config"](path, lambda data: data + b"# appended\n"))
+            _, current, current_security = self.helper["config_snapshot"](path)
+            self.assertEqual(current, data + b"# appended\n")
+            self.assertEqual(current_security.raw, security.raw)
+
+            # A reader can survive the initial READ-shared snapshot but must
+            # prevent the exclusive append open. Existing writers fail earlier.
+            for mode in ("rb", "ab"):
+                with self.subTest(mode=mode), path.open(mode):
+                    with self.assertRaises(OSError):
+                        self.helper["update_config"](path, lambda data: data + b"# bad\n")
+            self.assertEqual(path.read_bytes(), current)
+
+    def test_legacy_flush_failure_truncates_only_suffix_and_preserves_security_identity(self):
+        with self.legacy_fixture() as path:
+            before, data, security = self.helper["config_snapshot"](path)
+            fsync = os.fsync
+            calls = 0
+
+            def fail_once(descriptor):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise OSError("injected flush failure")
+                fsync(descriptor)
+
+            with mock.patch.object(os, "fsync", side_effect=fail_once):
+                with self.assertRaisesRegex(OSError, "original bytes restored.*injected flush failure"):
+                    self.helper["update_config"](path, lambda data: data + b"# appended\n")
+            after, current, current_security = self.helper["config_snapshot"](path)
+            self.assertEqual(current, data)
+            self.assertEqual(current_security.raw, security.raw)
+            self.assertEqual(after.st_ino, before.st_ino)
+            self.assertEqual(calls, 2)
+            self.assertEqual(list(path.parent.glob(".crossroads-keybind-*")), [])
+
+    def test_legacy_concurrent_bytes_hardlink_and_acl_changes_are_not_overwritten(self):
+        for change in ("bytes", "hardlink", "acl"):
+            with self.subTest(change=change), self.legacy_fixture() as path:
+                _, original, security = self.helper["config_snapshot"](path)
+
+                def transform(data):
+                    if change == "bytes":
+                        path.write_bytes(b"# concurrent edit\r\n")
+                    elif change == "hardlink":
+                        os.link(path, path.with_suffix(".link"))
+                    else:
+                        subprocess.run(["icacls", str(path), "/inheritance:d"],
+                                       check=True, capture_output=True)
+                    return data + b"# not written\n"
+
+                with self.assertRaises((ValueError, OSError)):
+                    self.helper["update_config"](path, transform)
+                self.assertEqual(path.read_bytes(), b"# concurrent edit\r\n" if change == "bytes" else original)
+                if change == "hardlink":
+                    path.with_suffix(".link").unlink()
+                _, _, after_security = self.helper["config_snapshot"](path)
+                if change == "acl":
+                    self.assertNotEqual(after_security.raw, security.raw)
+                else:
+                    self.assertEqual(after_security.raw, security.raw)
                 self.assertEqual(list(path.parent.glob(".crossroads-keybind-*")), [])
 
     def test_pinned_parent_cannot_be_renamed_while_staging(self):
