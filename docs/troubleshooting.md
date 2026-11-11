@@ -79,8 +79,9 @@ There is no established Crossroads-specific cause for this symptom. Record the
 host's exact error, if any; check the intended session, registration, linked root,
 and executable before changing anything. `herdr plugin list` is the host's
 registration inspection example. If the host reports `ui_busy`, close the other
-modal before trying again. The shipped manifest supplies no dimensions and the
-host default is half-size. The installed Herdr 0.9.3 CLI help used for local acceptance
+modal before trying again. The current shipped manifest requests 90% width and
+90% height for both platform entrypoints; older manifests without dimensions used
+the host's half-size default. The installed Herdr 0.9.3 CLI help used for local acceptance
 does not list sizing flags on `plugin pane open`. Herdr 0.9.4/0.9.5 sources do
 support `--width` and `--height` per invocation; see the README's
 [versioned sizing guidance](../README.md#optional-customize-the-popup-size) for those flags

@@ -460,13 +460,15 @@ class SetupKeybindTests(unittest.TestCase):
 
     def test_readme_toml_example_matches_setup_and_documents_async_order(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        example = next(block for block in re.findall(r"```toml\n(.*?)```", readme, re.S)
-                       if "[[keys.command]]" in block)
+        examples = [block for block in re.findall(r"```toml\n(.*?)```", readme, re.S)
+                    if "[[keys.command]]" in block]
         helper = runpy.run_path(str(SCRIPT))
-        expected = tomllib.loads(example)
-        if os.name == "nt":
-            expected["keys"]["command"][0]["command"] += "-windows"
-        self.assertEqual(expected, tomllib.loads(helper["BINDING"].decode()))
+        self.assertEqual(len(examples), 2)
+        for example, suffix in zip(examples, ("", "-windows")):
+            expected = tomllib.loads(helper["BINDING"].decode())
+            expected["keys"]["command"][0]["command"] = (
+                helper["COMMAND"].removesuffix("-windows") + suffix)
+            self.assertEqual(tomllib.loads(example), expected)
         invoke = "herdr plugin action invoke herdr-crossroads.setup-keybind"
         logs = "herdr plugin log list --plugin herdr-crossroads"
         reload = "herdr server reload-config"

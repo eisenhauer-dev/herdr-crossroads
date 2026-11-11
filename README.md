@@ -126,8 +126,8 @@ use the [current controls](#controls) below rather than the recorded key labels.
 ### Quickstart
 
 Install [Herdr](https://herdr.dev) first and check the
-[requirements](#requirements-and-compatibility). The manual launch entry below is for
-Linux/macOS; Windows uses `crossroads-windows`. The updated setup action selects it automatically.
+[requirements](#requirements-and-compatibility). Linux/macOS uses `crossroads`;
+Windows uses `crossroads-windows`. The updated setup action selects it automatically.
 **Review the source, manifest, and assets before approving installation: it executes
 code and registers a plugin globally for your user, not in a sandbox.**
 
@@ -136,6 +136,11 @@ code and registers a plugin globally for your user, not in a sandbox.**
 ```sh
 herdr plugin install eisenhauer-dev/herdr-crossroads
 ```
+
+> [!IMPORTANT]
+> Installation alone does **not** write a Herdr launch binding. Explicitly opt in
+> with [keybinding setup and success checks](#add-the-launch-binding-reload-and-open),
+> then reload via the Herdr menu before using `prefix+f`.
 
 This follows the public default branch (`main`) and downloads the checkout's matching
 version and platform binary, currently **0.3.1** on all four published targets.
@@ -191,6 +196,24 @@ Check `prefix+?` for the Crossroads binding, then press `Ctrl+b`, then `f`
 (or your configured prefix). If the binding is missing, verify the successful
 setup log's config path matches the running host before retrying.
 
+To open directly from a shell in your running Herdr session, use your platform's
+entrypoint (no launch binding required):
+
+**Linux/macOS:**
+
+```sh
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
+```
+
+**Windows:**
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
+```
+
+The `crossroads` entrypoint is Linux/macOS-only; on Windows it fails with
+`platform_unsupported`. Use `crossroads-windows` instead.
+
 <details>
 <summary>Manual keybinding setup</summary>
 
@@ -204,7 +227,9 @@ First check `prefix+?` and your existing config for collisions. `prefix+f` is un
 in Herdr 0.9.1/0.9.3/0.9.5 defaults and suggests “find panes”; if you already use
 it, choose another free shortcut. Preserve all
 custom and default navigation/close bindings, including `prefix+g`, `prefix+t`,
-and `prefix+x` (close pane). Append only this new entry, with a free key:
+and `prefix+x` (close pane). Append only the entry for your platform, with a free key:
+
+**Linux/macOS:**
 
 ```toml
 [[keys.command]]
@@ -214,9 +239,18 @@ command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossro
 description = "Open Herdr Crossroads"
 ```
 
+**Windows:**
+
+```toml
+[[keys.command]]
+key = "prefix+f"
+type = "shell"
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows"
+description = "Open Herdr Crossroads"
+```
+
 `shell` runs the launch command detached; the plugin manifest opens the popup.
-For a manual Windows binding, replace `--entrypoint crossroads` above with
-`--entrypoint crossroads-windows`; the updated setup action does this itself.
+The updated setup action selects the platform's entrypoint itself.
 After manual setup, reload as above and press your configured prefix and chosen key.
 This host launch binding is separate from `keymaps.jsonc`, which changes only
 controls inside Crossroads. This manual-edit alternative is source-verified only;
@@ -226,31 +260,50 @@ see [setup source contracts](docs/installation.md#keyboard-launch-setup).
 
 <a id="optional-customize-the-popup-size"></a>
 
-<details>
-<summary>Optional: customize the popup size</summary>
+#### Optional: customize the popup size
 
-Open Crossroads at 75% of the terminal area's width and height:
+Both Linux/macOS and Windows entrypoints default to **90% width × 90% height**
+of the terminal area in the shipped manifest. To override this temporarily for
+one opening, for example at 75% width and height:
+
+**Linux/macOS:**
 
 ```sh
 herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 75% --height 75%
 ```
 
-For a customized manual launch binding, replace only the `command` value in the
-example above, then reload as described above:
+**Windows:**
+
+```powershell
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows --width 75% --height 75%
+```
+
+For a permanent customized launch binding, replace only the `command` value in
+your own Herdr binding with the matching platform's command below, then choose
+**Reload config** in the **Herdr menu** as [described above](#add-the-launch-binding-reload-and-open):
+
+**Linux/macOS:**
 
 ```toml
 command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads --width 75% --height 75%"
 ```
 
+**Windows:**
+
+```toml
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows --width 75% --height 75%"
+```
+
+Alternatively, in a trusted local checkout, change `width` and `height` in both
+`[[panes]]` entries (`crossroads` and `crossroads-windows`) of `herdr-plugin.toml`.
+
 Setup writes the default command without size flags. Herdr
 [v0.9.4][herdr-size-cli-094] / [v0.9.5][herdr-size-cli-095] source supports these flags,
 [`1%`–`100%`][herdr-size-parser-094] ([v0.9.5 parser][herdr-size-parser-095]), and
-per-dimension overrides of manifest defaults
+CLI precedence over manifest defaults independently for each dimension
 ([v0.9.4][herdr-size-precedence-094], [v0.9.5][herdr-size-precedence-095]).
 These examples are source-verified only, not executed. Percentages include host
 borders and do not guarantee the required **80×15 popup content cells**.
-
-</details>
 
 <a id="optional-build-from-source"></a>
 
@@ -270,29 +323,11 @@ herdr plugin link "$PWD"
 - Linking does not run build hooks. Keep the checkout and `target/release/herdr-crossroads`
   (`target/release/herdr-crossroads.exe` on Windows) in place; Cargo may download
   dependencies on a fresh machine.
-- Use the launch binding above on Linux/macOS, or open Crossroads from a shell in
-  your running Herdr session using the platform-specific entrypoint:
-
-**Linux/macOS:**
-
-```sh
-herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads
-```
-
-**Windows (use the Windows-specific entrypoint):**
-
-```powershell
-herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
-```
-
-The `crossroads` entrypoint supports Linux/macOS only; opening it on Windows fails
-with `platform_unsupported`. Windows must use `crossroads-windows`; the updated
-`setup-keybind` action selects that entrypoint. See [setup requirements and safeguards](docs/installation.md#keyboard-launch-setup).
-
-- Without manifest dimensions or CLI overrides, the popup defaults to half-size.
-  For a trusted local checkout, `width = "90%"` and `height = "90%"` in the manifest's
-  `[[panes]]` table set defaults; use the per-invocation CLI overrides above instead
-  when you do not want to change the manifest. Neither size guarantees 80×15 content cells.
+- Use the platform-specific launch command or binding in the
+  [Quickstart](#quickstart); the setup action selects the platform's entrypoint.
+  See [setup requirements and safeguards](docs/installation.md#keyboard-launch-setup).
+- Both entrypoints default to 90% width × 90% height; see
+  [popup sizing](#optional-customize-the-popup-size) for overrides and content-size limits.
 - Basic Windows source-build/link/live-popup use was user-reported on 2026-10-28;
   the exact clone/build/link command sequence above has not been independently
   rerun here. Isolated installation evidence is recorded in the [installation guide](docs/installation.md).
