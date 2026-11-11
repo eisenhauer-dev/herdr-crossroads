@@ -237,8 +237,6 @@ def prepare_fixture(base, asset_dir, public=None, update=None, public_commits=No
         shutil.copy2(ROOT / name, repo / name)
     for name in ["check-version.py", "install-binary.py"]:
         shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
-    # Dimensions belong only to the temporary fixture, not the project manifest.
-    manifest = repo / "herdr-plugin.toml"
     if public is None:
         version = tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"]
         for name in ["Cargo.toml", "Cargo.lock", "herdr-plugin.toml"]:
@@ -246,9 +244,6 @@ def prepare_fixture(base, asset_dir, public=None, update=None, public_commits=No
             prefix = 'name = "herdr-crossroads"\n' if name == "Cargo.lock" else ""
             path.write_text(path.read_text().replace(
                 prefix + f'version = "{version}"', prefix + 'version = "0.0.1"', 1))
-        manifest.write_text(manifest.read_text().replace(
-            'id = "crossroads"\n',
-            'id = "crossroads"\nwidth = "90%"\nheight = "90%"\n', 1))
     payloads = {}
     for version in ([public, update] if update else [public or "0.0.1"]):
         name = ARCHIVE.format(version)

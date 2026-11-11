@@ -24,6 +24,8 @@ command = ["./target/release/herdr-crossroads", "--setup-keybind"]
 id = "crossroads"
 title = "Herdr Crossroads"
 placement = "popup"
+width = "90%"
+height = "90%"
 platforms = ["linux", "macos"]
 command = ["./target/release/herdr-crossroads"]
 
@@ -31,5 +33,7 @@ command = ["./target/release/herdr-crossroads"]
 id = "crossroads-windows"
 title = "Herdr Crossroads"
 placement = "popup"
+width = "90%"
+height = "90%"
 platforms = ["windows"]
 command = ["./target/release/herdr-crossroads.exe"]

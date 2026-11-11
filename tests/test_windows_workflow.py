@@ -55,6 +55,10 @@ on:
         manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["platforms"], ["linux", "macos", "windows"])
         panes = {pane["id"]: pane for pane in manifest["panes"]}
+        self.assertEqual(set(panes), {"crossroads", "crossroads-windows"})
+        for pane in panes.values():
+            self.assertEqual(pane["placement"], "popup")
+            self.assertEqual((pane["width"], pane["height"]), ("90%", "90%"))
         self.assertEqual(panes["crossroads"]["platforms"], ["linux", "macos"])
         self.assertEqual(panes["crossroads"]["command"], ["./target/release/herdr-crossroads"])
         self.assertEqual(panes["crossroads-windows"]["platforms"], ["windows"])
