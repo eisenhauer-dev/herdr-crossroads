@@ -14,7 +14,7 @@ with patch("ctypes.WinDLL", create=True, return_value=Mock()):
 
 class ConsoleMarkerTests(unittest.TestCase):
     def test_native_mouse_flow_observes_selection_and_opt_out_separately(self):
-        tree = ast.parse(Path(__file__).with_name("test_windows_acceptance.py").read_text())
+        tree = ast.parse(Path(__file__).with_name("test_windows_acceptance.py").read_text(encoding="utf-8"))
         method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
                       and node.name == "test_mouse_search_help_origin_theme_save_wheel_optout_and_cleanup")
         tables = [node for node in ast.walk(method) if isinstance(node, ast.Call)
