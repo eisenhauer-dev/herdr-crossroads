@@ -65,6 +65,7 @@ jobs:
             "python3 tests/test_install_binary.py",
             "python3 tests/test_windows_distribution.py",
             "python3 tests/test_windows_workflow.py",
+            "python3 tests/test_windows_support.py",
             "python3 tests/test_setup_keybind.py",
             "python3 tests/test_distribution_helpers.py",
             "python3 tests/test_release_install_helpers.py",

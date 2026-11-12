@@ -7,6 +7,36 @@ import unicodedata
 def table_state(screen):
     """Read the current fixture table, not labels from earlier paints."""
     lines = screen.text().splitlines()
+    agent = re.fullmatch(r"  Search: (.*?) +MODE: AGENT \[(all|blocked|done|working|idle|unknown)\] *", lines[0])
+    if agent is not None:
+        rules = [y for y, line in enumerate(lines) if line.lstrip().startswith("─")]
+        if len(rules) not in (2, 3):
+            return None
+        if len(rules) == 3 and (any(line.strip() for line in lines[rules[0] + 1:rules[1]])
+                                or not any(line.strip() in ("No agent panes", "No matching agent panes")
+                                           for line in lines[rules[1] + 1:rules[2]])):
+            return None
+        panes, marked = [], []
+        for y in range(rules[-2] + 1, rules[-1]):
+            card = re.fullmatch(r"  ([> ]) (.+?) \| (blocked|done|working|idle|unknown) *", lines[y])
+            if card is None:
+                continue
+            if y + 1 >= rules[-1] or " › " not in lines[y + 1]:
+                return None  # A heading alone is not a completed card.
+            if card[1] == ">":
+                marked.append((len(panes), card[2]))
+            panes.append(card[2])
+        if not panes and len(rules) != 3:
+            return None
+        footer = lines[rules[-1] + 1:]
+        searching = any(line.strip() == "Enter/Esc: agent  Backspace: erase" for line in footer)
+        if not searching and not any("select" in line for line in footer):
+            return None
+        return {"mode": "Search" if searching else "Agent", "status": agent[2], "query": agent[1],
+                "panes": tuple(panes), "selected": marked[0] if len(marked) == 1 else None,
+                "details": tuple(line.strip() for line in lines[rules[-2] + 1:rules[-1]]
+                                 if line.strip().startswith(("Repository:", "Branch:", "Titel:"))),
+                "capture": any(screen.modes.get(mode, False) for mode in (1000, 1002, 1003))}
     prompt = re.fullmatch(r"  Search: (.*?) +MODE: SELECT *", lines[0])
     header = next((y for y, line in enumerate(lines) if "Agent/Pane Name" in line), None)
     if prompt is None or header is None:
@@ -18,8 +48,24 @@ def table_state(screen):
                    if lines[y].lstrip().startswith("─")), None)
     if bottom is None:
         return None
+    body = lines[header + 2:bottom]
+    empty = any(line.strip() == "No matching panes" for line in body)
+    if empty:
+        content = [(y, line) for y, line in enumerate(body) if line.strip()]
+        if (len(content) != 2 or content[0][0] != (len(body) - 2) // 2
+                or content[1][0] != content[0][0] + 1
+                or content[0][1].strip() != "No matching panes"
+                or re.fullmatch(r"(?:Enter/Esc, then )?.+: reset search · .+: agent", content[1][1].strip()) is None):
+            return None
+        for _, line in content:
+            inner = line[2:-2]
+            left = len(inner) - len(inner.lstrip())
+            right = len(inner) - len(inner.rstrip())
+            if line[:2].strip() or line[-2:].strip() or abs(left - right) > 1:
+                return None
+        body = []
     panes, marked = [], []
-    for line in lines[header + 2:bottom]:
+    for line in body:
         if not line.strip() or line.lstrip().startswith("┄"):
             continue
         name = line[name_start:name_end].strip()
@@ -27,6 +73,8 @@ def table_state(screen):
             if line.startswith("  > "):
                 marked.append((len(panes), name))
             panes.append(name)
+    if not panes and not empty:
+        return None
     searching = any(line.strip() == "Enter/Esc: select  Backspace: erase" for line in lines[bottom + 1:])
     return {"mode": "Search" if searching else "Select", "query": prompt[1], "panes": tuple(panes),
             "selected": marked[0] if len(marked) == 1 else None,

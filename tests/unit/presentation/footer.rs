@@ -109,7 +109,7 @@ fn compact_and_roomy_footers_show_navigation_with_final_help_group() {
         let hint_lines = state.hints(crate::keymap::Context::Select, width, 2, false);
         assert_eq!(
             complete.matches('·').count() + hint_lines.len() - 1,
-            8,
+            9,
             "{complete}"
         );
         for group in [
@@ -122,6 +122,7 @@ fn compact_and_roomy_footers_show_navigation_with_final_help_group() {
             "Enter: focus",
             "Esc: exit",
             "?: keys",
+            "a: agent",
         ] {
             assert!(complete.contains(group), "{group}: {complete}");
         }
@@ -240,7 +241,7 @@ fn default_hint_frames_are_complete_and_stable_at_compact_and_wide_boundaries() 
                     "missing {binding} at {width}: {footer}"
                 );
             }
-            assert_eq!(footer.replace("  ", " ").replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys");
+            assert_eq!(footer.replace("  ", " ").replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys a: agent");
             assert!(
                 first
                     .iter()
@@ -277,7 +278,7 @@ fn footer_keys_precede_actions_for_custom_bindings_in_every_context() {
     assert!(errors.is_empty(), "{errors:?}");
     state.keymap = map;
     for (context, expected) in [
-        (Context::Select, "J/↓: ↓pane K/↑: ↑pane H/←: ↑tab L/→: ↓tab N: ↓ws P: ↑ws Enter: focus Esc: exit ?: keys"),
+        (Context::Select, "J/↓: ↓pane K/↑: ↑pane H/←: ↑tab L/→: ↓tab N: ↓ws P: ↑ws Enter: focus Esc: exit ?: keys a: agent"),
         (Context::Help, "J/↓: ↓move K/↑: ↑move Enter: run Esc: close keys"),
         (Context::Themes, "J/↓: ↓theme K/↑: ↑theme Space: table Enter: save Esc: cancel"),
     ] {
@@ -311,7 +312,7 @@ fn separator_characters_are_quoted_only_for_display() {
         for preview in [false, true] {
             state.theme_table_preview = preview;
             for (context, action, direction, separators) in [
-                (Context::Select, "next_row", "pane", 8),
+                (Context::Select, "next_row", "pane", 9),
                 (Context::Help, "next_category", "move", 3),
                 (Context::Themes, "next_theme", "theme", 4),
             ] {

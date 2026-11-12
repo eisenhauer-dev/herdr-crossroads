@@ -7,6 +7,7 @@ use super::{config, input::Key};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Context {
     Select,
+    Agent,
     Help,
     Themes,
 }
@@ -14,6 +15,7 @@ impl Context {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "select" => Some(Self::Select),
+            "agent" => Some(Self::Agent),
             "help" => Some(Self::Help),
             "themes" => Some(Self::Themes),
             _ => None,
@@ -22,6 +24,7 @@ impl Context {
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Select => "select",
+            Self::Agent => "agent",
             Self::Help => "help",
             Self::Themes => "themes",
         }
@@ -41,6 +44,14 @@ pub(super) enum Action {
     ResetSearch,
     OpenThemes,
     OpenHelp,
+    OpenAgent,
+    OpenSelect,
+    FilterAll,
+    FilterBlocked,
+    FilterDone,
+    FilterWorking,
+    FilterIdle,
+    FilterUnknown,
     Close,
     NextCategory,
     PreviousCategory,
@@ -65,6 +76,14 @@ impl Action {
             Self::ResetSearch => "reset_search",
             Self::OpenThemes => "open_themes",
             Self::OpenHelp => "open_help",
+            Self::OpenAgent => "open_agent",
+            Self::OpenSelect => "open_select",
+            Self::FilterAll => "filter_all",
+            Self::FilterBlocked => "filter_blocked",
+            Self::FilterDone => "filter_done",
+            Self::FilterWorking => "filter_working",
+            Self::FilterIdle => "filter_idle",
+            Self::FilterUnknown => "filter_unknown",
             Self::Close => "close",
             Self::NextCategory => "next_category",
             Self::PreviousCategory => "previous_category",
@@ -115,6 +134,7 @@ impl Default for Keymap {
                     (Action::OpenThemes, "t"),
                     (Action::OpenHelp, "?"),
                     (Action::Close, "Esc/q"),
+                    (Action::OpenAgent, "a"),
                 ][..],
             ),
             (
@@ -147,6 +167,38 @@ impl Default for Keymap {
                     keys,
                 });
             }
+        }
+        let agent_bindings: Vec<_> = bindings
+            .iter()
+            .filter(|b| b.context == Context::Select)
+            .map(|b| Binding {
+                context: Context::Agent,
+                action: if b.action == Action::OpenAgent {
+                    Action::OpenSelect
+                } else {
+                    b.action
+                },
+                keys: if b.action == Action::OpenAgent {
+                    vec![Key::Char('s')]
+                } else {
+                    b.keys.clone()
+                },
+            })
+            .collect();
+        bindings.extend(agent_bindings);
+        for (action, key) in [
+            (Action::FilterAll, 'a'),
+            (Action::FilterBlocked, 'b'),
+            (Action::FilterDone, 'd'),
+            (Action::FilterWorking, 'w'),
+            (Action::FilterIdle, 'i'),
+            (Action::FilterUnknown, 'u'),
+        ] {
+            bindings.push(Binding {
+                context: Context::Agent,
+                action,
+                keys: vec![Key::Char(key)],
+            });
         }
         Self {
             mouse_enabled: true,
@@ -451,7 +503,7 @@ impl Keymap {
 
     pub(super) fn footer_labels(&self, context: Context, action: &str) -> String {
         let navigation = match context {
-            Context::Select => matches!(
+            Context::Select | Context::Agent => matches!(
                 action,
                 "next_row"
                     | "previous_row"

@@ -542,6 +542,7 @@ class DistributionHelpers(unittest.TestCase):
             fixture_next_version(repo)
             manifest = tomllib.loads((repo / "herdr-plugin.toml").read_text())
             self.assertEqual(manifest["version"], "0.1.1")
+            self.assertEqual(manifest["panes"], tomllib.loads((ROOT / "herdr-plugin.toml").read_text())["panes"])
             for pane in manifest["panes"]:
                 self.assertEqual((pane["width"], pane["height"]), ("90%", "90%"))
             self.assertEqual(tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"], "0.1.1")

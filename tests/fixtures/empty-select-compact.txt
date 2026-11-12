@@ -1,0 +1,15 @@
+  Search: Explicit task                                           MODE: SELECT
+  ────────────────────────────────────────────────────────────────────────────
+  Workspace                  Tab              Agent/Pane Name
+  ────────────────────────────────────────────────────────────────────────────
+
+
+
+                                No matching panes
+                           R: reset search · A: agent
+
+
+
+  ────────────────────────────────────────────────────────────────────────────
+  j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws
+  Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys · A: agent

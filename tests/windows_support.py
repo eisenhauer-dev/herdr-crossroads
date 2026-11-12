@@ -227,8 +227,12 @@ class Console:
             self._record(data)
         return bytes(self.output)
 
-    def until_table(self, *, mode, query, selected, panes, capture=None, timeout=5):
+    def until_table(self, *, mode, query, selected, panes, capture=None, status=None, details=None, timeout=5):
         expected = {"mode": mode, "query": query, "selected": selected, "panes": panes}
+        if status is not None:
+            expected["status"] = status
+        if details is not None:
+            expected["details"] = details
         if capture is not None:
             expected["capture"] = capture
         if mode == "Search":

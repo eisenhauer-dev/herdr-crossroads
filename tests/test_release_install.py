@@ -250,6 +250,10 @@ def run(herdr, asset):
         checked([sys.executable, str(repo / "scripts/setup-keybind.py")], **kwargs)
         configured = config.read_bytes()
         assert configured.startswith(config_before + foreign)
+        bindings = tomllib.loads(configured.decode("utf-8"))["keys"]["command"]
+        for key, entrypoint in [("prefix+f", "crossroads"), ("prefix+a", "crossroads-agent")]:
+            assert [entry["command"] for entry in bindings if entry["key"] == key] == [
+                "herdr plugin pane open --plugin herdr-crossroads --entrypoint " + entrypoint]
         checked([sys.executable, str(repo / "scripts/setup-keybind.py")], **kwargs)
         assert config.read_bytes() == configured
         print(f"Native Herdr 0.9.5 install/reinstall, all four installed PTYs and rejection checks passed: {target}")

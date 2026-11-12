@@ -115,8 +115,12 @@ fn all_status_defaults_and_partial_override_are_read_once() {
     ] {
         assert_eq!(colors.for_status(status), expected);
     }
-    let dir = std::path::Path::new("/tmp/opencode")
-        .join(format!("crossroads-palette-{}", std::process::id()));
+    let base = if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        std::path::PathBuf::from("/tmp/opencode")
+    };
+    let dir = base.join(format!("crossroads-palette-{}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     let path = dir.join("status-colors.json");
     assert_eq!(
@@ -356,6 +360,8 @@ fn all_displayed_arrows_are_symbols_but_identity_is_canonical() {
         .contains("↑/k: scroll up · ↓/j: scroll down"));
 }
 
+#[path = "presentation/agent.rs"]
+mod agent;
 #[path = "presentation/diagnostics.rs"]
 mod diagnostics;
 #[path = "presentation/footer.rs"]
@@ -609,7 +615,7 @@ fn notices_are_separate_styled_rows_above_unchanged_keys_at_minimum_and_wide_siz
 }
 
 // These layout assertions predate theme painting. Compare their original ANSI
-// content while the theme frame test checks the actual painted output.
+// content while explicit style tests check the actual painted/italic output.
 struct Ui(ProductionUi);
 
 impl Ui {
@@ -620,6 +626,8 @@ impl Ui {
     fn terminal_frame(&self, width: usize, height: usize) -> String {
         let frame = self.0.terminal_frame(width, height);
         frame
+            .replace("\x1b[3m", "")
+            .replace("\x1b[23m", "")
             .replace("\x1b[48;2;24;24;37m\x1b[38;2;205;214;244m", "")
             .replace("\x1b[48;2;24;24;37m\x1b[K", "")
             .replace("\x1b[38;2;205;214;244m", "\x1b[39m")

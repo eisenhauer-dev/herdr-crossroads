@@ -4,20 +4,29 @@ use ratatui::{style::Style, text::Span};
 use super::{clipped, columns, wrapped};
 use crate::input::Key;
 use crate::keymap::{Action, Context};
-use crate::selection::{Hit, Mode, Ui};
+use crate::selection::{Hit, Mode, TableView, Ui};
 
 impl Ui {
-    pub(crate) fn search_prompt_geometry(&self, width: usize) -> (&'static str, usize) {
+    pub(crate) fn search_prompt_geometry(&self, width: usize) -> (String, usize) {
         let badge = match if self.mode == Mode::Search {
             self.search_return
         } else {
             self.mode
         } {
-            Mode::Select | Mode::Search => "MODE: SELECT",
+            Mode::Select | Mode::Search => match self.table_view {
+                TableView::Select => "MODE: SELECT",
+                TableView::Agent => "MODE: AGENT",
+            },
             Mode::Help => "MODE: HELP",
             Mode::Themes => "MODE: THEMES",
         };
-        (badge, width.saturating_sub(4 + badge.len() + 1))
+        let badge = if badge == "MODE: AGENT" {
+            format!("{badge} [{}]", self.agent_status_filter.unwrap_or("all"))
+        } else {
+            badge.to_owned()
+        };
+        let available = width.saturating_sub(4 + badge.len() + 1);
+        (badge, available)
     }
 
     pub(crate) fn search_text(&self, query: &str, width: usize) -> String {
@@ -71,7 +80,7 @@ impl Ui {
 
     fn hint_lines(&self, context: Context, width: usize) -> Vec<Vec<(String, Hit)>> {
         let actions: &[(Hit, &str)] = match context {
-            Context::Select => &[
+            Context::Select | Context::Agent => &[
                 (Hit::Action(Action::NextRow), "↓pane"),
                 (Hit::Action(Action::PreviousRow), "↑pane"),
                 (Hit::Action(Action::PreviousTab), "↑tab"),
@@ -81,6 +90,11 @@ impl Ui {
                 (Hit::Action(Action::FocusPane), "focus"),
                 (Hit::Action(Action::Close), "exit"),
                 (Hit::Action(Action::OpenHelp), "keys"),
+                if context == Context::Agent {
+                    (Hit::Action(Action::OpenSelect), "select")
+                } else {
+                    (Hit::Action(Action::OpenAgent), "agent")
+                },
             ],
             Context::Help => &[
                 (Hit::Action(Action::NextCategory), "↓move"),
@@ -135,7 +149,7 @@ impl Ui {
             5 + usize::from(width >= 110 && height >= 8)
         };
         let minimum_body = match context {
-            Context::Select => table_minimum,
+            Context::Select | Context::Agent => table_minimum,
             Context::Help => 4,
             Context::Themes if self.theme_table_preview => table_minimum + 1,
             Context::Themes => 2,

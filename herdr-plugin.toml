@@ -15,7 +15,7 @@ command = ["python", "scripts/install-binary.py"]
 
 [[actions]]
 id = "setup-keybind"
-title = "Set up prefix+f launch binding"
+title = "Set up prefix+f Select and prefix+a Agent bindings"
 contexts = ["global"]
 platforms = ["linux", "macos", "windows"]
 command = ["./target/release/herdr-crossroads", "--setup-keybind"]
@@ -37,3 +37,21 @@ width = "90%"
 height = "90%"
 platforms = ["windows"]
 command = ["./target/release/herdr-crossroads.exe"]
+
+[[panes]]
+id = "crossroads-agent"
+title = "Herdr Crossroads — Agent"
+placement = "popup"
+width = "90%"
+height = "90%"
+platforms = ["linux", "macos"]
+command = ["./target/release/herdr-crossroads", "--agent"]
+
+[[panes]]
+id = "crossroads-agent-windows"
+title = "Herdr Crossroads — Agent"
+placement = "popup"
+width = "90%"
+height = "90%"
+platforms = ["windows"]
+command = ["./target/release/herdr-crossroads.exe", "--agent"]

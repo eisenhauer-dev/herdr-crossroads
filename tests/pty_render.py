@@ -39,10 +39,12 @@ def frame(master, marker):
     return data.decode("utf-8", "replace")
 
 
-def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False, track_colors=False):
+def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_panel_bg=False, track_colors=False, track_italic=False):
     cells = [[" "] * width for _ in range(height)]
     foreground, background = "default-fg", "default-bg"
     reverse = False
+    italic = False
+    italics = [[False] * width for _ in range(height)] if track_italic else None
     track_style = track_bg or track_panel_bg or track_colors
     colors = [[(foreground, background)] * width for _ in range(height)] if track_style else None
     cursor_visible = True
@@ -71,6 +73,8 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
             elif command == "J":
                 assert params == "", params
                 cells = [[" "] * width for _ in range(height)]
+                if track_italic:
+                    italics = [[italic] * width for _ in range(height)]
                 effective = (background, foreground) if reverse else (foreground, background)
                 if track_style:
                     colors = [[effective] * width for _ in range(height)]
@@ -83,6 +87,8 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                 # final cell, not beyond it. EL still erases that occupied cell.
                 for at in range(min(x, width - 1), width):
                     cells[y][at] = " "
+                    if track_italic:
+                        italics[y][at] = italic
                     if track_style:
                         colors[y][at] = (background, foreground) if reverse else (foreground, background)
             elif command == "m":
@@ -93,6 +99,9 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                     at += 1
                     if code == 0:
                         foreground, background, reverse = "default-fg", "default-bg", False
+                        italic = False
+                    elif code in (3, 23):
+                        italic = code == 3
                     elif code in (7, 27):
                         reverse = code == 7
                     elif code == 39:
@@ -131,12 +140,17 @@ def screen(data, width=76, height=12, track_bg=False, track_cursor=False, track_
                 y = min(y + 1, height - 1)
             if char_width:
                 cells[y][x] = c
+                if track_italic:
+                    for col in range(x, min(width, x + char_width)):
+                        italics[y][col] = italic
                 if track_style:
                     for col in range(x, min(width, x + char_width)):
                         colors[y][col] = (background, foreground) if reverse else (foreground, background)
                 x += char_width
         i += 1
     result = (["".join(line).rstrip() for line in cells], wraps)
+    if track_italic:
+        return (*result, italics)
     if track_colors:
         return (*result, colors)
     if track_bg:
@@ -167,7 +181,7 @@ def assert_panel_background(raw, width, height):
     assert wraps == 0, (width, height, wraps, lines)
     assert_mode_badge_colors(raw, width, height)
     for y, row in enumerate(colors):
-        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
+        badge = re.search(r"MODE: (SELECT|AGENT \[(all|blocked|done|working|idle|unknown)\]|HELP|THEMES)$", lines[y]) if lines[y].startswith("  Search:") else None
         for x, (_, bg) in enumerate(row):
             expected = (205, 214, 244) if badge and badge.start() <= x < badge.end() else (24, 24, 37)
             assert bg == expected, (x, y, bg, expected, lines)
@@ -180,18 +194,20 @@ def assert_mode_badge_colors(raw, width, height, foreground=(205, 214, 244), bac
     for y, line in enumerate(lines):
         if not line.startswith("  Search:"):
             continue
-        badge = re.search(r"MODE: (SELECT|HELP|THEMES)$", line)
+        badge = re.search(r"MODE: (SELECT|AGENT \[(all|blocked|done|working|idle|unknown)\]|HELP|THEMES)$", line)
         assert badge and badge.end() == width - 2, line
         for x, color in enumerate(colors[y]):
             expected = (background, foreground) if badge.start() <= x < badge.end() else (foreground, background)
             assert color == expected, (x, y, color, expected, line)
 
 
-def expected_search_row(width, text, mode):
+def expected_search_row(width, text, mode, agent_filter="all"):
     # These ASCII queries fit without clipping; reserve the renderer's two-cell
     # right margin and assert the entire row, not just the query or badge.
     left = f"  Search: {text}"
     mode = f"MODE: {mode.upper()}"
+    if mode == "MODE: AGENT":
+        mode += f" [{agent_filter}]"
     assert left.isascii() and len(left) + len(mode) + 1 <= width - 2
     return left + " " * (width - 2 - len(left) - len(mode)) + mode
 
@@ -250,7 +266,7 @@ def assert_terminal_restored(master, slave, saved, active, key, output,
 def default_footer_lines(width, mode="select", table=False):
     # Independent expected effective default identities, all visible without paging.
     text = {
-        "select": "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys",
+        "select": "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys · a: agent",
         "help": "j/↓: ↓move · k/↑: ↑move · Enter: run · Esc: close keys",
         "themes": f"j/↓: ↓theme · k/↑: ↑theme · Space: {'list' if table else 'table'} · Enter: save · Esc: cancel",
     }[mode]
@@ -303,11 +319,14 @@ def search_cursor_cases(binary):
             for context, opening, mode in (
                 ("Help", (b"?",), "Help"),
                 ("Select", (), "Select"),
+                ("Agent", (b"a",), "Agent"),
                 ("Themes", (b"t", b" ", mouse_report(4, 1)), "Themes"),
                 ("Themes list help", (b"t", b"?"), "Help"),
                 ("Themes table help", (b"t", b" ", b"?"), "Help"),
             ):
                 badge = f"MODE: {mode.upper()}"
+                if mode == "Agent":
+                    badge += " [all]"
                 budget = width - 4 - len(badge) - 1
                 query_budget = budget - 8 - 1  # Keep a cell for the editing cursor.
                 wide_count = (query_budget - 1) // 2
@@ -396,6 +415,12 @@ def mode_color_cases(binary):
                         (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
                         (b"\r", "HELP", 0, "f to search", False), (b"q", "THEMES", 1, "", False),
                         (b"q", "SELECT", 0, "f to search", False),
+                        (b"a", "AGENT", 0, "f to search", False),
+                        (b"f", "AGENT", 0, "", True),
+                        (b"x", "AGENT", 0, "x", True),
+                        (b"\r", "AGENT", 0, "x", False),
+                        (b"s", "SELECT", 0, "x", False),
+                        (b"r", "SELECT", 0, "f to search", False),
                     ):
                         def expected_mode(raw):
                             # A queued repaint (including the same badge before a
@@ -414,7 +439,7 @@ def mode_color_cases(binary):
                         if mode is None:
                             assert lines[0].startswith("  Themes · selected:") and not any("Search:" in line for line in lines), lines
                         else:
-                            assert lines[y].endswith(f"MODE: {mode}"), lines
+                            assert lines[y] == expected_search_row(width, query, mode), lines
                             assert_mode_badge_colors(raw, width, height, foreground, background)
                     popup.finish(b"q")
                 finally:
@@ -467,7 +492,256 @@ def launch_selection_cases(binary):
         )
 
 
+def assert_table_header_italics(raw, width, height, agent=False):
+    lines, wraps, italics = screen(raw, width, height, track_italic=True)
+    assert wraps == 0, lines
+    labels = [] if agent else ["Workspace", "Tab", "Agent/Pane Name"] + (["Status"] if width >= 110 else [])
+    styled = set()
+    for label in labels:
+        x = lines[2].index(label)
+        styled.update((2, col) for col in range(x, x + len(label)))
+    assert {(y, x) for y, row in enumerate(italics) for x, enabled in enumerate(row) if enabled} == styled, (lines, italics)
+    assert ("\x1b[3m" in raw and "\x1b[23m" in raw) == (not agent), raw
+    if agent:
+        assert not any("Agent/Pane Name" in line for line in lines), lines
+    return lines
+
+
+def table_style_and_empty_cases(binary):
+    from pty_keymaps import Popup, read_frame, mouse_report
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-table-") as temporary:
+        directory = Path(temporary)
+        fixture = json.loads((Path(__file__).parent / "fixtures/topology.json").read_text())
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{directory / 'snapshot.json'}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        config = {"select": {"reset_search": ["R"], "open_agent": ["A"]},
+                  "agent": {"reset_search": ["R"], "open_select": ["S"]}}
+        for theme in ("catppuccin", "catppuccin-latte", "terminal"):
+            (directory / "theme.jsonc").write_text(json.dumps({"theme": theme}))
+            for absent in (False, True):
+                snapshot = json.loads(json.dumps(fixture))
+                if absent:
+                    snapshot["result"]["snapshot"]["agents"] = []
+                    for pane in snapshot["result"]["snapshot"]["panes"]:
+                        pane.pop("agent", None)
+                (directory / "snapshot.json").write_text(json.dumps(snapshot))
+                popup = Popup(binary, directory, config)
+                try:
+                    assert_table_header_italics(popup.initial, 80, 15)
+                    for agent in (False, True):
+                        mode = "AGENT" if agent else "SELECT"
+                        if agent:
+                            popup.send(b"A")
+                        for searching in (True, False):
+                            if searching:
+                                popup.send(b"f")
+                                key = b"zzzz-not-found"
+                            else:
+                                key = b"\r"
+                            os.write(popup.master, key)
+                            for width, height in ((80, 15), (150, 30), (110, 15), (80, 15)):
+                                if (width, height) != (popup.width, popup.height):
+                                    fcntl.ioctl(popup.master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                                    popup.width, popup.height = width, height
+                                else:
+                                    # Request a fresh complete draw even at unchanged dimensions.
+                                    os.write(popup.master, mouse_report(4, 5, 35))
+
+                                def expected(raw):
+                                    lines, wraps, cursor = screen(raw, width, height, track_cursor=True)
+                                    return (wraps == 0 and lines[0] == expected_search_row(width, "zzzz-not-found", mode)
+                                            and cursor[0] == searching and len(lines[1]) == width - 2)
+
+                                raw = read_frame(popup.output, expected=expected)
+                                lines = assert_table_header_italics(raw, width, height, agent)
+                                footer = ([f"  Enter/Esc: {'agent' if agent else 'select'}  Backspace: erase"] if searching
+                                          else default_footer_lines(width))
+                                if not searching and not agent:
+                                    footer = [line.replace("a: agent", "A: agent") for line in footer]
+                                if not searching and agent:
+                                    footer = [line.replace("a: agent", "S: select") for line in footer]
+                                bottom = height - len(footer) - 1
+                                message = "No agent panes" if agent and absent else "No matching agent panes" if agent else "No matching panes"
+                                hint = ("Enter/Esc, then " if searching else "")
+                                hint += "" if agent and absent else "R: reset search · "
+                                hint += "S: select" if agent else "A: agent"
+                                y = 4 + (bottom - 4 - 2) // 2
+                                expected_body = [""] * (bottom - 4)
+                                for offset, text in enumerate((message, hint)):
+                                    expected_body[y - 4 + offset] = " " * (2 + (width - 4 - len(text) + 1) // 2) + text
+                                assert lines[4:bottom] == expected_body, (lines, expected_body)
+                                assert lines[1] == lines[3] == lines[bottom] == "  " + "─" * (width - 4), lines
+                                assert lines[-len(footer):] == footer, (lines, footer)
+                                assert not any(line.startswith("  >") for line in lines), lines
+                                # Empty-body clicks must not focus/close or start search.
+                                popup.send(mouse_report(width // 2, y + 1), expected=expected)
+                                assert popup.child.poll() is None
+                        popup.send(b"R")
+                    popup.finish(b"q")
+                finally:
+                    popup.abort()
+
+
+def long_empty_preview_hint_case(binary):
+    from pty_keymaps import Popup, read_frame, mouse_report
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-long-hint-") as temporary:
+        directory = Path(temporary)
+        fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'api snapshot' ]; then cat '{fixture}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+        fake.chmod(0o700)
+        config = {"agent": {"reset_search": ["Backspace", "B"], "open_select": ["Space", "S"]},
+                  "themes": {"cancel": ["Backspace"]}}
+        popup = Popup(binary, directory, config)
+        try:
+            for key in (b"a", b"t", b" ", mouse_report(4, 1)):
+                popup.send(key)
+            os.write(popup.master, b"zzzz-not-found")
+
+            def expected(raw):
+                lines, wraps, cursor = screen(raw, 80, 15, track_cursor=True)
+                return (wraps == 0 and lines[0] == expected_search_row(80, "zzzz-not-found", "THEMES")
+                        and cursor == (True, 24, 0))
+
+            raw = read_frame(popup.output, expected=expected)
+            lines, wraps = screen(raw, 80, 15)
+            hint = "Enter/Esc, then Backspace: table, then Backspace/B: reset search · Space/S: select"
+            assert " ".join(line.strip() for line in lines[8:10]) == hint, lines
+            body = ["", "", ""] + [" " * (2 + (76 - len(text) + 1) // 2) + text for text in (
+                "No matching agent panes", hint.rsplit(" ", 1)[0], "select"
+            )] + ["", "", ""]
+            assert lines == [expected_search_row(80, "zzzz-not-found", "THEMES"),
+                             "  " + "─" * 76,
+                              "",
+                             "  " + "─" * 76, *body,
+                             "  " + "─" * 76,
+                             "  Enter/Esc: preview  Backspace: erase"], lines
+            assert wraps == 0
+            popup.send(b"\r")
+            popup.send(b"\x7f")
+            popup.finish(b"q")
+        finally:
+            popup.abort()
+
+
+def agent_card_cases(binary):
+    from pty_keymaps import Popup, read_frame, mouse_report
+
+    with tempfile.TemporaryDirectory(dir="/tmp/opencode", prefix="crossroads-cards-") as temporary:
+        directory = Path(temporary)
+        snapshot = json.loads((Path(__file__).parent / "fixtures/topology.json").read_text())
+        topology = snapshot["result"]["snapshot"]
+        topology["agents"][0]["title"] = "Implement the card layout " * 10
+        next(pane for pane in topology["panes"] if pane["pane_id"] == "p-other")["title"] = "Other task"
+        for i in range(6):
+            topology["panes"].append({"pane_id": f"card-{i}", "terminal_id": f"card-term-{i}",
+                "workspace_id": "w2", "tab_id": "t2", "agent": f"Worker {i}",
+                "agent_status": "idle", "title": f"Extra task {i}"})
+        (directory / "snapshot.json").write_text(json.dumps(snapshot))
+        worktrees = json.dumps({"result": {"type": "worktree_list",
+            "source": {"repo_key": "repo", "repo_name": "Crossroads"},
+            "worktrees": [{"open_workspace_id": "w1", "branch": "develop"},
+                          {"open_workspace_id": "w2", "branch": "feature/cards"}]}})
+        fake = directory / "herdr"
+        fake.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{directory / 'calls'}'\nif [ \"$*\" = 'api snapshot' ]; then cat '{directory / 'snapshot.json'}'; else printf '%s\\n' '{worktrees}'; fi\n")
+        fake.chmod(0o700)
+        for theme in ("catppuccin", "catppuccin-latte", "terminal"):
+            (directory / "theme.jsonc").write_text(json.dumps({"theme": theme}))
+            popup = Popup(binary, directory, args=("--agent",))
+            try:
+                def cards(raw, selected="Claude", title="Titel: Implement", mode="AGENT", search_y=0,
+                          query=None, status="all", searching=False):
+                    lines, wraps, italics = screen(raw, popup.width, popup.height, track_italic=True)
+                    cursor = screen(raw, popup.width, popup.height, track_cursor=True)[2]
+                    text = query if query is not None else "" if mode == "THEMES" else "f to search"
+                    return (wraps == 0 and lines[search_y] == expected_search_row(popup.width, text, mode, status)
+                            and cursor[0] == searching
+                            and any(line.startswith("  >") and selected in line for line in lines)
+                            and any(title in line for line in lines)
+                            and not any("Agent/Pane Name" in line or "┄" in line for line in lines)
+                            and not any(any(row) for row in italics))
+
+                assert cards(popup.initial), popup.initial
+                lines, wraps = screen(popup.initial, 80, 15)
+                assert "    Same › Same › Same" in lines, lines
+                assert "    Repository: Crossroads" in lines and "    Branch: develop" in lines, lines
+                assert next(line for line in lines if "Titel:" in line).endswith("…"), lines
+                assert "Titel: Other task" not in "\n".join(lines), lines
+                codex_y = next(y for y, line in enumerate(lines) if "codex" in line)
+                popup.send(mouse_report(5, codex_y + 1, 35),
+                           expected=lambda raw: cards(raw, "codex", "Titel: Other task"))
+                # An unchanged pointer report must not reselect a different card
+                # after the selected card's height changes.
+                popup.send(mouse_report(5, codex_y + 1, 35),
+                           expected=lambda raw: cards(raw, "codex", "Titel: Other task"))
+                popup.send(b"k", expected=cards)
+                popup.send(b"t")
+                popup.send(b" ", expected=lambda raw: cards(raw, mode="THEMES", search_y=1))
+                popup.send(b"q", expected=cards)
+                # Wheel movement may hide the expanded selection, but never
+                # changes it; keyboard movement restores a whole selected card.
+                for first in ("codex", "Worker 0", "Worker 1", "Worker 2", "Worker 3", "Worker 3"):
+                    lines = popup.send(mouse_report(5, 5, 65), expected=lambda raw, first=first:
+                                       first in screen(raw, 80, 15)[0][2])
+                    assert not any(line.startswith("  >") for line in lines), lines
+                lines = popup.send(b"j", expected=lambda raw: cards(raw, "codex", "Titel: Other task"))
+                assert "    Branch: feature/cards" in lines, lines
+                popup.send(b"k", expected=cards)
+                for width, height in ((150, 30), (80, 15)):
+                    fcntl.ioctl(popup.master, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                    popup.width, popup.height = width, height
+                    raw = read_frame(popup.output, expected=cards)
+                    lines, wraps = screen(raw, width, height)
+                    footer = [line.replace("a: agent", "s: select") for line in default_footer_lines(width)]
+                    assert lines[-len(footer):] == footer and wraps == 0, lines
+                # All metadata fields are searchable only in Agent, with AND
+                # status filtering and independent resets across modal returns.
+                for query in ("CROSSROADS", "feature/cards", "Other task"):
+                    popup.send(b"f")
+                    popup.send(query.encode(), expected=lambda raw: cards(raw, "codex" if query != "CROSSROADS" else "Claude",
+                               "Titel: Other task" if query != "CROSSROADS" else "Titel: Implement",
+                               query=query, searching=True))
+                    popup.send(b"\r")
+                    lines = popup.send(b"s", expected=lambda raw: "No matching panes" in raw and "MODE: SELECT" in raw)
+                    assert not any("Repository:" in line or "Titel:" in line for line in lines), lines
+                    popup.send(b"a")
+                    popup.send(b"r", expected=lambda raw: cards(raw,
+                               "Claude" if query == "CROSSROADS" else "codex",
+                               "Titel: Implement" if query == "CROSSROADS" else "Titel: Other task"))
+                    if query != "CROSSROADS":
+                        popup.send(b"k", expected=cards)
+                popup.send(b"i", expected=lambda raw: cards(raw, "codex", "Titel: Other task", status="idle"))
+                popup.send(b"f")
+                popup.send(b"Other task", expected=lambda raw: cards(raw, "codex", "Titel: Other task",
+                           query="Other task", status="idle", searching=True))
+                popup.send(b"\r")
+                popup.send(b"?", expected=lambda raw: "Keys — Agent" in raw)
+                popup.send(b"q", expected=lambda raw: cards(raw, "codex", "Titel: Other task", query="Other task", status="idle"))
+                popup.send(b"t")
+                popup.send(b" ", expected=lambda raw: cards(raw, "codex", "Titel: Other task", mode="THEMES",
+                           search_y=1, query="Other task"))
+                popup.send(b"q", expected=lambda raw: cards(raw, "codex", "Titel: Other task", query="Other task", status="idle"))
+                popup.send(b"w", expected=lambda raw: "No matching agent panes" in raw and "[working]" in raw)
+                popup.send(b"a", expected=lambda raw: cards(raw, "codex", "Titel: Other task", query="Other task"))
+                popup.send(b"i")
+                lines = popup.send(b"r", expected=lambda raw: cards(raw, "codex", "Titel: Other task", status="idle"))
+                assert not any("Claude" in line for line in lines), lines
+                popup.send(b"s", expected=lambda raw: "Agent/Pane Name" in raw)
+                popup.finish(b"q", expect_mouse=True)
+            finally:
+                popup.abort()
+        assert (directory / "calls").read_text() == (
+            "api snapshot\nworktree list --workspace w1\n" * 3
+        ), "card navigation must not query metadata"
+
+
 def main(binary):
+    agent_card_cases(binary)
+    long_empty_preview_hint_case(binary)
+    table_style_and_empty_cases(binary)
     launch_selection_cases(binary)
     search_cursor_cases(binary)
     mode_color_cases(binary)
@@ -530,6 +804,9 @@ def main(binary):
                 selected = [line for line in lines if line.startswith("  > ")]
                 assert len(selected) == 1 and selected[0].startswith(f"  > {keys} ") and selected[0].endswith(meaning), lines
             assert any(line.startswith("  > Esc/q") and "close Crossroads" in line for line in lines), lines
+            os.write(master, b"\x1b[B")
+            lines = assert_help_frame(frame(master, b"Esc: close"))
+            assert any(line.startswith("  > a ") and line.endswith("show agents") for line in lines), lines
             for keys, meaning in (
                 ("Hover", "highlight row; theme preview only, never activate"),
                 ("Left click", "focus clicked pane; Help runs action; footer or search"),

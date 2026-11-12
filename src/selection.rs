@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::input::Key;
@@ -23,6 +24,12 @@ pub(super) enum Mode {
     Themes,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum TableView {
+    Select,
+    Agent,
+}
+
 pub(super) struct Ui {
     pub(crate) mouse: std::cell::RefCell<MouseState>,
     pub(super) keymap: Keymap,
@@ -33,6 +40,11 @@ pub(super) struct Ui {
     pub(super) hint_scroll: Cell<usize>,
     pub(super) hint_more: Cell<bool>,
     pub(super) rows: Vec<Row>,
+    pub(super) table_view: TableView,
+    pub(super) agent_status_filter: Option<&'static str>,
+    // Opening-snapshot membership is not recaptured when reconnect replaces rows.
+    agent_panes: HashSet<String>,
+    blocked_agents: Vec<String>,
     pub(super) status_colors: StatusColors,
     pub(super) selected: Option<String>,
     pub(super) query: String,
@@ -69,6 +81,11 @@ impl Ui {
         auto_unsupported: Option<String>,
     ) -> Self {
         let selected = rows.first().map(|row| row.id.clone());
+        let agent_panes = rows
+            .iter()
+            .filter(|row| !row.agent.is_empty())
+            .map(|row| row.id.clone())
+            .collect();
         let mut ui = Self {
             mouse: std::cell::RefCell::new(MouseState::default()),
             keymap: Keymap::default(),
@@ -79,6 +96,10 @@ impl Ui {
             hint_scroll: Cell::new(0),
             hint_more: Cell::new(false),
             rows,
+            table_view: TableView::Select,
+            agent_status_filter: None,
+            agent_panes,
+            blocked_agents: Vec::new(),
             status_colors: StatusColors::default(),
             selected,
             query: String::new(),
@@ -103,6 +124,7 @@ impl Ui {
             config_dir: None,
         };
         ui.set_auto_choice(auto_name, auto_unsupported);
+        ui.reconcile_agent_order();
         ui
     }
 
@@ -141,16 +163,98 @@ impl Ui {
     }
 
     pub(super) fn visible(&self) -> Vec<usize> {
-        self.rows
+        let mut visible: Vec<usize> = self
+            .rows
             .iter()
             .enumerate()
+            .filter(|(_, row)| {
+                self.table_view == TableView::Select || self.agent_panes.contains(&row.id)
+            })
+            .filter(|(_, row)| {
+                self.table_view == TableView::Select
+                    || self.agent_status_filter.is_none_or(|status| {
+                        row.status == status || (status == "unknown" && row.status.is_empty())
+                    })
+            })
             .filter(|(_, row)| {
                 [&row.workspace, &row.tab, &row.pane, &row.agent]
                     .iter()
                     .any(|field| matches_field(field, &self.query))
+                    || (self.table_view == TableView::Agent
+                        && [
+                            row.agent_metadata.title.as_deref(),
+                            row.agent_metadata
+                                .repository
+                                .as_ref()
+                                .map(|(_, name)| name.as_str()),
+                            row.agent_metadata.branch.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|field| matches_field(field, &self.query)))
             })
             .map(|(i, _)| i)
-            .collect()
+            .collect();
+        if self.table_view == TableView::Agent {
+            visible.sort_by_key(|&i| {
+                self.blocked_agents
+                    .iter()
+                    .position(|id| *id == self.rows[i].id)
+                    .unwrap_or(self.blocked_agents.len())
+            });
+        }
+        visible
+    }
+
+    pub(super) fn set_table_view(&mut self, view: TableView) {
+        self.table_view = view;
+        self.mouse.borrow_mut().hits.clear();
+        self.reconcile_selection();
+        self.follow_selection = true;
+    }
+
+    pub(super) fn table_context(&self) -> Context {
+        match self.table_view {
+            TableView::Select => Context::Select,
+            TableView::Agent => Context::Agent,
+        }
+    }
+
+    pub(super) fn has_agent_panes(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|row| self.agent_panes.contains(&row.id))
+    }
+
+    pub(super) fn replace_rows(&mut self, rows: Vec<Row>) {
+        self.rows = rows;
+        self.reconcile_agent_order();
+        self.reconcile_selection();
+    }
+
+    pub(crate) fn reconcile_agent_order(&mut self) {
+        self.blocked_agents.retain(|id| {
+            self.rows
+                .iter()
+                .any(|row| row.id == *id && row.status == "blocked")
+        });
+        for row in &self.rows {
+            if row.status == "blocked"
+                && self.agent_panes.contains(&row.id)
+                && !self.blocked_agents.contains(&row.id)
+            {
+                self.blocked_agents.push(row.id.clone());
+            }
+        }
+        if self.table_view == TableView::Agent && self.agent_status_filter.is_some() {
+            self.reconcile_selection();
+        }
+    }
+
+    fn reconcile_selection(&mut self) {
+        self.selected = self
+            .selected_index(&self.visible())
+            .map(|i| self.rows[i].id.clone());
     }
 
     pub(super) fn selected_index(&self, visible: &[usize]) -> Option<usize> {
@@ -209,15 +313,37 @@ impl Ui {
                 Key::Char(c) if !c.is_control() => self.query.push(c),
                 _ => {}
             }
+            if self.table_view == TableView::Agent {
+                self.reconcile_selection();
+            }
             return None;
         }
         let visible = self.visible();
-        let action = self.keymap.action(Context::Select, key)?;
+        let action = self.keymap.action(self.table_context(), key)?;
         self.select_action(action, &visible)
     }
 
     fn select_action(&mut self, action: Action, visible: &[usize]) -> Option<String> {
         match action {
+            Action::FilterAll
+            | Action::FilterBlocked
+            | Action::FilterDone
+            | Action::FilterWorking
+            | Action::FilterIdle
+            | Action::FilterUnknown => {
+                self.agent_status_filter = match action {
+                    Action::FilterBlocked => Some("blocked"),
+                    Action::FilterDone => Some("done"),
+                    Action::FilterWorking => Some("working"),
+                    Action::FilterIdle => Some("idle"),
+                    Action::FilterUnknown => Some("unknown"),
+                    _ => None,
+                };
+                self.mouse.borrow_mut().hits.clear();
+                self.reconcile_selection();
+            }
+            Action::OpenAgent => self.set_table_view(TableView::Agent),
+            Action::OpenSelect => self.set_table_view(TableView::Select),
             Action::OpenThemes => {
                 self.theme_cursor = self.theme_index;
                 self.theme_table_preview = false;
@@ -234,7 +360,13 @@ impl Ui {
                 self.mode = Mode::Search;
             }
             Action::OpenHelp => {
-                self.help = Help::new(HelpContext::Select, &self.keymap);
+                self.help = Help::new(
+                    match self.table_view {
+                        TableView::Select => HelpContext::Select,
+                        TableView::Agent => HelpContext::Agent,
+                    },
+                    &self.keymap,
+                );
                 self.mode = Mode::Help;
             }
             Action::Close => self.closed = true,
@@ -244,7 +376,12 @@ impl Ui {
                     return Some(self.rows[i].id.clone());
                 }
             }
-            Action::ResetSearch => self.query.clear(),
+            Action::ResetSearch => {
+                self.query.clear();
+                if self.table_view == TableView::Agent {
+                    self.reconcile_selection();
+                }
+            }
             Action::NextWorkspace | Action::PreviousWorkspace => {
                 if let Some(i) = self.selected_index(visible) {
                     let blocks: Vec<usize> = visible
@@ -254,16 +391,17 @@ impl Ui {
                             (at == 0
                                 || self.rows[visible[at - 1]].workspace_id
                                     != self.rows[v].workspace_id)
-                                .then_some(v)
+                                .then_some(at)
                         })
                         .collect();
-                    if let Some(at) = blocks.iter().rposition(|&b| b <= i) {
+                    let position = visible.iter().position(|&v| v == i).unwrap();
+                    if let Some(at) = blocks.iter().rposition(|&b| b <= position) {
                         let next = if action == Action::NextWorkspace {
                             (at + 1) % blocks.len()
                         } else {
                             at.checked_sub(1).unwrap_or(blocks.len() - 1)
                         };
-                        self.selected = Some(self.rows[blocks[next]].id.clone());
+                        self.selected = Some(self.rows[visible[blocks[next]]].id.clone());
                     }
                 }
             }
@@ -282,22 +420,22 @@ impl Ui {
             }
             Action::PreviousTab | Action::NextTab => {
                 if let Some(i) = self.selected_index(visible) {
-                    let current = &self.rows[i].tab_id;
                     let blocks: Vec<usize> = visible
                         .iter()
                         .enumerate()
                         .filter_map(|(at, &v)| {
                             (at == 0 || self.rows[visible[at - 1]].tab_id != self.rows[v].tab_id)
-                                .then_some(v)
+                                .then_some(at)
                         })
                         .collect();
-                    if let Some(at) = blocks.iter().position(|&b| &self.rows[b].tab_id == current) {
+                    let position = visible.iter().position(|&v| v == i).unwrap();
+                    if let Some(at) = blocks.iter().rposition(|&b| b <= position) {
                         let next = if action == Action::PreviousTab {
                             at.checked_sub(1).unwrap_or(blocks.len() - 1)
                         } else {
                             (at + 1) % blocks.len()
                         };
-                        self.selected = Some(self.rows[blocks[next]].id.clone());
+                        self.selected = Some(self.rows[visible[blocks[next]]].id.clone());
                     }
                 }
             }

@@ -66,6 +66,31 @@ sys.exit(int(os.environ['CROSSROADS_DISPATCH_EXIT']))
             "helper stderr"
         );
     }
+    for args in [
+        ["--agent", "--setup-keybind"],
+        ["--setup-keybind", "--agent"],
+    ] {
+        let output = Command::new(root.join(&argv[0]))
+            .args(args)
+            .current_dir(&root)
+            .env("CROSSROADS_DISPATCH_TEST", "inherited")
+            .env("CROSSROADS_DISPATCH_EXIT", "0")
+            .env("HERDR_BIN_PATH", root.join("no-herdr"))
+            .env("HERDR_SOCKET_PATH", root.join("no-socket"))
+            .env("HERDR_CONFIG_PATH", root.join("no-config"))
+            .env("HERDR_PLUGIN_CONFIG_DIR", root.join("no-plugin-config"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "setup/runtime ran: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("--setup-keybind takes no arguments"),
+            "{output:?}"
+        );
+        assert!(!root.join("no-plugin-config").exists());
+        assert!(!root.join("no-config").exists());
+    }
     std::fs::remove_dir_all(&root).unwrap();
 }
 

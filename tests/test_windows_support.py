@@ -138,6 +138,75 @@ class ConsoleMarkerTests(unittest.TestCase):
 class ConsoleTableTests(unittest.TestCase):
     panes = ("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2")
 
+    def test_rendered_compact_empty_select_message_and_hint_are_not_panes(self):
+        from terminal_screen import Screen
+        lines = (Path(__file__).parent / "fixtures/empty-select-compact.txt").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 15)
+        raw = ("\x1b[H\x1b[2J" + "\r\n".join(lines) + "\x1b[?25l").encode()
+        console = self.console(*(bytes([byte]) for byte in raw))
+        console.screen = Screen(rows=15, cols=80)
+        console.until_table(mode="Select", query="Explicit task", selected=None, panes=())
+
+    def test_rendered_empty_select_has_no_panes_and_rejects_stale_or_incomplete_body(self):
+        # Current 120x30 renderer output with a metadata-only query and remapped keys.
+        lines = (Path(__file__).parent / "fixtures/empty-select.txt").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 30)
+
+        def paint(rows):
+            return ("\x1b[H\x1b[2J" + "\r\n".join(rows) + "\x1b[?25l").encode()
+
+        expected = dict(mode="Select", query="Explicit task", selected=None, panes=())
+        actual = self.console(paint(lines)).until_table(**expected)
+        self.assertEqual(actual["panes"], ())
+        for row, replacement in ((5, "  > Same       Same       Claude"),
+                                 (5, "  > Same".ljust(lines[2].index("Agent/Pane Name")) + "Claude"),
+                                 (14, ""), (15, ""), (15, "  R: reset search · A: agent")):
+            stale = lines.copy()
+            stale[row] = replacement
+            with self.subTest(row=row, replacement=replacement):
+                with self.assertRaisesRegex(AssertionError, "closed before current table"):
+                    self.console(paint(stale)).until_table(**expected)
+                self.console(paint(stale), *(bytes([byte]) for byte in paint(lines))).until_table(**expected)
+
+    def test_agent_cards_wait_for_current_filter_query_selection_and_complete_location(self):
+        def paint(status="idle", query="codex", selected="codex", names=("codex",), location=True, details=()):
+            rows = [f"  Search: {query}    MODE: AGENT [{status}]", "  ────────"]
+            for name in names:
+                rows += [f"  {'> ' if name == selected else '  '}{name} | idle",
+                         "    Same › Same › Pane" if location else "", ""]
+            rows += [*("    " + line for line in details), "  ────────", "  Enter/Esc: agent  Backspace: erase"]
+            return ("\x1b[2J\x1b[H" + "\r\n".join(rows)
+                    + "\x1b[1;16H\x1b[?25h").encode()
+
+        expected = dict(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",), status="idle", details=())
+        final = paint()
+        for stale in (paint(status="all"), paint(query="wrong"), paint(selected="Claude"),
+                      paint(names=("codex", "Claude")), paint(location=False), paint(details=("Titel: Stale task",))):
+            with self.subTest(stale=stale):
+                console = self.console(stale)
+                with self.assertRaisesRegex(AssertionError, "closed before current table"):
+                    console.until_table(**expected)
+                console = self.console(stale, *(bytes([byte]) for byte in final))
+                actual = console.until_table(**expected)
+                self.assertEqual(actual["status"], "idle")
+        details = ("Repository: Crossroads", "Branch: develop", "Titel: Explicit task")
+        console = self.console(paint(details=details))
+        self.assertEqual(console.until_table(**{**expected, "details": details})["details"], details)
+
+    def test_empty_agent_cards_have_no_selection_or_stale_panes(self):
+        raw = ("\x1b[2J\x1b[H  Search: f to search    MODE: AGENT [blocked]\r\n"
+               "  ────────\r\n\r\n  ────────\r\n    No matching agent panes\r\n  ────────\r\n"
+               "  s: select\x1b[?25l").encode()
+        actual = self.console(raw).until_table(mode="Agent", query="f to search",
+                                               selected=None, panes=(), status="blocked")
+        self.assertEqual(actual["panes"], ())
+        for stale in (raw.replace(b"No matching agent panes", b"                     "),
+                      raw.replace("  ────────\r\n\r\n".encode(), b""),
+                      raw.replace(b"\r\n\r\n", b"\r\n  > codex | idle\r\n")):
+            with self.assertRaisesRegex(AssertionError, "closed before current table"):
+                self.console(stale).until_table(mode="Agent", query="f to search",
+                                                selected=None, panes=(), status="blocked")
+
     def test_native_mouse_sequence_retains_selection_through_reset_and_reopen(self):
         acceptance = runpy.run_path(str(Path(__file__).with_name("test_windows_acceptance.py")))
         case = acceptance["WindowsAcceptanceTests"]()

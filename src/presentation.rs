@@ -6,6 +6,7 @@ use ratatui::{
 
 use super::selection::{Mode, Ui};
 
+mod agent;
 mod diagnostics;
 mod footer;
 mod help;

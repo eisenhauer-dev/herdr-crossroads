@@ -18,13 +18,16 @@ pub(crate) struct MouseState {
     pub(crate) hits: Vec<(usize, usize, usize, Hit)>,
     pub(crate) signature: String,
     pub(crate) scroll_max: usize,
+    pub(crate) last_motion: Option<(usize, usize)>,
 }
 
 impl Ui {
     fn mouse_signature(&self) -> String {
         format!(
-            "{:?}:{:?}:{:?}:{:?}:{:?}:{}:{}:{}:{:?}:{}:{:?}:{:?}",
+            "{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{:?}:{}:{}:{}:{:?}:{}:{:?}:{:?}",
             self.mode,
+            self.table_view,
+            self.agent_status_filter,
             self.selected,
             self.query,
             self.help.selected,
@@ -36,7 +39,17 @@ impl Ui {
             self.hint_scroll.get(),
             self.rows
                 .iter()
-                .map(|r| (&r.id, &r.workspace_id, &r.tab_id, &r.status))
+                .map(|r| (
+                    &r.id,
+                    &r.workspace_id,
+                    &r.tab_id,
+                    &r.status,
+                    &r.workspace,
+                    &r.tab,
+                    &r.pane,
+                    &r.agent,
+                    &r.agent_metadata,
+                ))
                 .collect::<Vec<_>>(),
             (
                 self.viewport_start.get(),
@@ -91,7 +104,20 @@ impl Ui {
         if self.mouse.borrow().signature != self.mouse_signature() {
             return None;
         }
+        let agent_cards = self.table_view == super::TableView::Agent
+            && (matches!(self.mode, Mode::Select | Mode::Search)
+                || (self.mode == Mode::Themes && self.theme_table_preview));
+        if agent_cards && event.button == MouseButton::Motion {
+            let mut mouse = self.mouse.borrow_mut();
+            if mouse.last_motion == Some((event.x, event.y)) {
+                return None;
+            }
+            mouse.last_motion = Some((event.x, event.y));
+        }
         if matches!(event.button, MouseButton::WheelUp | MouseButton::WheelDown) {
+            if agent_cards {
+                self.mouse.borrow_mut().last_motion = Some((event.x, event.y));
+            }
             let down = event.button == MouseButton::WheelDown;
             if self.configuration_failed() || width < 80 || height < 15 {
                 return self.keyboard(if down { Key::Down } else { Key::Up });
@@ -125,9 +151,15 @@ impl Ui {
         let activate = event.button == MouseButton::Left;
         let result = match &target {
             Hit::Pane(id) => {
+                if !self.visible().iter().any(|&i| self.rows[i].id == *id) {
+                    return None;
+                }
                 self.theme_error = None;
                 self.auto_toast = None;
                 self.selected = Some(id.clone());
+                if agent_cards {
+                    self.follow_selection = true;
+                }
                 if activate {
                     self.mode = Mode::Select;
                     self.action(Action::FocusPane)
@@ -173,6 +205,10 @@ impl Ui {
             }
             _ => None,
         };
+        if agent_cards && self.mouse.borrow().signature != self.mouse_signature() {
+            self.mouse.borrow_mut().hits.clear();
+            return result;
+        }
         let signature = self.mouse_signature();
         let mut mouse = self.mouse.borrow_mut();
         mouse.signature = signature;

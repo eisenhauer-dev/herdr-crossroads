@@ -21,6 +21,13 @@ release was published as
 on 2026-10-16 with exactly four reviewed clean CI assets, not a prerelease.
 Historical local/CI `0.1.0` artifacts below were not reused or renamed.
 
+Current source Agent changes extend the existing render/keymap PTYs rather than
+adding a fifth gate. The [local verification contract](keymaps.md#local-verification)
+includes direct Agent starts, switches/search/Help/Themes, live status/reconnect,
+italic headings and centered empty states. Historical receipts below do not
+validate these later changes; fresh native and installed-binary gates remain
+separate from focused local fake-host checks.
+
 ## Windows preparation (not certification)
 
 The current Windows target is `x86_64-pc-windows-gnu`. Published assets exist for

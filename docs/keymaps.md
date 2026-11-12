@@ -8,10 +8,13 @@ injected as `HERDR_PLUGIN_CONFIG_DIR`. If that file is **absent**, it reads lega
 `keymaps.json` instead. A present but invalid or unreadable `.jsonc` file never
 falls back to `.json`. With neither file (or no config directory), defaults apply.
 Crossroads never writes, migrates, or deletes keymaps.
+These plugin-owned keys control the open popup only. Herdr's `config.toml`
+controls host launch shortcuts (`prefix+f`/`prefix+a` with current source setup);
+changing one does not remap the other. See [launch setup](installation.md#keyboard-launch-setup).
 
 ## Schema and replacement
 
-The root is an object with optional `select`, `help`, and `themes` objects and an
+The root is an object with optional `select`, `agent`, `help`, and `themes` objects and an
 optional `mouse_enabled` boolean (default `true`). Each
 action takes an array of **one or two defined key strings**. The limit is checked
 before deduplication: even `["q", "q", "q"]` is invalid. An action replaces its entire
@@ -42,6 +45,10 @@ For example, this replaces pane movement while retaining arrows explicitly:
     "next_row": ["J", "Down"],
     "previous_row": ["K", "Up"],
     "open_help": ["?", "!"],
+    "open_agent": ["A"],
+  },
+  "agent": {
+    "open_select": ["S"],
   },
   "help": {
     "next_category": ["J", "Down"],
@@ -80,6 +87,7 @@ and reconnect snapshots do not reset the highlight to the launch pane.
 | `open_themes` | `t` | Open theme selection |
 | `focus_pane` | `Enter` | Focus the selected visible pane and close |
 | `close` | `Esc`, `q` | Close without focusing a pane |
+| `open_agent` | `a` | Switch to Agent cards without changing host focus |
 
 Pane, tab and workspace movement wraps in both directions through visible rows
 or blocks, retaining topology order. Tab/workspace jumps select the first visible
@@ -92,6 +100,118 @@ hides that ID, the first matching row is displayed as a fallback without replaci
 it; clearing the filter reveals the retained selection, not necessarily row one.
 This applies equally to `r` and to executing Select's reset-search entry from Help.
 
+### `agent` — agent-pane navigation
+
+Current source builds can start here directly with `--agent`; no argument starts
+Select. The manifest entries are `crossroads-agent` on Linux/macOS and
+`crossroads-agent-windows` on Windows. Rebuild the binary and use the updated
+manifest: published 0.3.1 does not support this flag. The launch-pane highlight is
+retained only if it belongs to the Agent view; otherwise the first visible agent
+pane is selected, or none for an empty view. `--agent` cannot be combined with
+`--setup-keybind` in either order; neither setup nor runtime runs in that case.
+
+Agent uses the same navigation, search, reset, help, themes, focus and close actions
+and defaults as Select. Instead of `open_agent`, it has `open_select` (default `s`)
+to return to Select. Configure each context independently: `select.open_agent`
+and `agent.open_select` replace the two switch bindings. Omitted Agent actions
+keep built-in defaults, not custom Select replacements. Collision and key validation
+rules are identical in both contexts.
+
+Agent additionally provides these status actions (not Select actions):
+
+| Action | Default key | Effect |
+| --- | --- | --- |
+| `filter_all` | `a` | Show all statuses; retain text query |
+| `filter_blocked` | `b` | Show blocked agents |
+| `filter_done` | `d` | Show done agents |
+| `filter_working` | `w` | Show working agents |
+| `filter_idle` | `i` | Show idle agents |
+| `filter_unknown` | `u` | Show unknown agents |
+
+Each new popup starts with all statuses. Status and text filters intersect (AND).
+Agent search includes the existing workspace, tab, pane and agent names plus
+available repository **name**, branch and explicit task title metadata. Matching
+remains case-insensitive subsequence matching within one field, never across fields;
+absent metadata adds no search field. Select search is unchanged. These fields use
+the already captured snapshot/worktree data; typing and filtering add no queries.
+Only explicitly associated metadata is used; missing, ambiguous or conflicting
+values are omitted rather than inferred from paths or labels. See the
+[metadata source and association rules](architecture.md#data-flow).
+`r` clears only text, while `a` clears only status. Status actions are independently
+remappable with the same replacement/conflict rules; Keys — Agent shows their
+effective bindings and can execute them. They are not added to the footer.
+The active filter appears as `MODE: AGENT [all]`, `[blocked]`, `[done]`, `[working]`,
+`[idle]` or `[unknown]`. Switching to Select, Help or Themes preserves it; Agent-origin
+theme-table previews apply both filters and the stable blocked order. Their badge
+remains `MODE: THEMES`. Live status changes immediately update the matching set;
+with an active status filter in Agent, a visible selected ID is retained, otherwise
+selection becomes the first match or none. Filtering never focuses a pane.
+An empty status is displayed and filtered as `unknown`, including for opening
+Agent members that survive reconnect without an agent name. Select is unchanged.
+
+Agent includes pane IDs with a detected nonempty agent name in the opening snapshot.
+Detection first uses the matching snapshot `agents` entry's `display_agent`,
+`name`, or `agent` string (in that order), then the pane's `display_agent` or
+`agent` string. An empty chosen string is not an agent; status alone is not
+agent detection. Display sanitization is the same as for Select.
+It shares Select's query; reconnect does not recapture membership. Agent alone
+puts all blocked panes first, initially in topology order, followed by nonblocked
+panes in topology order. Newly blocked panes append to the blocked segment;
+duplicate blocked events do not move them. Leaving blocked restores the pane's
+relative topology position among nonblocked panes; reentry appends again.
+Transitions are tracked even in Select, Help, Themes, or when search hides a pane.
+Navigation, Help actions and theme-table previews use the same Agent order.
+Status reordering retains the selected pane ID, never jumps to a newly blocked
+pane, and never changes host focus. Select always retains topology order.
+Switching retains the selected pane ID if visible, otherwise selects the first
+matching pane, or none for zero matches. Switching never focuses a pane. `r` clears
+the shared query outside search; while editing, all printable action keys are ordinary text.
+Enter focuses only a visible candidate. Search returns to the originating table,
+and Help and Themes preserve that table view; Themes table preview uses its Agent
+membership and shared query rather than all panes.
+
+Select retains its table columns and italic terminal headings (explicit ANSI
+italic on/off; plain text stays unstyled). Agent instead stacks full-width cards,
+without column or group headings. Each card shows agent/status and
+`Workspace › Tab › Pane`. Only the selected card adds available `Repository:`,
+`Branch:` and `Titel:` lines. Missing metadata and a title identical to the complete
+location line are omitted. Each field is one line, clipped with `…` at whole
+terminal grapheme boundaries; cards have two to five content rows, plus a blank
+row between cards. Status colors and search highlighting use the active theme.
+Agent-origin Themes previews show cards; Select-origin previews keep the table.
+Navigation follows card order, with tab/workspace jumps targeting adjacent
+contiguous visible blocks, including repeated blocks after status reordering.
+Scrolling advances by cards and accounts for the selected card's variable height;
+keyboard navigation brings the whole selected card back into view.
+
+Empty views retain the search bar, rules and footer (Select also its headings). The message and
+key hint are centered horizontally and together vertically in the available table
+body: Select shows `No matching panes`; Agent shows `No agent panes` when no
+opening-snapshot member remains in the current topology, otherwise
+`No matching agent panes` for an empty search result. Live agent-name changes do
+not redefine that membership. Empty bodies have no pane mouse targets.
+Hints show effective reset-search and table-switch bindings; Agent without panes
+only offers the switch back to Select. During search, hints first say
+`Enter/Esc, then` because bindings are text while editing. Theme-table previews
+also name the effective cancel key to return to the table before those actions.
+Long hints wrap at word boundaries to the table width; the complete message/hint
+block remains centered, including search in a Themes preview at 80×15.
+The existing 80×15 minimum is unchanged.
+
+Live `pane.agent_status_changed` events update recognized statuses only on
+existing agent-named rows with matching pane/workspace IDs. They cannot rename
+panes, change Agent membership, or reset the query. Selection is reconciled when
+an active Agent status filter hides the highlighted pane. After disconnect,
+reconnect subscribes before taking a fresh snapshot and applies queued statuses
+before installing it. Missing pane IDs disappear; a surviving opening member
+stays eligible even if its new row has no agent name. Newly detected agents on
+other pane IDs appear in Select but not Agent until reopening. Replacement rows
+preserve the relative order of still-blocked members, remove vanished or no-longer
+blocked members from that segment, and append newly detected blocked members in
+the replacement topology order. They
+reconcile selection to the current view/query/status filter (visible retained ID, first match,
+or none), rather than restoring the launch pane. See [runtime details](architecture.md#live-status-and-reconnection).
+
 ### `help` — Keys navigation, not search input
 
 | Action | Default keys | Effect |
@@ -100,13 +220,13 @@ This applies equally to `r` and to executing Select's reset-search entry from He
 | `previous_category` | `k`, `Up` | Move backward through visible help entries |
 | `open_search` | `f` | Edit the independent help search |
 | `reset_search` | `r` | Clear the help filter |
-| `close` | `Esc`, `q` | Return to the calling Select or Themes view |
+| `close` | `Esc`, `q` | Return to the calling Select, Agent or Themes view |
 
-`?` opens help from Select or Themes (list or table preview); it does not close Help by default. All close/cancel
+`?` opens help from Select, Agent or Themes (list or table preview); it does not close Help by default. All close/cancel
 lists remain replaceable with one or two custom keys.
 
 In Help navigation, fixed **Enter executes the marked visible action**. First
-leave Help and restore the actual caller (Select or the same Themes list/table
+leave Help and restore the actual caller (Select, Agent or the same Themes list/table
 preview, pending theme, pane selection, filter and viewport), then dispatch that
 entry's action identity in the caller. No remapped physical key is synthesized.
 For example, next-theme changes the pending Themes choice; focus-pane focuses
@@ -129,15 +249,15 @@ and do nothing on Enter. The Help footer shows `Enter: run`.
 
 Keys help shows the calling context's actions and effective bindings, not
 hard-coded defaults, plus a separate **Mouse (fixed)** section. Its header is
-`Keys — Select` or `Keys — Themes`; navigation
+`Keys — Select`, `Keys — Agent` or `Keys — Themes`; navigation
 and search within help use the configured `help` bindings in either case.
 Closing help without activation restores the caller, including the exact pane query, selection and
 viewport and the theme cursor, list/table preview and saved choice. Opening or
 closing help without activation neither focuses a pane nor saves or cancels a pending theme.
 
 Existing search rows show a right-aligned informational badge: `MODE: SELECT`,
-`MODE: HELP` or `MODE: THEMES`. Search is an activity within its originating
-view: pane search keeps `MODE: SELECT`, and theme-preview search keeps
+`MODE: AGENT [all]` (or the active status), `MODE: HELP` or `MODE: THEMES`. Search is an activity within its originating
+view: pane search keeps `MODE: SELECT` or the Agent status badge, and theme-preview search keeps
 `MODE: THEMES`. Only the badge reverses the active foreground/background
 colors, including terminal defaults; it is not clickable.
 Plain-text output includes the same label without styling.
@@ -189,6 +309,9 @@ Select footers omit `open_search`, `reset_search`, and `open_themes`; Help foote
 omit `open_search` and `reset_search`, even with custom bindings. These actions
 remain available, and the full Keys help entries, fixed search-editing hints,
 and theme picker controls are unchanged.
+Agent footers follow the same rules as Select and show the effective `open_select`
+binding; Select shows `open_agent`. Both switch actions also appear in caller-specific
+Keys help with all effective bindings and can be executed there.
 Keys help retains all effective keys (one or two) for its displayed actions.
 A single custom slash binding is displayed as `/` in Keys help and search prompts,
 for example `Search: / to search`; the default is now `Search: f to search` in
@@ -266,13 +389,19 @@ or disable the application's `1003`/`1006` modes and ignores delivered mouse rep
 and custom bindings remain available. Crossroads does not write this setting.
 
 - Hover highlights the row under the pointer without activating it: panes in
-  Select/Search and theme-table previews, Help entries (also during independent
+  Select/Agent/Search and theme-table previews, Help entries (also during independent
   Help search), or themes in the list. Hovering a theme previews its palette but
-  never saves it. Highlighting does not change actual Herdr pane focus.
+  never saves it. Agent hover selects and expands the card, keeping it visible.
+  Repeated motion reports at unchanged coordinates do not reselect after card
+  expansion or wheel scrolling. Highlighting does not change actual Herdr pane focus.
 - A single left click immediately focuses the clicked pane and closes the popup,
   including filtered panes in Search and theme-table previews. Clicking a theme
   immediately saves that theme. Releases do not activate. Stale layouts and resize
-  input are rejected; activation does not depend on a previous click or timing.
+  input are rejected; changing table views discards old hit regions. Agent selection,
+  filters, status, metadata/expansion and size changes invalidate old card regions
+  until the next layout. Every content row of a card activates its pane; blank
+  separators do not. Pane clicks
+  activate only visible targets; activation does not depend on a previous click or timing.
 - Clicking a search bar activates editing and shows the query cursor. Pane and
   Help filters remain independent. Clicking the Themes table-preview bar edits
   the pane filter with the pending palette; Enter/Esc returns to the same Themes
@@ -290,7 +419,7 @@ and custom bindings remain available. Crossroads does not write this setting.
   Search return/erase and configuration-error scroll/close controls are clickable.
   Actions absent from a footer (including theme opening and filter reset) remain
   reachable through executable Help entries.
-- Wheel down/up scrolls **only the active viewport**, one row at a time, independently
+- Wheel down/up scrolls **only the active viewport**, one row (one Agent card) at a time, independently
   of remapped bindings. It preserves the selected/highlighted pane, Help entry or
   pending theme, even when that item scrolls off screen, and never changes actual
   host focus or saves a theme. This applies to Select and pane search, Help and its
@@ -299,7 +428,7 @@ and custom bindings remain available. Crossroads does not write this setting.
   typed `j`/`k` still enter search text. Scrolling clamps at the start/end without
   wrapping and is a no-op when all content fits or there are no matches. Rendering
   alone does not bring the selection back into view; keyboard navigation does.
-  Hover still highlights the row under the pointer in the scrolled viewport.
+  Moving the pointer highlights the row under it in the scrolled viewport.
   Diagnostics retain viewport scrolling; undersized ordinary views remain inert.
 - Header rules, group separators, noninteractive blank space and out-of-bounds
   coordinates do not select or activate anything. Hit regions are recorded by the
@@ -377,7 +506,7 @@ to copy into configuration.
 All known-mode keymap diagnostics put the mode **only in the heading**:
 `Unknown keymap actions`, `Keymap structure`, `Unknown keymap keys`,
 `Duplicate keymap fields`, and `Unsupported keymap keys` each use
-` - select mode`, ` - help mode`, or ` - themes mode`, as do limits and collisions.
+` - select mode`, ` - agent mode`, ` - help mode`, or ` - themes mode`, as do limits and collisions.
 Lists name the action first where applicable, with no repeated `mode.action`
 or `mode:` prefix: `bad_action`, `next_row: expected nonempty key list`,
 `next_row: unknown key "F1"`, or `next_row: "Ctrl+i": Ctrl/Alt bindings are not allowed`.
@@ -439,7 +568,7 @@ block headings and diagnostic details above the fixed separator and footer.
 An unknown context does not produce redundant unknown-action messages for its
 contents; those contents are still checked for invalid structures and keys.
 
-The ordinary too-small page is outside the three contexts: Enter/Esc/q always
+The ordinary too-small page is outside the keymap contexts: Enter/Esc/q always
 closes it without focusing a pane; other keys, including arrows and j/k, are
 inert. Its notice starts with `ERROR:` in the active theme's bold error color,
 retaining the theme background. It shows the required 80×15 content size,
@@ -644,6 +773,100 @@ new execution evidence or certification. See
 [installer/entrypoint limitations](installation.md#windows-preparation-limitations)
 and [remaining gates](builds.md#windows-preparation-not-certification).
 
+## Agent verification coverage
+
+This maps current source assertions to their configured CI entry points, not to
+successful native execution. **Same-revision Linux x86_64, Windows x86_64 GNU,
+macOS ARM64 and macOS Intel CI runs remain open for the Agent changes.** Older
+release receipts above do not validate this tree. Local fake-host tests do not
+close real-Herdr, managed-install, physical-terminal or external native gates.
+
+### Platform invocation
+
+| Platform | Workflow → required test invocation |
+| --- | --- |
+| Linux x86_64 | [Linux workflow](../.github/workflows/ci.yml): `cargo test --locked`, PTY-reader regressions, portable ConPTY-reader regressions and setup-helper tests; `scripts/build-linux.sh` runs all four complete PTYs before packaging. `tests/test_release_install.py` repeats all four against installed package bytes. |
+| macOS ARM64 and Intel | [macOS workflow](../.github/workflows/macos.yml): separate native `aarch64-apple-darwin` and `x86_64-apple-darwin` matrix entries run `cargo test --locked`, PTY-reader and setup-helper regressions. `scripts/build-macos.sh` → `scripts/build-macos.py` runs all four complete PTYs; installed-package acceptance repeats them. Neither architecture substitutes for the other. |
+| Windows x86_64 GNU | [Windows workflow](../.github/workflows/windows.yml): portable ConPTY-reader regressions, then `scripts/build-windows.py`. The builder retains existing Rust/keymap-policy groups and adds Agent selection, presentation and topology groups, plus native setup/dispatcher checks. `tests/test_windows_acceptance.py` runs against both final-linked and installed bytes through ConPTY/named-pipe fixtures. Unix-only tests are not made native Windows tests by selecting their parent group. |
+
+[Workflow contracts](../tests/test_ci_workflow.py),
+[macOS contracts](../tests/test_macos_workflow.py),
+[Windows contracts](../tests/test_windows_workflow.py) and
+[builder regressions](../tests/test_windows_provenance.py) check invocation/order,
+including both Windows acceptance passes and unchanged deadlines. These are
+textual/fixture checks, not a YAML schema validator or an Actions execution.
+The public-only workflow guards and existing installed-package gates are unchanged.
+
+### Membership, launch and navigation
+
+- [Topology tests](../tests/unit/topology.rs) and
+  [selection tests](../tests/unit/selection.rs) assert opening membership,
+  detection precedence, own-pane exclusion, stable-ID switch retention and
+  first/none fallback without host focus. [Startup tests](../tests/startup.rs)
+  cover Select/default and direct Agent launch/context handling on Unix;
+  [CLI/dispatcher tests](../tests/setup_dispatch.rs) reject invalid setup arguments.
+  [Manifest contracts](../tests/test_windows_workflow.py) check all platform entry
+  points, Windows `.exe`, `--agent` and preserved popup dimensions.
+- [Agent selection tests](../tests/unit/selection/agent.rs) cover remapped
+  switches/navigation, ordinary action characters during search, shared query,
+  effective Help/footer keys, Help execution, theme save/cancel/preview/search
+  origin, visible-only focus and discarded switch hit regions. The complete
+  [keymap PTY](../tests/pty_keymaps.py) repeats direct starts, default/remapped
+  switches and modal/filter returns in classic and Kitty modes.
+
+### Status, reconnect and metadata
+
+- [Agent selection tests](../tests/unit/selection/agent.rs) exercise initial
+  blocked partition, append/repeat/exit/reentry order, hidden/modal transitions,
+  replacement snapshots, disappeared members and stable selection. They also
+  cover every status filter, unknown/empty status, text/metadata AND matching,
+  independent resets, fresh-popup defaults, modal retention and live reconciliation.
+- [Reconnect tests](../tests/unit/runtime/reconnect.rs) exercise queued events
+  and replacement snapshots through the Unix runtime; the keymap PTY adds socket
+  reconnect and excludes disappeared panes/new assignments. Windows ConPTY
+  acceptance adds blocked-first order with retained selection, disconnect and
+  resnapshot, vanished-pane removal and exclusion of a newly assigned agent.
+- Topology tests cover optional/sanitized explicit title, repository and branch,
+  ambiguous/missing/conflicting evidence, unchanged Select data and query counts.
+  Agent selection and [render PTY tests](../tests/pty_render.py) exercise metadata
+  search without extra queries. Windows ConPTY acceptance checks selected metadata,
+  title search and unchanged Select search. Its two-workspace fixture requires
+  exactly one opening snapshot and one startup worktree lookup for each of `w1`
+  and `w2`, with no later lookups during filtering or modal/view switches.
+  Unix-only ambiguous worktree CLI fixtures remain Unix coverage.
+
+### Rendering, pointer safety and empty views
+
+- [Card tests](../tests/unit/presentation/agent.rs) assert selected-only optional
+  details, omitted duplicate title, sanitization and whole-grapheme clipping,
+  variable-height viewport/wheel recovery, contiguous-block navigation, hover
+  expansion/stationary-pointer stability, themes and stale geometry rejection
+  after selection/filter/status/metadata/resize changes. Agent selection tests
+  cover visible Enter/click activation; ConPTY repeats filtered card click and
+  Enter stable-ID focus through the native transport fixture.
+- [Table tests](../tests/unit/presentation/table.rs), card/footer tests and the
+  render PTY cover italic Select headers/reset isolation, centered no-agent versus
+  no-match states, effective reset/switch/cancel hints, inert empty bodies,
+  card-versus-table theme previews, minimum 80×15, wider layouts and resize.
+  [PTY reader regressions](../tests/test_pty_readers.py) reject stale status/query/
+  selection/cursor frames. [ConPTY reader regressions](../tests/test_windows_support.py)
+  reject stale filters, queries, selections, panes and details, incomplete card
+  locations, and fragmented input without resetting the five-second deadline.
+  Captured 80×15 and 120×30 Select frames also validate centered empty messages
+  and hints without treating their text as pane rows or accepting stale body rows.
+  Native ConPTY smoke checks are not the complete Unix PTY color/resize matrix.
+
+### Conflict-safe launch setup
+
+[Portable setup tests](../tests/test_setup_keybind.py) cover both free/correct/mixed
+bindings, conflicts on either key, wrong commands, duplicates, byte/comment
+preservation and refusal before staging. [Windows setup tests](../tests/test_windows_keybind.py)
+add native ACL/identity, sharing, ancestor/reparse/hardlink/read-only refusal and
+failure recovery. Dispatcher and ConPTY tests cover executable resolution and
+opt-in/idempotent setup without runtime queries or host reload. Platform workflows
+invoke their applicable helper tests (Windows through its builder); Linux skips
+of native APIs are not Windows evidence.
+
 ## Local verification
 
 Run from the repository root on Linux with Cargo, Python 3.11+ (standard library
@@ -669,7 +892,7 @@ Run all four complete PTY harnesses against a freshly built release binary:
 cargo fmt --check
 cargo test
 python3 -B -m unittest discover -s tests -p test_pty_readers.py
-cargo build --release
+cargo build --release --locked
 python3 tests/pty_latency.py target/release/herdr-crossroads
 python3 tests/pty_render.py target/release/herdr-crossroads
 python3 tests/pty_keymaps.py target/release/herdr-crossroads
@@ -677,7 +900,7 @@ python3 tests/pty_hints.py target/release/herdr-crossroads
 ```
 
 The render gate checks effective foreground/background inversion on exactly the
-mode-badge cells in Select (including search), Help (including search), and Themes
+mode-badge cells in Select and Agent (including search), Help (including search), and Themes
 table preview, at minimum and wider sizes with Mocha, Latte and terminal-default colors.
 Each mode-color transition waits for a complete draw with the expected search-row
 position, exact query/prompt and editing cursor (or the search-free Themes list),
@@ -686,8 +909,34 @@ stale, delayed, coalesced and fragmented draws, preserve read-ahead, and reject
 missing transitions within the unchanged three-second deadline; matching state
 still undergoes the per-cell badge-color assertions. This covers a reader race
 consistent with the ARM64 preview-frame failure, not proof of its native scheduling cause.
+It also checks complete Select/Agent empty-state frames with remapped reset/switch
+keys, no-agent versus no-match messages, centered body content, inert body clicks,
+unchanged borders/search/footer, and Select italic heading cells without padding/body/footer
+style leaks. Agent Card checks cover selected-only repository/branch/title details,
+location, title clipping, hover expansion, stationary reports, keyboard navigation,
+card-by-card wheel scrolling/clamping with an off-screen selection and keyboard
+recovery, origin-specific Themes previews and no additional metadata queries.
+They also exercise repository/branch/title search, unchanged Select search, AND
+status filtering, separate text/status resets and filtered Help/Themes returns.
+These checks cover 80×15, wider views and resize recovery with Mocha,
+Latte and terminal-default colors. A complete 80×15 Themes-search frame also checks
+wrapped hints with long reset/switch/cancel bindings without clipping instructions.
+Reader regressions cover both italic resets
+(`23` and `0`) and preservation across color changes, cursor movement and erasure.
+The complete keymap PTY additionally checks direct `--agent` starts with agent,
+nonagent and missing launch-pane IDs; default/remapped switches and independent
+Agent movement in classic/Kitty input; shared query/reset and no-match Enter;
+caller-specific executable Help and Themes return; and live status/reconnect
+without recapturing opening membership. The reconnect case checks blocked-first
+Agent order, duplicate events and retained selection across updates received in
+Select, whose topology order remains unchanged, and a replacement snapshot with
+a surviving blocked member. These are fake-host Linux/Unix harness
+contracts, not native macOS/Windows, installed-binary, or live Herdr acceptance
+for the Agent feature. The existing full release gates still apply to changed trees.
 Reader regressions cover SGR reverse/reset state and reject inversion leaking
 into padding or following rows; cursor movement and erasure do not reset styling.
+Agent filter reader checks reject stale status badges, queries, selections and
+editing cursors in coalesced or byte-fragmented draws, retaining the next draw.
 
 The Python reader regressions use closed pipes to check immediate EOF failure
 before a required marker and termination of frame/tail drains after EOF. Real

@@ -45,6 +45,7 @@ on:
         self.assertNotIn("target/release/", self.workflow)
         gates = ["cargo fetch --locked", "python -B tests/test_windows_workflow.py",
                   "python -B tests/test_windows_process.py", "python -B tests/test_windows_provenance.py",
+                  "python -B tests/test_windows_support.py",
                   "Verify existing GNU tooling",
                   "cargo fmt --check",
                  "cargo clippy --locked --lib --bin herdr-crossroads -- -D warnings",
@@ -55,7 +56,7 @@ on:
         manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["platforms"], ["linux", "macos", "windows"])
         panes = {pane["id"]: pane for pane in manifest["panes"]}
-        self.assertEqual(set(panes), {"crossroads", "crossroads-windows"})
+        self.assertEqual(set(panes), {"crossroads", "crossroads-windows", "crossroads-agent", "crossroads-agent-windows"})
         for pane in panes.values():
             self.assertEqual(pane["placement"], "popup")
             self.assertEqual((pane["width"], pane["height"]), ("90%", "90%"))
@@ -63,9 +64,17 @@ on:
         self.assertEqual(panes["crossroads"]["command"], ["./target/release/herdr-crossroads"])
         self.assertEqual(panes["crossroads-windows"]["platforms"], ["windows"])
         self.assertEqual(panes["crossroads-windows"]["command"], ["./target/release/herdr-crossroads.exe"])
+        for entry, platforms, binary in [
+                ("crossroads-agent", ["linux", "macos"], "herdr-crossroads"),
+                ("crossroads-agent-windows", ["windows"], "herdr-crossroads.exe")]:
+            self.assertEqual(panes[entry]["platforms"], platforms)
+            self.assertEqual(panes[entry]["command"], ["./target/release/" + binary, "--agent"])
+            self.assertEqual(panes[entry]["title"], "Herdr Crossroads — Agent")
         self.assertEqual(manifest["build"][1], {"platforms": ["windows"], "command": ["python", "scripts/install-binary.py"]})
         self.assertEqual(manifest["actions"][0]["platforms"], ["linux", "macos", "windows"])
         self.assertEqual([action["id"] for action in manifest["actions"]], ["setup-keybind"])
+        self.assertEqual(manifest["actions"][0]["title"],
+                         "Set up prefix+f Select and prefix+a Agent bindings")
         self.assertEqual(manifest["actions"][0]["command"],
                          ["./target/release/herdr-crossroads", "--setup-keybind"])
 
@@ -76,7 +85,8 @@ on:
         groups = ast.literal_eval(loop.iter)
         for group in ("test_cli", "test_input", "test_search", "test_selection::navigation", "test_mouse",
                       "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
-                      "test_keymap::enter_is_reserved", "test_keymap::lowercase_f"):
+                      "test_keymap::enter_is_reserved", "test_keymap::lowercase_f",
+                      "test_selection::agent", "test_presentation", "test_topology"):
             self.assertIn(group, groups)
         command = loop.body[0].value
         self.assertEqual([value.value if isinstance(value, ast.Constant) else value.id

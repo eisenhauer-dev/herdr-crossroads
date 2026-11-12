@@ -7,6 +7,253 @@ use ratatui::buffer::CellWidth;
 use serde_json::Value;
 
 #[test]
+fn long_empty_preview_search_hint_wraps_and_centers_the_complete_block() {
+    let mut state = ui();
+    let (keymap, errors) = crate::keymap::Keymap::parse(
+        r#"{"agent":{"reset_search":["Backspace","B"],"open_select":["Space","S"]},"themes":{"cancel":["Backspace"]}}"#,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    state.keymap = keymap;
+    state.popup_size = Some((80, 15));
+    state.key(Key::Char('a'));
+    state.query = "zzzz-not-found".into();
+    state.key(Key::Char('t'));
+    state.key(Key::Char(' '));
+    state.mode = Mode::Search;
+    state.search_return = Mode::Themes;
+    let hint = "Enter/Esc, then Backspace: table, then Backspace/B: reset search · Space/S: select";
+    for width in [80, 150, 80] {
+        let frame = state.terminal_frame(width, 15);
+        let lines: Vec<_> = frame.split("\r\n").map(super::without_sgr).collect();
+        let block: Vec<_> = lines[4..13]
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        assert_eq!(
+            block[1..]
+                .iter()
+                .map(|line| line.trim())
+                .collect::<Vec<_>>()
+                .join(" "),
+            hint,
+            "{frame}"
+        );
+        assert_eq!(block.len(), if width == 80 { 3 } else { 2 }, "{frame}");
+        let top = 4 + (9 - block.len()) / 2;
+        assert!(lines[top].contains("No matching agent panes"), "{frame}");
+        for line in block {
+            assert_eq!(
+                line.len() - line.trim_start().len(),
+                2 + (width - 4 - line.trim().cell_width() as usize).div_ceil(2),
+                "{frame}"
+            );
+        }
+        assert_eq!(lines[13], format!("  {}", "─".repeat(width - 4)), "{frame}");
+        assert_eq!(
+            lines[14], "  Enter/Esc: preview  Backspace: erase",
+            "{frame}"
+        );
+        assert!(
+            state
+                .mouse
+                .borrow()
+                .hits
+                .iter()
+                .all(|(_, _, _, hit)| !matches!(hit, crate::selection::Hit::Pane(_))),
+            "{frame}"
+        );
+    }
+    let plain = state.frame_width(80);
+    let block: Vec<_> = plain
+        .lines()
+        .skip_while(|line| !line.contains("No matching agent panes"))
+        .take_while(|line| !line.contains('─'))
+        .collect();
+    assert_eq!(block.len(), 3, "{plain}");
+    assert_eq!(
+        block[1..]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>()
+            .join(" "),
+        hint,
+        "{plain}"
+    );
+    for line in block {
+        assert_eq!(
+            line.len() - line.trim_start().len(),
+            2 + (76 - line.trim().cell_width() as usize).div_ceil(2),
+            "{plain}"
+        );
+    }
+    assert!(!plain.contains('\x1b'), "{plain}");
+}
+
+#[test]
+fn empty_agent_preview_hints_return_to_table_before_dispatching_bindings() {
+    let mut state = ui();
+    state.keymap = crate::keymap::Keymap::parse(r#"{"themes":{"cancel":["X"]}}"#).0;
+    state.key(Key::Char('a'));
+    state.query = "zzzz-not-found".into();
+    state.key(Key::Char('t'));
+    state.key(Key::Char(' '));
+    let preview = state.frame_width(150);
+    assert!(
+        preview.contains("X: table, then r: reset search"),
+        "{preview}"
+    );
+    state.mode = Mode::Search;
+    state.search_return = Mode::Themes;
+    let search = state.frame_width(150);
+    assert!(
+        search.contains("Enter/Esc, then X: table, then r: reset search"),
+        "{search}"
+    );
+}
+
+#[test]
+fn empty_agent_message_uses_snapshot_membership_not_live_agent_names() {
+    let mut state = ui();
+    state.key(Key::Char('a'));
+    let mut items = rows(SNAPSHOT, Some("p-self"), 160).unwrap();
+    for row in &mut items {
+        row.agent.clear();
+    }
+    state.replace_rows(items);
+    state.query = "zzzz-not-found".into();
+    let frame = state.frame_width(150);
+    assert!(frame.contains("No matching agent panes"), "{frame}");
+    state.replace_rows(Vec::new());
+    let frame = state.frame_width(150);
+    assert!(frame.contains("No agent panes"), "{frame}");
+}
+
+#[test]
+fn table_headers_are_italic_without_leaking_into_body_or_footer() {
+    for theme in ["catppuccin", "catppuccin-latte", "terminal"] {
+        let mut state = ui();
+        state.auto_name = theme;
+        state.popup_size = Some((80, 15));
+        for agent in [false, true] {
+            if agent {
+                state.key(Key::Char('a'));
+            }
+            for (width, height) in [(80, 15), (150, 30), (110, 15), (80, 15)] {
+                let frame = state.0.terminal_frame(width, height);
+                let lines: Vec<_> = frame.split("\r\n").collect();
+                assert_eq!(lines[2].contains("\x1b[3mWorkspace"), !agent, "{frame}");
+                assert_eq!(lines[2].contains("\x1b[23m"), !agent, "{frame}");
+                assert!(
+                    lines
+                        .iter()
+                        .enumerate()
+                        .all(|(y, line)| y == 2 || !line.contains("\x1b[3m")),
+                    "{frame}"
+                );
+                assert!(!state.frame_width(width).contains('\x1b'));
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_tables_center_messages_and_effective_hints_without_pane_hits() {
+    use crate::keymap::{Context, Keymap};
+    use crate::selection::{Hit, TableView};
+    for theme in ["catppuccin", "catppuccin-latte", "terminal"] {
+        for (agent, absent, message) in [
+            (false, false, "No matching panes"),
+            (true, false, "No matching agent panes"),
+            (true, true, "No agent panes"),
+        ] {
+            let mut items = rows(SNAPSHOT, Some("p-self"), 160).unwrap();
+            if absent {
+                for row in &mut items {
+                    row.agent.clear();
+                }
+            }
+            let mut state = Ui::new(items);
+            state.auto_name = theme;
+            state.popup_size = Some((80, 15));
+            state.keymap = Keymap::parse(r#"{"select":{"reset_search":["R"],"open_agent":["A"]},"agent":{"reset_search":["R"],"open_select":["S"]}}"#).0;
+            if agent {
+                state.key(Key::Char('A'));
+            }
+            state.query = "zzzz-not-found".into();
+            for mode in [Mode::Select, Mode::Search] {
+                state.mode = mode;
+                for (width, height) in [(80, 15), (150, 30), (110, 15), (80, 15)] {
+                    let frame = state.terminal_frame(width, height);
+                    let lines: Vec<_> = frame
+                        .split("\r\n")
+                        .map(|line| super::without_sgr(&line.replace("\x1b[K", "")))
+                        .collect();
+                    let footer = if mode == Mode::Search {
+                        1
+                    } else {
+                        state.hint_rows(
+                            if agent {
+                                Context::Agent
+                            } else {
+                                Context::Select
+                            },
+                            width,
+                            height,
+                        )
+                    };
+                    let bottom = height - footer - 1;
+                    let y = 4 + (bottom - 4 - 2) / 2;
+                    assert_eq!(lines.len(), height, "{frame}");
+                    assert_eq!(
+                        lines[y],
+                        format!(
+                            "{}{message}",
+                            " ".repeat(2 + (width - 4 - message.len()).div_ceil(2))
+                        ),
+                        "{frame}"
+                    );
+                    let hint = lines[y + 1].trim();
+                    assert_eq!(
+                        lines[y + 1].find(hint),
+                        Some(2 + (width - 4 - hint.cell_width() as usize).div_ceil(2)),
+                        "{frame}"
+                    );
+                    assert!(
+                        hint.contains(if agent { "S: select" } else { "A: agent" }),
+                        "{frame}"
+                    );
+                    assert_eq!(hint.contains("R: reset search"), !absent, "{frame}");
+                    assert_eq!(
+                        hint.starts_with("Enter/Esc, then "),
+                        mode == Mode::Search,
+                        "{frame}"
+                    );
+                    assert!(lines[0].starts_with("  Search:"), "{frame}");
+                    assert!(lines[bottom].contains('─'), "{frame}");
+                    assert!(
+                        !state
+                            .mouse
+                            .borrow()
+                            .hits
+                            .iter()
+                            .any(|(_, _, _, hit)| matches!(hit, Hit::Pane(_))),
+                        "{frame}"
+                    );
+                    assert_eq!(
+                        state.table_view,
+                        if agent {
+                            TableView::Agent
+                        } else {
+                            TableView::Select
+                        }
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn header_rule_is_solid_full_width_in_compact_wide_search_and_theme_preview() {
     for width in [80, 109, 110, 150] {
         for mode in [Mode::Select, Mode::Search, Mode::Themes] {
@@ -44,14 +291,12 @@ fn header_rule_is_solid_full_width_in_compact_wide_search_and_theme_preview() {
                     );
                 } else {
                     assert!(!frame.contains('┄'), "{frame}");
-                    assert!(
-                        lines[header_at + 2].contains(if query == "codex" {
-                            "idle"
-                        } else {
-                            "No matching panes"
-                        }),
-                        "{frame}"
-                    );
+                    if query == "codex" {
+                        assert!(lines[header_at + 2].contains("idle"), "{frame}");
+                    } else {
+                        assert!(frame.contains("No matching panes"), "{frame}");
+                        assert!(lines[header_at + 2].trim().is_empty(), "{frame}");
+                    }
                     assert_eq!(selected_prefix(lines[header_at + 2]), query == "codex");
                 }
             }

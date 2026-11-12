@@ -80,7 +80,8 @@ class WindowsAcceptanceTests(unittest.TestCase):
         config.write_bytes(original)
         from windows_security_fixture import auto_inherit
         auto_inherit(config)
-        for expected in ("Added prefix+f", "Already configured"):
+        for expected in ("Added missing bindings for prefix+f (Select), prefix+a (Agent)",
+                         "Already configured prefix+f (Select), prefix+a (Agent)"):
             output = subprocess.run(argv, cwd=checkout, env=self.env, input=b"",
                                     capture_output=True, timeout=10)
             self.assertEqual(output.returncode, 0, output.stderr)
@@ -89,8 +90,10 @@ class WindowsAcceptanceTests(unittest.TestCase):
             self.assertNotIn(b"\x1b", output.stdout)
         self.assertTrue(config.read_bytes().startswith(original))
         data = tomllib.loads(config.read_text(encoding="utf-8"))
-        self.assertEqual(data["keys"]["command"][0]["command"],
-                         "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows")
+        self.assertEqual({entry["key"]: entry["command"] for entry in data["keys"]["command"]}, {
+            "prefix+f": "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows",
+            "prefix+a": "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent-windows",
+        })
         self.assertFalse(self.log.exists(), "setup must not invoke the Herdr CLI")
         self.assertFalse(Path(self.env["HERDR_PLUGIN_CONFIG_DIR"]).exists())
 
@@ -135,7 +138,13 @@ class WindowsAcceptanceTests(unittest.TestCase):
     def test_mouse_filtered_single_click_focuses_stable_id(self):
         self.filtered_focus(mouse=True)
 
-    def filtered_focus(self, mouse):
+    def test_agent_filtered_enter_focuses_visible_stable_id(self):
+        self.filtered_focus(mouse=False, agent=True)
+
+    def test_agent_filtered_card_click_focuses_visible_stable_id(self):
+        self.filtered_focus(mouse=True, agent=True)
+
+    def filtered_focus(self, mouse, agent=False):
         marker = f"crossroads-native-focus-{os.getpid()}"
         status = self.NamedServer(marker)
         focus = self.NamedServer(marker, first=False)
@@ -157,22 +166,89 @@ class WindowsAcceptanceTests(unittest.TestCase):
             self.assertEqual(request["params"], {"pane_id": "p-other"})
             focus.send(b'{"id":"crossroads-focus","result":{"type":"pane_info","pane":{"pane_id":"p-other","focused":true}}}\n')
         focus_worker = self.worker(focused)
-        console = self.console()
-        if mouse:
+        console = self.console([self.binary, "--agent"] if agent else None)
+        if mouse or agent:
             console.track_screen()
         console.until(b"Claude")
         console.send(b"\x1b[<0;5;1M" if mouse else b"f")
         console.until(b"Backspace: erase")
         console.send(b"codex" if mouse else b"codex\r")
         console.until(b"codex")
+        mouse_y = 3 if agent else 5
+        if agent:
+            console.until_table(mode="Search" if mouse else "Agent", query="codex",
+                                selected=(0, "codex"), panes=("codex",), status="all")
         if mouse:
-            console.send(b"\x1b[<35;5;5M")
+            console.send(f"\x1b[<35;5;{mouse_y}M".encode())
             console.until_table(mode="Search", query="codex", selected=(0, "codex"), panes=("codex",))
-        console.send(b"\x1b[<0;5;5M" if mouse else b"\r")
+        console.send(f"\x1b[<0;5;{mouse_y}M".encode() if mouse else b"\r")
         self.assertEqual(console.exited(timeout=2), 0)
         self.joined(focus_worker)
         stop.set()
         self.joined(subscription_worker)
+
+    def test_agent_direct_start_remapped_filters_modal_return_and_select_switch(self):
+        snapshot = json.loads((ROOT / "tests/fixtures/topology.json").read_text())
+        snapshot["result"]["snapshot"]["agents"][0]["title"] = "Explicit task"
+        snapshot_path = self.base / "snapshot.json"
+        snapshot_path.write_text(json.dumps(snapshot))
+        worktrees_path = self.base / "worktrees.json"
+        worktrees_path.write_text(json.dumps({"result": {"type": "worktree_list",
+            "source": {"repo_key": "repo", "repo_name": "Crossroads"},
+            "worktrees": [{"open_workspace_id": "w1", "branch": "develop"}]}}))
+        self.env.update(CROSSROADS_TEST_SNAPSHOT=str(snapshot_path), CROSSROADS_TEST_WORKTREES=str(worktrees_path))
+        directory = Path(self.env["HERDR_PLUGIN_CONFIG_DIR"])
+        directory.mkdir()
+        (directory / "keymaps.jsonc").write_text(json.dumps({
+            "select": {"open_agent": ["A"]},
+            "agent": {"open_select": ["S"], "filter_idle": ["I"],
+                      "filter_all": ["X"], "reset_search": ["R"]}}))
+        console = self.console([self.binary, "--agent"])
+        console.track_screen()
+        console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"),
+                            panes=("Claude", "codex"), status="all",
+                            details=("Repository: Crossroads", "Branch: develop", "Titel: Explicit task"))
+        startup_calls = self.log.read_text().splitlines()
+        self.assertEqual(startup_calls, ["api snapshot", "worktree list --workspace w1", "worktree list --workspace w2"])
+        console.send(b"fExplicit task\r")
+        console.until_table(mode="Agent", query="Explicit task", selected=(0, "Claude"), panes=("Claude",), status="all")
+        console.send(b"S")
+        console.until_table(mode="Select", query="Explicit task", selected=None, panes=())
+        console.send(b"A")
+        console.until_table(mode="Agent", query="Explicit task", selected=(0, "Claude"), panes=("Claude",), status="all")
+        console.send(b"R")
+        console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"), panes=("Claude", "codex"), status="all")
+        console.send(b"I")
+        console.until_table(mode="Agent", query="f to search", selected=(0, "codex"), panes=("codex",), status="idle", details=())
+        console.send(b"fcodex\r")
+        console.until_table(mode="Agent", query="codex", selected=(0, "codex"), panes=("codex",), status="idle")
+        console.reset_output()
+        console.send(b"?")
+        console.until("Keys — Agent".encode())
+        console.send(b"q")
+        console.until_table(mode="Agent", query="codex", selected=(0, "codex"), panes=("codex",), status="idle")
+        console.reset_output()
+        console.send(b"t")
+        console.until(b"Themes")
+        console.reset_output()
+        console.send(b" ")
+        console.until(b"codex")
+        console.send(b"q")
+        console.until_table(mode="Agent", query="codex", selected=(0, "codex"), panes=("codex",), status="idle")
+        console.send(b"w")
+        console.until_table(mode="Agent", query="codex", selected=None, panes=(), status="working")
+        console.send(b"R")
+        console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"), panes=("Claude",), status="working")
+        console.send(b"X")
+        console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"), panes=("Claude", "codex"), status="all")
+        console.send(b"S")
+        console.until_table(mode="Select", query="f to search", selected=(0, "Claude"),
+                            panes=("Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2"))
+        console.send(b"A")
+        console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"), panes=("Claude", "codex"), status="all")
+        console.send(b"q")
+        self.assertEqual(console.exited(timeout=2), 0)
+        self.assertEqual(self.log.read_text().splitlines(), startup_calls)
 
     def test_mouse_search_help_origin_theme_save_wheel_optout_and_cleanup(self):
         console = self.console()
@@ -271,6 +347,17 @@ class WindowsAcceptanceTests(unittest.TestCase):
         self.assertEqual(console.exited(timeout=2), 0)
 
     def test_live_status_disconnect_reconnect_resnapshot_and_responsive_quit(self):
+        self.live_status(agent=False)
+
+    def test_agent_live_blocked_order_reconnect_retains_selection(self):
+        self.live_status(agent=True)
+
+    def live_status(self, agent):
+        snapshot = json.loads((ROOT / "tests/fixtures/topology.json").read_text())
+        snapshot_path = self.base / "snapshot.json"
+        if agent:
+            snapshot_path.write_text(json.dumps(snapshot))
+            self.env["CROSSROADS_TEST_SNAPSHOT"] = str(snapshot_path)
         marker = f"crossroads-native-status-{os.getpid()}"
         server = self.NamedServer(marker)
         self.addCleanup(server.close)
@@ -287,7 +374,9 @@ class WindowsAcceptanceTests(unittest.TestCase):
                 self.assertEqual(request["params"]["subscriptions"][0]["pane_id"], "p-b")
                 server.send(b'{"id":"crossroads-status","result":{"type":"subscription_started"}}\n')
                 event = {"event": "pane.agent_status_changed", "data": {
-                    "pane_id": "p-b", "workspace_id": "w1", "agent_status": "blocked" if generation == 0 else "done"}}
+                    "pane_id": "p-other" if agent and generation == 0 else "p-b",
+                    "workspace_id": "w2" if agent and generation == 0 else "w1",
+                    "agent_status": "blocked" if generation == 0 else "done"}}
                 server.send(json.dumps(event).encode() + b"\n")
                 if generation == 0:
                     if not drop.wait(10):
@@ -296,11 +385,24 @@ class WindowsAcceptanceTests(unittest.TestCase):
                 else:
                     stop.wait(10)
         worker = self.worker(status)
-        console = self.console()
+        console = self.console([self.binary, "--agent"] if agent else None)
+        if agent:
+            console.track_screen()
         console.until(b"blocked")
+        if agent:
+            console.until_table(mode="Agent", query="f to search", selected=(1, "Claude"),
+                                panes=("codex", "Claude"), status="all")
         console.reset_output()
+        if agent:
+            topology = snapshot["result"]["snapshot"]
+            topology["panes"] = [pane for pane in topology["panes"] if pane["pane_id"] != "p-other"]
+            next(pane for pane in topology["panes"] if pane["pane_id"] == "p-a")["agent"] = "New assignment"
+            snapshot_path.write_text(json.dumps(snapshot))
         drop.set()
         console.until(b"done", timeout=8)
+        if agent:
+            console.until_table(mode="Agent", query="f to search", selected=(0, "Claude"),
+                                panes=("Claude",), status="all")
         deadline = time.monotonic() + 3
         while self.log.read_text().count("api snapshot") < 2 and time.monotonic() < deadline:
             time.sleep(0.02)

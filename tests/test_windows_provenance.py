@@ -17,7 +17,8 @@ EXPECTED_NATIVE_CARGO_GATES = [
     *[["cargo", "test", "--locked", "--lib", group] for group in (
         "test_cli", "test_input", "test_search", "test_selection::navigation", "test_mouse",
         "test_actions::help_enter_restores_origin", "test_keymap::mouse_opt_out",
-        "test_keymap::enter_is_reserved", "test_keymap::lowercase_f")],
+        "test_keymap::enter_is_reserved", "test_keymap::lowercase_f",
+        "test_selection::agent", "test_presentation", "test_topology")],
     ["cargo", "test", "--locked", "--test", "setup_dispatch"],
 ]
 APPROVED_PREPARATION_IMPORTS = (

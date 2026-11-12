@@ -1,4 +1,4 @@
-"""Explicitly append the Crossroads host binding; never launch or reload Herdr."""
+"""Explicitly append Crossroads host bindings; never launch or reload Herdr."""
 
 import os
 from pathlib import Path
@@ -10,14 +10,17 @@ import tomllib
 
 
 WINDOWS = os.name == "nt"
-COMMAND = ("herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
-           + ("-windows" if WINDOWS else ""))
-BINDING = f'''\n\n[[keys.command]]
-key = "prefix+f"
+COMMANDS = {
+    letter: "herdr plugin pane open --plugin herdr-crossroads --entrypoint " + entrypoint
+            + ("-windows" if WINDOWS else "")
+    for letter, entrypoint in (("f", "crossroads"), ("a", "crossroads-agent"))
+}
+BINDINGS = {letter: f'''\n\n[[keys.command]]
+key = "prefix+{letter}"
 type = "shell"
-command = "{COMMAND}"
-description = "Open Herdr Crossroads"
-'''.encode()
+command = "{command}"
+description = "Open Herdr Crossroads{" — Agent" if letter == "a" else ""}"
+'''.encode() for letter, command in COMMANDS.items()}
 
 
 def config_path():
@@ -49,16 +52,21 @@ def binding_values(value):
     raise ValueError("keys bindings must be strings or arrays of strings")
 
 
-def has_launch_binding(data):
+def missing_bindings(data):
+    """Validate both keys completely before returning bytes safe to append."""
     keys = tomllib.loads(data.decode("utf-8")).get("keys", {})
     if not isinstance(keys, dict):
         raise ValueError("keys must be a table")
-    conflict = "prefix+f is occupied or reserved; keep existing bindings and choose a free key manually"
+
+    def conflict(letter, location):
+        return ValueError(f"prefix+{letter} is occupied or reserved; keep existing bindings "
+                          f"and choose a free key manually (keys.{location})")
+
     for name, value in keys.items():
         if name == "command":
             continue
         if name == "indexed":
-            # Legacy modifier-only shortcuts expand to direct number keys 1-9, never prefix+f.
+            # Legacy modifier-only shortcuts expand to direct number keys 1-9.
             if not isinstance(value, dict):
                 raise ValueError("keys.indexed must be a table")
             for target, modifiers in value.items():
@@ -71,33 +79,35 @@ def has_launch_binding(data):
                     raise ValueError(f"keys.indexed.{target} must be empty or a modifier combination")
             continue
         values = binding_values(value)
-        if name in ("prefix", "extra_prefixes"):
-            if any(raw.strip() == "f" for raw in values):
-                raise ValueError(conflict + f" (keys.{name})")
-        elif any(is_launch_key(raw) for raw in values):
-            raise ValueError(conflict + f" (keys.{name})")
+        for letter in COMMANDS:
+            if name in ("prefix", "extra_prefixes"):
+                if any(raw.strip() == letter for raw in values):
+                    raise conflict(letter, name)
+            elif any(is_launch_key(raw, letter) for raw in values):
+                raise conflict(letter, name)
     commands = keys.get("command", [])
     if not isinstance(commands, list):
         raise ValueError("keys.command must be an array of tables")
-    found = False
+    found = set()
     for entry in commands:
         if (not isinstance(entry, dict) or "key" not in entry
                 or not isinstance(entry.get("command"), str)
                 or entry.get("type", "shell") not in ("shell", "pane", "popup", "plugin_action")):
             raise ValueError("malformed keys.command entry; review config manually")
         values = binding_values(entry["key"])
-        if any(is_launch_key(raw) for raw in values):
-            if entry.get("type", "shell") != "shell" or entry["command"] != COMMAND:
-                raise ValueError(conflict + " (keys.command)")
-            found = True
-    return found
+        for letter, command in COMMANDS.items():
+            if any(is_launch_key(raw, letter) for raw in values):
+                if entry.get("type", "shell") != "shell" or entry["command"] != command:
+                    raise conflict(letter, "command")
+                found.add(letter)
+    return b"".join(binding for letter, binding in BINDINGS.items() if letter not in found)
 
 
-def is_launch_key(raw):
+def is_launch_key(raw, letter):
     # Herdr trims both the binding and body; prefix+ is case-sensitive.
-    # F and modified f (e.g. ctrl+f) are distinct from unmodified f.
+    # Uppercase and modified keys are distinct from unmodified lowercase keys.
     raw = raw.strip()
-    return raw.startswith("prefix+") and raw[len("prefix+"):].strip() == "f"
+    return raw.startswith("prefix+") and raw[len("prefix+"):].strip() == letter
 
 
 def resolved_config_path(path):
@@ -161,20 +171,24 @@ def snapshot(directory, name):
 
 def setup():
     selected = config_path()
+
+    def proposed(data):
+        missing = missing_bindings(data)
+        if not missing:
+            return None
+        result = data + missing
+        missing_bindings(result)  # Validate append without rewriting existing TOML/comments.
+        return result
+
     if WINDOWS:
         native = runpy.run_path(str(Path(__file__).with_name("windows-files.py")))
 
-        def proposed(data):
-            if has_launch_binding(data):
-                return None
-            result = data + BINDING
-            has_launch_binding(result)
-            return result
-
         if native["update_config"](selected, proposed):
-            print(f"Added prefix+f to {selected}. Now run: herdr server reload-config")
+            print(f"Added missing bindings for prefix+f (Select), prefix+a (Agent) to {selected}. "
+                  "Now run: herdr server reload-config")
         else:
-            print(f"Already configured prefix+f in {selected}; no changes. Reload explicitly if needed.")
+            print(f"Already configured prefix+f (Select), prefix+a (Agent) in {selected}; "
+                  "no changes. Reload explicitly if needed.")
         return
     path = resolved_config_path(selected)
     reported = str(selected) if selected == path else f"{selected} (resolved target: {path})"
@@ -182,17 +196,17 @@ def setup():
     staging = None
     try:
         original, data = snapshot(directory, path.name)
-        if has_launch_binding(data):
-            print(f"Already configured prefix+f in {reported}; no changes. Reload explicitly if needed.")
+        result = proposed(data)
+        if result is None:
+            print(f"Already configured prefix+f (Select), prefix+a (Agent) in {reported}; "
+                  "no changes. Reload explicitly if needed.")
             return
-        proposed = data + BINDING
-        has_launch_binding(proposed)  # Validate append without rewriting existing TOML/comments.
         candidate = ".crossroads-keybind-" + secrets.token_hex(12)
         descriptor = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=directory)
         staging = candidate
         with os.fdopen(descriptor, "wb") as output:
-            output.write(proposed)
+            output.write(result)
             output.flush()
             os.fchmod(output.fileno(), stat.S_IMODE(original.st_mode) if original else 0o600)
             os.fsync(output.fileno())
@@ -218,7 +232,8 @@ def setup():
         if staging is not None:
             os.unlink(staging, dir_fd=directory)
         os.close(directory)
-    print(f"Added prefix+f to {reported}. Now run: herdr server reload-config")
+    print(f"Added missing bindings for prefix+f (Select), prefix+a (Agent) to {reported}. "
+          "Now run: herdr server reload-config")
 
 
 if __name__ == "__main__":

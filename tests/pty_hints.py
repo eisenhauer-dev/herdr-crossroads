@@ -9,7 +9,7 @@ sys.dont_write_bytecode = True
 from pty_keymaps import Popup
 from pty_render import screen
 
-DEFAULT_SELECT = "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys"
+DEFAULT_SELECT = "j/↓: ↓pane · k/↑: ↑pane · h/←: ↑tab · l/→: ↓tab · Tab: ↓ws · Shift+Tab: ↑ws · Enter: focus · Esc: exit · ?: keys · a: agent"
 DEFAULT_HELP = "j/↓: ↓move · k/↑: ↑move · Enter: run · Esc: close keys"
 DEFAULT_THEMES = "j/↓: ↓theme · k/↑: ↑theme · Space: table · Enter: save · Esc: cancel"
 
@@ -34,7 +34,7 @@ def main(binary):
         fake.chmod(0o700)
         popup = None
         try:
-            for width, expected_rows in [(80, 2), (110, 2), (120, 2), (145, 1), (240, 1)]:
+            for width, expected_rows in [(80, 2), (110, 2), (120, 2), (145, 2), (240, 1)]:
                 for notice in [False, True]:
                     theme = directory / "theme.jsonc"
                     if notice:

@@ -148,7 +148,7 @@ def assert_source_rows(lines, directory, width, height):
 
 
 class Popup:
-    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None, launch_context=None):
+    def __init__(self, binary, directory, config=None, kitty=False, width=80, height=15, focus_socket=None, probe_input=b"", initial_frame=None, launch_context=None, args=()):
         self.width, self.height = width, height
         keymap = directory / "keymaps.jsonc"
         if config is not None:
@@ -168,7 +168,7 @@ class Popup:
         try:
             fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
             self.saved_termios = termios.tcgetattr(self.slave)
-            self.child = subprocess.Popen([binary], stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
+            self.child = subprocess.Popen([binary, *args], stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
             query = read_until(self.master, b"\x1b[?u")
             assert b"\x1b[>1u" not in query
             if probe_input:
@@ -511,6 +511,8 @@ def main(binary):
             print("Input protocol PTY: repeated Esc, delayed Esc/q, Alt+q, late Kitty reply, buffered probe input passed")
             return
         mouse_cases(binary, directory)
+        agent_cases(binary, directory)
+        agent_reconnect_case(binary, directory)
         binding_policy_cases(binary, directory)
         themes_help_cases(binary, directory)
         error_block_cases(binary, directory)
@@ -664,9 +666,180 @@ def main(binary):
     print("Keymaps PTY: classic/Kitty, searches, Esc/Alt timing, oversized-list errors, cleanup passed")
 
 
+def agent_cases(binary, directory):
+    def table(mode, query="f to search", selected=None, searching=False, status="all"):
+        def expected(raw):
+            lines, wraps, cursor = screen(raw, 120, 30, track_cursor=True)
+            return (wraps == 0 and lines[0] == expected_search_row(120, query, mode, status)
+                    and cursor[0] == searching
+                    and (selected is None or any(line.startswith("  >") and selected in line for line in lines)))
+        return expected
+
+    for kitty in (False, True):
+        for remapped in (False, True):
+            agent, select_key, reset = (b"A", b"S", b"R") if remapped else (b"a", b"s", b"r")
+            config = ({"select": {"open_agent": ["A"], "reset_search": ["R"]},
+                       "agent": {"open_select": ["S", "V"], "reset_search": ["R"], "next_row": ["J"], "filter_idle": ["I"]}}
+                      if remapped else None)
+            popup = Popup(binary, directory, config, kitty=kitty, width=120, height=30,
+                          launch_context='{"focused_pane_id":"p-a"}')
+            try:
+                # A nonagent launch selection falls back to the first agent, not
+                # a separate per-view remembered cursor. No transition focuses.
+                lines = popup.send(agent, expected=table("Agent", selected="Claude"))
+                assert sum(line.startswith(("  >", "    ")) and any(name in line for name in ("Claude", "codex")) for line in lines) == 2, lines
+                assert not any("pane 3" in line or "pane 4" in line for line in lines), lines
+                assert f"{select_key.decode()}: select" in "\n".join(lines[-3:]), lines
+                idle = b"I" if remapped else b"i"
+                lines = popup.send(idle, expected=table("Agent", selected="codex", status="idle"))
+                assert not any("Claude" in line for line in lines), lines
+                popup.send(b"f", expected=table("Agent", "", searching=True, status="idle"))
+                popup.send(b"ab dwiur", expected=table("Agent", "ab dwiur", searching=True, status="idle"))
+                popup.send(b"\r", expected=table("Agent", "ab dwiur", status="idle"))
+                popup.send(reset, expected=table("Agent", selected="codex", status="idle"))
+                popup.send(b"w", expected=table("Agent", selected="Claude", status="working"))
+                lines = popup.send(b"d", expected=table("Agent", status="done"))
+                assert "No matching agent panes" in "\n".join(lines) and "a: all statuses" in "\n".join(lines), lines
+                popup.send(b"a", expected=table("Agent", selected="Claude"))
+                if remapped:
+                    lines = popup.send(b"i", expected=table("Agent", selected="Claude"))
+                    assert popup.send(b"s", expected=table("Agent")) == lines
+                    assert popup.send(b"j", expected=table("Agent")) == lines
+                popup.send(b"J" if remapped else b"j", expected=table("Agent", selected="codex"))
+                lines = popup.send(select_key, expected=table("Select", selected="codex"))
+                assert any("pane 3" in line for line in lines), lines
+                popup.send(agent, expected=table("Agent", selected="codex"))
+                popup.send(b"f", expected=table("Agent", "", searching=True))
+                popup.send(b"asr", expected=table("Agent", "asr", searching=True))
+                popup.send(b"\r", expected=table("Agent", "asr"))
+                lines = popup.send(b"\r", expected=table("Agent", "asr"))
+                assert "No matching agent panes" in "\n".join(lines) and popup.child.poll() is None, lines
+                popup.send(select_key, expected=table("Select", "asr"))
+                popup.send(reset, expected=table("Select", selected="Claude"))
+                popup.send(b"f", expected=table("Select", "", searching=True))
+                popup.send(b"cdx", expected=table("Select", "cdx", "codex", True))
+                popup.send(b"\r", expected=table("Select", "cdx", "codex"))
+                before = popup.send(agent, expected=table("Agent", "cdx", "codex"))
+                popup.send(b"?", expected=lambda raw: "Keys — Agent" in screen(raw, 120, 30)[0][1])
+                popup.send(b"f")
+                lines = popup.send(b"show all panes", expected=lambda raw: "show all panes" in "\n".join(screen(raw, 120, 30)[0][3:-2]))
+                assert ("S/V" if remapped else "s") in "\n".join(lines[3:-2]), lines
+                popup.send(b"\r")
+                popup.send(b"\r", expected=table("Select", "cdx", "codex"))
+                assert popup.send(agent, expected=table("Agent", "cdx", "codex")) == before
+                popup.send(b"t")
+                lines = popup.send(b" ")
+                assert lines[1] == expected_search_row(120, "cdx", "Themes"), lines
+                assert any("codex" in line for line in lines) and not any("Claude" in line for line in lines), lines
+                popup.send(b"?", expected=lambda raw: "Keys — Themes" in screen(raw, 120, 30)[0][1])
+                popup.send(b"q")
+                assert popup.send(b"q", expected=table("Agent", "cdx", "codex")) == before
+                assert not (directory / "theme.jsonc").exists(), "cancel/help must not save"
+                popup.finish(b"q", expect_mouse=True)
+            finally:
+                popup.abort()
+
+        for launch, selected in (("p-other", "codex"), ("p-a", "Claude"), ("absent", "Claude")):
+            popup = Popup(binary, directory, kitty=kitty, width=120, height=30, args=("--agent",),
+                          launch_context=json.dumps({"focused_pane_id": launch}))
+            try:
+                assert table("Agent", selected=selected)(popup.initial), popup.initial
+                popup.finish(b"q", expect_mouse=True)
+            finally:
+                popup.abort()
+    print("Agent PTY: direct starts, classic/Kitty, remaps, shared search/reset, selection, Help and Themes return passed")
+
+
+def agent_reconnect_case(binary, directory):
+    fixture = Path(__file__).parent.resolve() / "fixtures/topology.json"
+    snapshot = json.loads(fixture.read_text())
+    next(pane for pane in snapshot["result"]["snapshot"]["panes"]
+         if pane["pane_id"] == "p-second-tab").update(agent="Aider", agent_status="blocked")
+    snapshot_path = directory / "agent-reconnect.json"
+    snapshot_path.write_text(json.dumps(snapshot))
+    fake = directory / "herdr"
+    original = fake.read_text()
+    fake.write_text(f"#!/bin/sh\nif [ \"$*\" = 'pane list' ]; then echo '{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}}]}}}}'; elif [ \"$*\" = 'api snapshot' ]; then cat '{snapshot_path}'; else echo '{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}'; fi\n")
+    address = directory / "agent-status.sock"
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(address))
+    listener.listen()
+    listener.settimeout(3)
+    update, reconnect, stop = threading.Event(), threading.Event(), threading.Event()
+    requests, errors = [], []
+
+    def serve():
+        try:
+            for attempt in range(2):
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(3)
+                    requests.append(json.loads(connection.makefile("rb").readline()))
+                    connection.sendall(b'{"id":"crossroads-status","result":{"type":"subscription_started"}}\n')
+                    if attempt == 0:
+                        assert update.wait(3), "status update was not requested"
+                    status = "blocked" if attempt == 0 else "done"
+                    event = (json.dumps({"event": "pane.agent_status_changed", "data": {
+                        "pane_id": "p-b", "workspace_id": "w1", "agent_status": status}}) + "\n").encode()
+                    if attempt == 0:
+                        event += (json.dumps({"event": "pane.agent_status_changed", "data": {
+                            "pane_id": "p-second-tab", "workspace_id": "w1", "agent_status": "blocked"}}) + "\n").encode()
+                    connection.sendall(event * 2)  # Duplicate transitions must not reorder cards.
+                    assert (reconnect if attempt == 0 else stop).wait(3), "status test did not advance"
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=serve)
+    worker.start()
+    popup = None
+    try:
+        popup = Popup(binary, directory, width=120, height=30, args=("--agent",), focus_socket=address)
+        initial, _ = screen(popup.initial, 120, 30)
+        assert any("Claude" in line and "working" in line for line in initial), initial
+        assert next(i for i, line in enumerate(initial) if "Aider" in line) < next(i for i, line in enumerate(initial) if "Claude" in line), initial
+        # Select preserves topology order, while live changes are still tracked.
+        popup.send(b"s", expected=lambda raw: "Agent/Pane Name" in raw)
+        update.set()
+        raw = read_frame(popup.output, expected=lambda raw: any("Claude" in line and "blocked" in line for line in screen(raw, 120, 30)[0]))
+        assert "MODE: SELECT" in raw, raw
+        lines, _ = screen(raw, 120, 30)
+        assert next(i for i, line in enumerate(lines) if "Claude" in line) < next(i for i, line in enumerate(lines) if "Aider" in line), lines
+        lines = popup.send(b"a", expected=lambda raw: "MODE: AGENT" in raw)
+        assert next(i for i, line in enumerate(lines) if "Aider" in line) < next(i for i, line in enumerate(lines) if "Claude" in line), lines
+        assert any(line.startswith("  >") and "Claude" in line for line in lines), lines
+        # The new snapshot removes codex and detects an agent on an existing
+        # nonagent pane. Only surviving opening members belong to Agent.
+        topology = snapshot["result"]["snapshot"]
+        topology["panes"] = [pane for pane in topology["panes"] if pane["pane_id"] != "p-other"]
+        next(pane for pane in topology["panes"] if pane["pane_id"] == "p-a")["agent"] = "New agent"
+        next(pane for pane in topology["panes"] if pane["pane_id"] == "p-a")["agent_status"] = "idle"
+        snapshot_path.write_text(json.dumps(snapshot))
+        reconnect.set()
+        raw = read_frame(popup.output, expected=lambda raw: any("Claude" in line and "done" in line for line in screen(raw, 120, 30)[0]))
+        lines, _ = screen(raw, 120, 30)
+        assert not any("codex" in line or "New agent" in line for line in lines), lines
+        assert any(line.startswith("  >") and "Claude" in line for line in lines), lines
+        assert next(i for i, line in enumerate(lines) if "Aider" in line) < next(i for i, line in enumerate(lines) if "Claude" in line), lines
+        lines = popup.send(b"s", expected=lambda raw: "New agent" in "\n".join(screen(raw, 120, 30)[0]))
+        assert lines[0] == expected_search_row(120, "f to search", "Select"), lines
+        popup.finish(b"q", expect_mouse=True)
+    finally:
+        update.set()
+        reconnect.set()
+        stop.set()
+        if popup:
+            popup.abort()
+        listener.close()
+        worker.join(timeout=3)
+        fake.write_text(original)
+    assert not worker.is_alive() and not errors, errors
+    assert len(requests) == 2 and all(request["method"] == "events.subscribe" for request in requests), requests
+    print("Agent PTY: live status, disconnect/reconnect, queued status and fixed opening membership passed")
+
+
 def binding_policy_cases(binary, directory):
     for kitty in (False, True):
-        for context, action in (("select", "focus_pane"), ("help", "close"), ("themes", "save")):
+        for context, action in (("select", "focus_pane"), ("agent", "focus_pane"), ("help", "close"), ("themes", "save")):
             popup = Popup(binary, directory, {context: {action: ["Enter"]}}, kitty=kitty, width=160, height=24)
             try:
                 lines, _ = screen(popup.initial, 160, 24)
@@ -678,7 +851,7 @@ def binding_policy_cases(binary, directory):
                 popup.finish(b"q", expect_mouse=True)
             finally:
                 popup.abort()
-        for context, action in (("select", "next_row"), ("help", "next_category"), ("themes", "next_theme")):
+        for context, action in (("select", "next_row"), ("agent", "next_row"), ("help", "next_category"), ("themes", "next_theme")):
             for keys in (["Ctrl+j", "Alt+x"], ["Ctrl+i", "Ctrl+m"], ["Ctrl+Up", "Alt+Down"], ["Ctrl+Left", "Alt+Right"]):
                 popup = Popup(binary, directory, {context: {action: keys}}, kitty=kitty, width=160, height=24)
                 try:

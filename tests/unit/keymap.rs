@@ -80,38 +80,68 @@ fn configured_navigation_synonyms_wrap_without_changing_modes_or_focusing() {
 fn every_action_resolves_only_in_its_declared_modes_with_stable_names() {
     let map = Keymap::default();
     for (action, name, contexts) in [
-        (Action::NextRow, "next_row", vec![Context::Select]),
-        (Action::PreviousRow, "previous_row", vec![Context::Select]),
-        (Action::PreviousTab, "previous_tab", vec![Context::Select]),
-        (Action::NextTab, "next_tab", vec![Context::Select]),
+        (
+            Action::NextRow,
+            "next_row",
+            vec![Context::Select, Context::Agent],
+        ),
+        (
+            Action::PreviousRow,
+            "previous_row",
+            vec![Context::Select, Context::Agent],
+        ),
+        (
+            Action::PreviousTab,
+            "previous_tab",
+            vec![Context::Select, Context::Agent],
+        ),
+        (
+            Action::NextTab,
+            "next_tab",
+            vec![Context::Select, Context::Agent],
+        ),
         (
             Action::NextWorkspace,
             "next_workspace",
-            vec![Context::Select],
+            vec![Context::Select, Context::Agent],
         ),
         (
             Action::PreviousWorkspace,
             "previous_workspace",
-            vec![Context::Select],
+            vec![Context::Select, Context::Agent],
         ),
-        (Action::FocusPane, "focus_pane", vec![Context::Select]),
+        (
+            Action::FocusPane,
+            "focus_pane",
+            vec![Context::Select, Context::Agent],
+        ),
         (
             Action::OpenSearch,
             "open_search",
-            vec![Context::Select, Context::Help],
+            vec![Context::Select, Context::Agent, Context::Help],
         ),
         (
             Action::ResetSearch,
             "reset_search",
-            vec![Context::Select, Context::Help],
+            vec![Context::Select, Context::Agent, Context::Help],
         ),
-        (Action::OpenThemes, "open_themes", vec![Context::Select]),
+        (
+            Action::OpenThemes,
+            "open_themes",
+            vec![Context::Select, Context::Agent],
+        ),
+        (Action::OpenAgent, "open_agent", vec![Context::Select]),
+        (Action::OpenSelect, "open_select", vec![Context::Agent]),
         (
             Action::OpenHelp,
             "open_help",
-            vec![Context::Select, Context::Themes],
+            vec![Context::Select, Context::Agent, Context::Themes],
         ),
-        (Action::Close, "close", vec![Context::Select, Context::Help]),
+        (
+            Action::Close,
+            "close",
+            vec![Context::Select, Context::Agent, Context::Help],
+        ),
         (Action::NextCategory, "next_category", vec![Context::Help]),
         (
             Action::PreviousCategory,
@@ -133,7 +163,12 @@ fn every_action_resolves_only_in_its_declared_modes_with_stable_names() {
         (Action::Cancel, "cancel", vec![Context::Themes]),
     ] {
         assert_eq!(action.name(), name);
-        for context in [Context::Select, Context::Help, Context::Themes] {
+        for context in [
+            Context::Select,
+            Context::Agent,
+            Context::Help,
+            Context::Themes,
+        ] {
             let (replacement, errors) =
                 Keymap::parse(&serde_json::json!({context.name(): {name: ["Z"]}}).to_string());
             if contexts.contains(&context) {

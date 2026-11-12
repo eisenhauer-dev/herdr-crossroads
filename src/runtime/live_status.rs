@@ -16,6 +16,10 @@ use crate::terminal::draw;
 use crate::topology::{snapshot_rows, Row};
 use crate::transport::{subscribe, StatusMessage, StatusSubscription, RECONNECT_CANCEL};
 
+#[cfg(all(test, unix))]
+#[path = "../../tests/unit/runtime/reconnect.rs"]
+mod tests;
+
 struct ReconnectAttempt {
     rx: mpsc::Receiver<io::Result<(StatusSubscription, Vec<Row>)>>,
     cancel: Arc<AtomicBool>,
@@ -50,7 +54,11 @@ pub(super) fn bootstrap(status: &mut Option<StatusSubscription>, ui: &mut Ui) {
 
 impl Ui {
     pub(crate) fn status_event(&mut self, event: &Value) -> bool {
-        apply_status(&mut self.rows, event)
+        let changed = apply_status(&mut self.rows, event);
+        if changed {
+            self.reconcile_agent_order();
+        }
+        changed
     }
 }
 
@@ -160,7 +168,7 @@ impl LiveStatus {
                 self.retry_at = Instant::now() + Duration::from_millis(500);
             } else {
                 let (receiver, staged) = self.pending.take().unwrap();
-                ui.rows = staged;
+                ui.replace_rows(staged);
                 self.status = Some(receiver);
                 draw(ui, terminal)?;
             }

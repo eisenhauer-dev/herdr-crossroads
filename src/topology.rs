@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 #[cfg(unix)]
 use std::sync::atomic::Ordering;
@@ -38,6 +38,32 @@ pub(super) fn entries<'a>(snapshot: &'a Value, name: &str) -> io::Result<&'a [Va
         })
 }
 
+// Optional snapshot metadata used only by Agent search, not Select's columns.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct AgentMetadata {
+    pub(super) title: Option<String>,
+    pub(super) repository: Option<(String, String)>, // Explicit repository key and name.
+    pub(super) branch: Option<String>,
+    repository_key: Option<String>, // Retain identity even when the name is missing.
+}
+
+fn optional_text(value: &Value) -> Option<String> {
+    let value = clean(value.as_str()?);
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn repository(value: &Value) -> Option<(String, String)> {
+    Some((
+        optional_text(&value["repo_key"])?,
+        optional_text(&value["repo_name"])?,
+    ))
+}
+
+fn consistent<T: Eq>(mut values: impl Iterator<Item = T>) -> Option<T> {
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
+}
+
 pub(super) struct Row {
     pub(super) id: String,
     pub(super) workspace_id: String,
@@ -48,6 +74,8 @@ pub(super) struct Row {
     pub(super) agent: String,
     pub(super) status: String,
     pub(super) tab_id: String,
+    pub(super) agent_metadata: AgentMetadata,
+    metadata_workspace_unique: bool,
 }
 
 pub(super) fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io::Result<Vec<Row>> {
@@ -114,6 +142,30 @@ pub(super) fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io:
         let workspace_name = clean(field(workspace, "label")?);
         let tab_name = clean(field(tab, "label")?);
         let pane_name = clean(&pane_name);
+        let unique_workspace = workspaces
+            .iter()
+            .filter(|w| w["workspace_id"] == workspace_id)
+            .count()
+            == 1;
+        let matching_agents: Vec<_> = agents.iter().filter(|a| a["pane_id"] == id).collect();
+        let title = if unique_workspace
+            && panes.iter().filter(|p| p["pane_id"] == id).count() == 1
+            && matching_agents.len() <= 1
+            && matching_agents.iter().all(|a| {
+                a["workspace_id"] == workspace_id
+                    && a["tab_id"] == tab_id
+                    && a["terminal_id"] == pane["terminal_id"]
+            }) {
+            consistent(
+                std::iter::once(&pane["title"])
+                    .chain(matching_agents.iter().map(|a| &a["title"]))
+                    .filter_map(Value::as_str)
+                    .filter(|value| !clean(value).trim().is_empty()),
+            )
+            .map(clean)
+        } else {
+            None
+        };
         rows.push((
             (wn, tn, index),
             Row {
@@ -130,6 +182,17 @@ pub(super) fn rows(response: &str, own_pane: Option<&str>, _width: usize) -> io:
                     clean(status)
                 },
                 tab_id: format!("{workspace_id}/{tab_id}"),
+                agent_metadata: AgentMetadata {
+                    title,
+                    repository: unique_workspace
+                        .then(|| repository(&workspace["worktree"]))
+                        .flatten(),
+                    branch: None,
+                    repository_key: unique_workspace
+                        .then(|| optional_text(&workspace["worktree"]["repo_key"]))
+                        .flatten(),
+                },
+                metadata_workspace_unique: unique_workspace,
             },
         ));
     }
@@ -142,6 +205,8 @@ pub(super) fn annotate_worktrees(rows: &mut [Row], executable: &std::ffi::OsStr,
     let mut covered = HashSet::new();
     let mut annotated = HashSet::new();
     let mut links = Vec::new();
+    let mut metadata: HashMap<String, Vec<AgentMetadata>> = HashMap::new();
+    let mut ambiguous = HashSet::new();
     for workspace_id in &workspace_ids {
         if !covered.insert(workspace_id.clone()) {
             continue;
@@ -172,6 +237,27 @@ pub(super) fn annotate_worktrees(rows: &mut [Row], executable: &std::ffi::OsStr,
             if !workspace_ids.iter().any(|id| id == open_id) {
                 continue;
             }
+            if worktrees
+                .iter()
+                .filter(|candidate| candidate["open_workspace_id"] == open_id)
+                .count()
+                != 1
+                || entry["is_prunable"] == true
+            {
+                ambiguous.insert(open_id.to_owned());
+            } else {
+                metadata
+                    .entry(open_id.to_owned())
+                    .or_default()
+                    .push(AgentMetadata {
+                        title: None,
+                        repository: repository(&data["result"]["source"]),
+                        repository_key: optional_text(&data["result"]["source"]["repo_key"]),
+                        branch: (entry["is_detached"] != true)
+                            .then(|| optional_text(&entry["branch"]))
+                            .flatten(),
+                    });
+            }
             covered.insert(open_id.to_owned());
             if entry["is_linked_worktree"] != true || !annotated.insert(open_id.to_owned()) {
                 continue;
@@ -186,6 +272,34 @@ pub(super) fn annotate_worktrees(rows: &mut [Row], executable: &std::ffi::OsStr,
                     None => format!("↳ {}", row.workspace),
                 };
             }
+        }
+    }
+    for row in rows.iter_mut() {
+        if !row.metadata_workspace_unique || ambiguous.contains(&row.workspace_id) {
+            row.agent_metadata.repository = None;
+            row.agent_metadata.branch = None;
+        } else if let Some(candidates) = metadata.get(&row.workspace_id) {
+            let keys_agree = consistent(
+                row.agent_metadata.repository_key.iter().chain(
+                    candidates
+                        .iter()
+                        .filter_map(|candidate| candidate.repository_key.as_ref()),
+                ),
+            )
+            .is_some();
+            row.agent_metadata.repository = if keys_agree {
+                consistent(
+                    row.agent_metadata.repository.take().into_iter().chain(
+                        candidates
+                            .iter()
+                            .filter_map(|candidate| candidate.repository.clone()),
+                    ),
+                )
+            } else {
+                None
+            };
+            row.agent_metadata.branch =
+                consistent(candidates.iter().map(|candidate| candidate.branch.clone())).flatten();
         }
     }
     let mut original = Vec::new();

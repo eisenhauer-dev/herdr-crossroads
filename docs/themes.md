@@ -6,6 +6,13 @@ theme-state and persistence flow.
 
 By default, in Select mode press `t` to replace the pane table with a scrollable theme list. In Search mode, `t` is ordinary search text. Use `j`/`k` or ↑/↓ to change the theme cursor, then press Space to toggle between the list and a live pane-table preview before saving. In either view, those keys change only the theme cursor, not the pane selection or search filter. The preview uses the current filtered panes and query, with themed selection, search matches, and visible status colors; its header shows the saved and previewed theme. Enter saves and returns to the pane list; Esc or q cancels and restores the previous theme. The picker keeps the pane selection, search query, and filtered rows unchanged. These are the default bindings: [keymaps](keymaps.md) can replace `select.open_themes` and the six `themes` actions, including `open_help`, with one or two keys each. Both views show the first effective key per displayed footer action, plus configured arrows for navigation, with directed action groups. Each footer action unit wraps intact; footers reserve up to three rows as needed, separately from any notice. Defaults remain fully visible without paging at 80×15 and wider sizes. Only oversized custom footers page automatically every two seconds.
 
+Agent uses the same picker and its independent `agent.open_themes` binding. Its
+preview shows Agent cards, including selected-only repository/branch/title details,
+the active status/text filters and stable blocked order. Select previews remain
+tables. The `table`/`list` toggle labels and keymap action names are unchanged;
+references to table-preview controls below also apply to the Agent card preview.
+Hover selects and expands a card without saving a theme or focusing Herdr.
+
 In either Themes view, `?` opens `Keys — Themes` with the effective Themes
 actions and bindings plus separate fixed mouse controls. Help uses the pending preview palette and its own search;
 default Esc or q returns to the same list/table preview, theme cursor and saved

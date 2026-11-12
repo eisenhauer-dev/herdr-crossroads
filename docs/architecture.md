@@ -7,7 +7,10 @@ declares Linux/macOS/Windows, minimum Herdr 0.9.1, popup placement, and release-
 it declares a Python binary-installer build hook and the global `setup-keybind`
 action. Managed installation invokes the build hook; linking a source checkout
 does not. Only explicit invocation of `setup-keybind` may append the agreed host
-launch binding. Opening or searching the popup invokes neither path and does not
+launch bindings. Both `prefix+f` (Select) and `prefix+a` (Agent) are checked before
+any config-content write; a conflict prevents all additions. Correct entries are
+retained and only missing entries are appended without rewriting existing bytes.
+Opening or searching the popup invokes neither path and does not
 install/update binaries or change host configuration. There are no startup or
 event hooks. See [installation and setup safeguards](installation.md).
 
@@ -19,6 +22,15 @@ published 0.3.0 binaries remain immutable and lack this flag. The later Windows
 ACL fix in [PR #20](https://github.com/eisenhauer-dev/herdr-crossroads/pull/20)
 updates runtime-loaded scripts only: an existing 0.3.1 binary needs no rebuild,
 but the pinned `v0.3.1` checkout lacks those updated scripts.
+
+In current source, no argument starts Select; `--agent` initializes the existing
+Agent table before the first frame. The runtime applies the launch-pane highlight,
+then reconciles it against that table's opening-snapshot membership, falling back
+to the first visible agent pane. The manifest adds `crossroads-agent` (Linux/macOS)
+and `crossroads-agent-windows` (explicit `.exe`) without changing the Select entries
+or 90%×90% popup size. These entries need a rebuilt binary; published 0.3.1 lacks
+`--agent`. Combining `--agent` and `--setup-keybind` in either order fails before
+setup or runtime initialization. Unknown arguments otherwise remain ignored.
 
 Released 0.2.0 covers Linux x86_64 glibc and macOS 15.0+ ARM64/Intel;
 published 0.1.0 stays Linux-only. Published 0.3.1 covers those three targets and
@@ -101,7 +113,7 @@ and current GNU evidence in the build guide.
 | `src/focus.rs` | Exact-ID socket focus, bounded reply reading and reply validation |
 | `src/topology.rs` | Snapshot validation and pane rows, workspace/tab ordering, own-pane exclusion, sanitized labels, best-effort linked-worktree annotation/grouping |
 | `src/transport.rs` | CLI/socket transport, status-subscription ownership and readers, bounded reconnect execution and connection deadlines, reconnect cancellation |
-| `src/selection.rs` | Shared UI state, mode/keymap dispatch, pane filtering/navigation and selected pane identity |
+| `src/selection.rs` | Shared UI state, table-view membership, mode/keymap dispatch, pane filtering/navigation and selected pane identity |
 | `src/selection/help.rs` | Help entries/state, independent filter and search/navigation input |
 | `src/selection/mouse.rs` | Render-recorded hit regions, mouse state/gesture validation, viewport scrolling and existing-action dispatch |
 | `src/selection/themes.rs` | Theme-picker input, preview toggle, save/cancel transitions and Auto-transition notice |
@@ -112,7 +124,8 @@ and current GNU evidence in the build guide.
 | `src/theme/persistence.rs` | Plugin theme-file validation/diagnostics and explicit save/delete |
 | `src/status_colors.rs` | Status-color defaults, file validation/diagnostics, status lookup and explicit overrides of theme roles |
 | `src/presentation.rs` | Rendering facade: view dispatch, frame painting, size-only notices, shared text/style helpers and theme notices |
-| `src/presentation/table.rs` | Pane table and theme table preview: column budgets, rows, borders, match/status styling, selection-following and wheel viewport bounds |
+| `src/presentation/table.rs` | Shared search/footer layout, Select table and empty-state messages, dispatch to Agent cards; Select column budgets, styling and viewport |
+| `src/presentation/agent.rs` | Agent card content, selected-only metadata, terminal-grapheme clipping, variable-height selection-following and wheel bounds; reused by Agent-origin Themes previews |
 | `src/presentation/diagnostics.rs` | Common configuration-error page, source-row cell clipping and diagnostic scrolling |
 | `src/presentation/footer.rs` | Effective-binding hint groups, footer row budgets, hint paging and shared search prompts |
 | `src/presentation/help.rs` | Help layout, category spacing, selection-following and wheel viewport bounds, wrapped custom bindings and match highlighting; help state/input remains in `selection/help` |
@@ -132,15 +145,17 @@ Rendering cases are grouped under `tests/unit/presentation/` into `table.rs`,
 `tests/unit/presentation.rs`. The parent retains shared fixtures/text helpers and
 cross-view frame/dispatch checks; the children reuse those fixtures rather than
 duplicating a harness. Selection cases live under `tests/unit/selection/` in
-`navigation.rs`, `help.rs` and `themes.rs`; `tests/unit/selection.rs` wires them
+`navigation.rs`, `agent.rs`, `help.rs` and `themes.rs`; `tests/unit/selection.rs` wires them
 together. `tests/unit/search.rs` covers matching and retained pane/help search,
 and `tests/unit/input.rs` covers byte decoding and escape/protocol identities.
 `tests/unit/actions.rs` groups cross-context action dispatch and modifier rejection.
 Theme cases mirror palette, discovery and persistence ownership under
 `tests/unit/theme/`, with the shared layout-fixture check in `tests/unit/theme.rs`.
 Validated status-update cases live in `tests/unit/runtime/live_status.rs`, wired
-by `tests/unit/runtime.rs`; reconnect ordering, staging, cancellation and focus
-IPC remain covered by the existing startup process tests. Keymap schema and mixed
+by `tests/unit/runtime.rs`. Controlled coordinator cases in
+`tests/unit/runtime/reconnect.rs` cover row installation, selection reconciliation,
+opening agent membership and queued status updates; reconnect ordering, staging,
+cancellation and focus IPC remain covered by the existing startup process tests. Keymap schema and mixed
 configuration/rendering assertions remain in `tests/unit/keymap.rs`. Terminal
 lifecycle/output is exercised by startup process and PTY tests; there is no
 separate terminal unit-test harness. Process tests and Python PTYs use deterministic
@@ -155,16 +170,39 @@ stdin bytes ──> Keys decoder ──> context action / search ─────
 rendered layout + mouse event ──> selection/action/viewport ──> Ui
 local socket status events ──> validated row status ─────────> Ui
 Ui + theme + status_colors + terminal dimensions ──> presentation ──> terminal ──> stdout
-Select confirmation ──> chosen stable pane ID ──> local pane.focus request
+Select/Agent confirmation ──> chosen stable pane ID ──> local pane.focus request
 Theme confirmation ──> plugin-owned theme file save/delete
 ```
 
 Rows retain IDs internally; the visible table shows labels rather than IDs.
+Rows also retain optional Agent metadata without adding Select display columns. Agent
+search includes available repository names, branches and titles; Select search
+does not. Titles use only explicit snapshot agent/pane `title` values, never agent
+names, pane labels, terminal titles or working directories. Matching agent records
+must agree with the pane's workspace, tab and terminal; duplicate associations or
+conflicting titles suppress the title. Repository identity/name come only from
+workspace `worktree.repo_key`/`repo_name` or a worktree-list `source` paired with a
+unique matching `open_workspace_id`; paths are never converted to repository names.
+Branches come from those matching worktree entries, not the source workspace;
+detached entries supply no branch. Missing/blank values remain absent, conflicting
+repository identities or branches are omitted, and duplicate/prunable worktree
+associations supply neither repository nor branch. Stored text uses the existing
+control-character sanitization. Optional metadata cannot fail popup opening.
+It travels with the existing startup/reconnect rows, with no additional CLI calls,
+periodic refresh or input-triggered lookup; opening Agent membership is unchanged.
+The fake-host card PTY checks these fields from snapshot/worktree responses through
+rendering and Agent-only search, including combined status filtering and modal
+returns; see [local verification and its platform limits](keymaps.md#local-verification).
+The source contract is Herdr v0.9.1's
+[`AgentInfo`](https://github.com/herdrdev/herdr/blob/v0.9.1/src/api/schema/agents.rs),
+[`PaneInfo`](https://github.com/herdrdev/herdr/blob/v0.9.1/src/api/schema/panes.rs),
+[`WorkspaceWorktreeInfo`](https://github.com/herdrdev/herdr/blob/v0.9.1/src/api/schema/workspaces.rs)
+and [`WorktreeSourceInfo`/`WorktreeInfo`](https://github.com/herdrdev/herdr/blob/v0.9.1/src/api/schema/worktrees.rs).
 Search and navigation operate on visible row indices while remembered selection
 is a pane ID. Rendering sanitizes control text. General presentation budgets and
 clipping use a conservative estimate: one column per ASCII character and two per
 non-ASCII character, not exact Unicode terminal-cell widths. Diagnostic source
-paths instead use grapheme terminal-cell widths when clipping their source row.
+paths and Agent card fields instead use grapheme terminal-cell widths when clipping.
 
 ## Core flows
 
@@ -181,7 +219,9 @@ paths instead use grapheme terminal-cell widths when clipping their source row.
    exclude a supplied own-pane ID, order rows, and annotate linked workspaces with
    CLI `worktree list --workspace <id>`. Annotation failures are nonfatal; a
    missing CLI or invalid required snapshot fails opening.
-5. Initialize Select, apply buffered status events, and draw. Keymap/status errors
+5. Capture opening agent-pane IDs from detected nonempty row agent names, apply
+   the launch-pane highlight, and reconcile Select or the requested Agent view.
+   Apply buffered status events and draw. Keymap/status errors
    bypass normal topology startup and show the common error page; independently
    collected theme errors join it. Theme errors alone use Mocha and a notice.
 
@@ -195,25 +235,61 @@ CSI/SS3 arrows, Kitty input, and a 100-ms raw-Esc ambiguity deadline. Recognized
 Ctrl/Alt events cannot invoke actions or become search text; raw HT/CR retain
 their unavoidable Tab/Enter aliases.
 
-Select, Help navigation, and Themes resolve their own effective keymaps to
+Select, Agent, Help navigation, and Themes resolve their own effective keymaps to
 internal actions and dispatch those actions directly, without synthetic keys.
-JSON action names and displayed binding syntax remain unchanged. Pane
+Existing JSON action names and displayed binding syntax remain unchanged. Pane
 Search and Help search instead have fixed text-editing controls. Subsequence
-matching is case-insensitive, per field, and preserves topology/help order.
+matching is case-insensitive, per field, and preserves the active table/help order.
 No CLI call or socket request is caused by a search keystroke. Selection falls
 back to the first visible pane when its remembered ID is hidden; empty matches
 produce no focus candidate. Navigation is bounded and skips hidden blocks.
 
-Default search is lowercase `f` in Select and Help; custom bindings still replace
+The internal `TableView` separates Select (all panes) from Agent (pane IDs with
+nonempty detected agent names in the opening rows), independently of the existing
+Select/Search/Help/Themes interaction mode. Both table views reuse the same rows,
+query and navigation. Select retains topology order. Agent's visible indices put
+blocked opening members first using a stable pane-ID queue, without sorting the
+shared rows. Initially blocked members enter in topology order; transitions append
+newly blocked members, ignore duplicates, remove members leaving blocked, and append
+reentries anew. Nonblocked members retain relative topology order. Tracking runs
+independently of table view, modal state and search visibility. Row and tab/workspace
+block navigation, executable Help actions and Themes previews consume these same
+visible indices; block navigation follows display positions, not topology indices.
+Status ordering preserves the selected pane ID and never requests host focus.
+Changing the table view preserves the selected
+pane ID if it is visible, otherwise remembers the first match or no selection for
+an empty result; it emits no focus request. Startup defaults to the all-pane view
+unless `--agent` is requested.
+The `select.open_agent` (`a`) and `agent.open_select` (`s`) actions switch views;
+Agent resolves its own keymap with the same navigation actions and defaults.
+Search is shared, with printable switch keys remaining text during editing.
+Agent-only `filter_all`, `filter_blocked`, `filter_done`, `filter_working`,
+`filter_idle` and `filter_unknown` actions default to `a`, `b`, `d`, `w`, `i`, `u`.
+The status filter starts at all, intersects the text query, and survives Select,
+Help and Themes. Reset-search clears only text; filter-all clears only status.
+Live status events reconcile selection for an active Agent status filter to the
+retained visible ID, first matching pane, or none. Select's remembered-search
+selection behavior is unchanged. Agent search editing also reconciles to visible IDs.
+Help lists effective status bindings and dispatches their actions in Agent;
+the existing footer does not grow. The Agent badge includes the active status.
+The search-row badge and effective footer bindings identify Select versus Agent.
+Help carries the calling table's context and switch action; Themes keeps the same
+table view for preview and save/cancel return. Select uses the existing table renderer;
+Agent uses a focused card body within the same search/footer layout, not a general
+mode framework. Switching clears recorded mouse hits, and table-view
+and status-filter identity participate in stale-layout validation; pane hits must still be visible.
+
+Default search is lowercase `f` in Select, Agent and Help; custom bindings still replace
 it. Any custom assignment to logical Enter is a structured configuration error;
 the built-in defaults and fixed Help Enter activation remain available. Help entries
-carry their origin action identity. Activation first restores Select or the actual
+carry their origin action identity. Activation first restores Select, Agent or the actual
 Themes list/table state, then dispatches that action, including focus/save/close or
 reopening Help. Fixed informational mouse entries carry no action and cannot
 dispatch on click/Enter. Ordinary Help closing remains side-effect-free.
 
 Each renderer records mouse hit regions while laying out the actual frame: table
-rows reuse the chosen filtered viewport and Ratatui row offsets; Help/theme rows
+rows reuse the chosen filtered viewport and Ratatui row offsets; Agent cards record
+each content row using their actual expanded heights; Help/theme rows
 reuse their visible entries; footer positions use rendered terminal-cell widths.
 The UI validates the rendered state before using coordinates, and the event loop
 rechecks terminal size before mouse dispatch to discard stale resize input.
@@ -227,7 +303,17 @@ rendering preserves the offset within the current bounds; keyboard navigation
 resumes selection-following. Table layout reconciles the offset to changed viewport
 bounds even while following selection, so a taller resize cannot leave an invalid
 offset for the next wheel event.
-Hover only highlights rows (and previews a pending theme). A single left click
+Agent uses card indices for wheel scrolling and sums the actual content heights
+plus inter-card gaps when fitting a viewport. Only the selected card adds optional
+repository, branch and explicit `Titel:` lines; a title equal to the full location
+line is suppressed. Fields clip to one terminal-cell-bounded line, so cards have
+at most five content rows. Keyboard navigation and hover keep the selected card
+visible; wheel scrolling suspends following. Card selection/expansion invalidates
+old mouse regions until redraw. Metadata and label changes also participate in
+the layout signature. Repeated motion at the last motion/wheel coordinates is
+ignored in card views, preventing stationary-pointer reselection after reflow.
+
+Hover only highlights rows (and previews a pending theme), expanding Agent cards. A single left click
 focuses the clicked pane, saves the clicked theme or executes a Help action in
 its originating view. Pane hits include theme-table preview and its search.
 See [the input and cleanup contract](keymaps.md#mouse-controls), including
@@ -235,15 +321,22 @@ theme-preview search return and outstanding native verification.
 
 The presentation facade resets hint paging, then dispatches configuration errors
 before the popup-size guard, Help, the theme list, and finally the pane table
-(also used for theme table preview). Each view uses the existing `Ui` state;
+(also used for origin-specific Themes table/card preview). Each view uses the existing `Ui` state;
 there is no separate renderer state machine. The table chooses compact or roomy
 columns, maintains its viewport and underlines matches. Both column layouts use
 a full-table-width solid `─` rule below the headers at heights of eight rows or
 more; the short ANSI layout omits headers and their rule. Workspace blocks retain
 dim dashed `┄` separators, inset before linked worktrees. The same rules apply in
-Search and theme table preview. Shared footer hints stay anchored by each view's
-layout. The main loop checks interactive size about every 250 ms and pages
-oversized custom hints every two seconds when needed. Below
+Select Search and Select-origin theme table preview. Agent instead shows agent/status
+and `Workspace › Tab › Pane` on every card, without column/group headings.
+Shared footer hints stay anchored by each view's
+layout. Header labels alone receive explicit italic styling in terminal output;
+padding, body and footer do not inherit it. An empty table keeps its frame and
+centers the message plus effective reset/switch hints as one block in the body.
+Agent distinguishes no surviving opening members from no matching members;
+search/preview hints explain how to leave editing/preview before using bindings.
+Empty bodies record no pane mouse targets. The main loop checks interactive size
+about every 250 ms and pages oversized custom hints every two seconds when needed. Below
 80×15 content cells, normal pane actions are blocked; resize can restore the UI.
 
 ### Focus and close
@@ -277,6 +370,12 @@ resubscribes **before** taking a fresh snapshot and worktree annotations, stages
 the subscription and rows without constructing another UI, then the main loop
 applies queued statuses before installing rows. Active, bootstrap and staged rows
 share the same validated status application.
+Installing reconnect rows reconciles selection against the current table view and
+query without recapturing opening agent membership. Disappeared panes therefore
+leave Agent results, while newly detected agent assignments enter only on reopen.
+The blocked queue retains still-blocked survivors in their previous order, removes
+vanished or no-longer-blocked members, and appends newly blocked opening members
+in replacement topology order after queued statuses have been applied.
 The existing UI remains usable during this work. Reconnect CLI calls have a
 two-second deadline per command, cancellation, and capped output; subscription
 acknowledgment has a 500-ms deadline. Linux x86_64 also has a bounded socket-connect

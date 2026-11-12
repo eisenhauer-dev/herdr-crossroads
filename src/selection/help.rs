@@ -9,6 +9,7 @@ use super::{Mode, Ui};
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum HelpContext {
     Select,
+    Agent,
     Themes,
 }
 
@@ -23,10 +24,27 @@ impl HelpContext {
     pub(crate) fn entries(&self, map: &Keymap) -> Vec<HelpEntry> {
         let (context, keys) = match self {
             Self::Select => (Context::Select, &SELECT_KEYS[..]),
+            Self::Agent => (Context::Agent, &SELECT_KEYS[..]),
             Self::Themes => (Context::Themes, &THEMES_KEYS[..]),
         };
+        let switch = match self {
+            Self::Select => Some(("Actions", "open_agent", "show agents")),
+            Self::Agent => Some(("Actions", "open_select", "show all panes")),
+            Self::Themes => None,
+        };
         keys.iter()
-            .map(|&(category, action, meaning)| HelpEntry {
+            .copied()
+            .chain(switch)
+            .chain(
+                if *self == Self::Agent {
+                    &AGENT_FILTER_KEYS[..]
+                } else {
+                    &[]
+                }
+                .iter()
+                .copied(),
+            )
+            .map(|(category, action, meaning)| HelpEntry {
                 action: Some(
                     map.bindings
                         .iter()
@@ -50,7 +68,9 @@ impl HelpContext {
                     category: "Mouse (fixed)",
                     keys: "Left click".into(),
                     meaning: match self {
-                        Self::Select => "focus clicked pane; Help runs action; footer or search",
+                        Self::Select | Self::Agent => {
+                            "focus clicked pane; Help runs action; footer or search"
+                        }
                         Self::Themes => {
                             "save theme or focus pane; Help runs action; footer or search"
                         }
@@ -69,6 +89,7 @@ impl HelpContext {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Select => "Select",
+            Self::Agent => "Agent",
             Self::Themes => "Themes",
         }
     }
@@ -81,6 +102,15 @@ const THEMES_KEYS: [(&str, &str, &str); 6] = [
     ("Actions", "save", "save theme"),
     ("Actions", "cancel", "cancel theme selection"),
     ("Actions", "open_help", "show keys"),
+];
+
+const AGENT_FILTER_KEYS: [(&str, &str, &str); 6] = [
+    ("Status filters", "filter_all", "show all statuses"),
+    ("Status filters", "filter_blocked", "show blocked agents"),
+    ("Status filters", "filter_done", "show done agents"),
+    ("Status filters", "filter_working", "show working agents"),
+    ("Status filters", "filter_idle", "show idle agents"),
+    ("Status filters", "filter_unknown", "show unknown agents"),
 ];
 
 const SELECT_KEYS: [(&str, &str, &str); 12] = [
@@ -166,7 +196,7 @@ impl Ui {
             .get(self.help.selected_index(&visible)?)?
             .action?;
         self.mode = match self.help.context {
-            HelpContext::Select => Mode::Select,
+            HelpContext::Select | HelpContext::Agent => Mode::Select,
             HelpContext::Themes => Mode::Themes,
         };
         self.action(action)
@@ -177,7 +207,7 @@ impl Ui {
         match action {
             Action::Close => {
                 self.mode = match self.help.context {
-                    HelpContext::Select => Mode::Select,
+                    HelpContext::Select | HelpContext::Agent => Mode::Select,
                     HelpContext::Themes => Mode::Themes,
                 };
             }

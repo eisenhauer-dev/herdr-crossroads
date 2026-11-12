@@ -22,7 +22,7 @@ fn last_help_entry_wraps_forward_to_first_match() {
     let mut state = ui();
     state.key(Key::Char('?'));
     state.help.query = "search".into();
-    state.help.selected = Some(14);
+    state.help.selected = Some(15);
     assert!(state.key(Key::Down).is_none());
     assert_eq!(state.help.selected, Some(7));
 }
@@ -141,6 +141,7 @@ fn help_filter_matches_columns_independently_in_original_order() {
             ("t", "choose theme"),
             ("?", "show keys"),
             ("Esc/q", "close Crossroads"),
+            ("a", "show agents"),
             ("Hover", "highlight row; theme preview only, never activate"),
             (
                 "Left click",
@@ -153,12 +154,12 @@ fn help_filter_matches_columns_independently_in_original_order() {
         ]
     );
     for (query, expected) in [
-        ("DN", vec![6, 13, 14]),
+        ("DN", vec![6, 14, 15]),
         ("PRVP", vec![1, 5]),
-        ("search", vec![7, 8, 13, 14]),
+        ("search", vec![7, 8, 14, 15]),
         ("jnext", vec![]),
         ("Navigation", vec![]),
-        ("Actions", vec![13]),
+        ("Actions", vec![14]),
         ("not-a-key", vec![]),
     ] {
         state.help.query = query.into();
@@ -197,7 +198,7 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
             state.key(Key::Down);
             state.terminal_frame(80, 15);
         }
-        assert_eq!(state.help.selected, Some(14));
+        assert_eq!(state.help.selected, Some(15));
         assert!(state.help.viewport_start.get() > 0);
         assert!(state.key(Key::Ctrl('m')).is_none());
         assert!(!state.closed && state.mode == Mode::Help);
@@ -216,7 +217,7 @@ fn help_search_input_reset_reopen_and_close_preserve_select_state() {
         assert!(!state.help.searching && state.mode == Mode::Help);
         state.key(Key::Char('r'));
         assert!(state.help.query.is_empty());
-        assert_eq!(state.help.selected, Some(14));
+        assert_eq!(state.help.selected, Some(15));
         state.key(Key::Char('f'));
         state.key(Key::Char('t'));
         state.key(Key::Enter);
@@ -258,7 +259,7 @@ fn help_navigation_wraps_reset_keeps_visible_entry_and_search_treats_question_as
     state.key(Key::Esc);
     state.key(Key::Char('?'));
     state.key(Key::Up);
-    assert_eq!(state.help.selected, Some(14));
+    assert_eq!(state.help.selected, Some(15));
     state.help.query = "search".into();
     state.key(Key::Char('j'));
     assert_eq!(state.help.selected, Some(7));
@@ -267,9 +268,9 @@ fn help_navigation_wraps_reset_keeps_visible_entry_and_search_treats_question_as
     state.key(Key::Char('k'));
     assert_eq!(state.help.selected, Some(7));
     state.key(Key::Up);
-    assert_eq!(state.help.selected, Some(14));
+    assert_eq!(state.help.selected, Some(15));
     state.key(Key::Char('r'));
-    assert_eq!(state.help.selected, Some(14));
+    assert_eq!(state.help.selected, Some(15));
     assert!(state.help.query.is_empty());
 }
 

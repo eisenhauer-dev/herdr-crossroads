@@ -29,6 +29,8 @@ see [media terms, attribution and provenance](docs/media/README.md#narration-use
 - Live, case-insensitive subsequence search without requerying or reordering Herdr topology.
 - [Linked worktrees](docs/worktrees.md) grouped beside their source workspace with `↳` and branch context.
 - Live local agent statuses, [theme previews](docs/themes.md), customizable keys, and searchable help.
+- Current source builds add Agent-only cards, direct `--agent` starts, and
+  `a`/`s` table switching; published 0.3.1 binaries do not include this feature.
 - **Navigation-only:** no creation, movement, renaming, or deletion of session topology.
   Only confirmation changes focus; explicitly saving a theme changes plugin-owned files.
 - Opening/searching uses local CLI/socket access and files, not network requests or updates.
@@ -155,12 +157,17 @@ See [installation options and safeguards](docs/installation.md) and
 
 <a id="add-the-launch-binding-reload-and-open"></a>
 
-#### 2. Set up the keybinding and check success
+#### 2. Set up the keybindings and check success
 
-Installation alone does not write a host binding. Explicitly opt in to adding
-`prefix+f` to Herdr's user config:
+Installation alone does not write host bindings. Current source setup explicitly
+opts in to adding `prefix+f` for **Select** and `prefix+a` for **Agent** to Herdr's
+user config. Both keys are checked before any config-content write; any conflict
+aborts the entire update. Correct bindings are retained; only missing ones are added.
+The Agent entry requires a rebuilt source binary and updated manifest; published
+0.3.1 binaries do not implement `--agent`.
 
-**Setup action:** requires the matching **0.3.1 binary, manifest and helper**.
+**Setup dispatcher:** requires a **0.3.1 or rebuilt source binary** with matching
+manifest and helper; use a rebuilt source binary for the Agent entry above.
 Published 0.3.0 binaries do not implement `--setup-keybind`; upgrade the binary too
 when coming from 0.3.0. With a 0.3.1 binary already installed/built, the later Windows
 ACL fix needs only the updated scripts in the actual managed/linked checkout,
@@ -177,7 +184,7 @@ herdr plugin log list --plugin herdr-crossroads
 
 Setup is asynchronous: repeat the log command until the invocation's matching
 `log_id` has `status = "succeeded"`, `exit_code = 0`, and output confirming the
-binding was added or already configured at the expected config path.
+bindings were added or already configured at the expected config path.
 **Do not reload on `running` or `failed`; resolve any error first.**
 See [config paths, conflict handling, and safeguards](docs/installation.md#keyboard-launch-setup).
 
@@ -192,9 +199,9 @@ already-running client's shortcuts stale; if using it, restart the Herdr client 
 herdr server reload-config
 ```
 
-Check `prefix+?` for the Crossroads binding, then press `Ctrl+b`, then `f`
-(or your configured prefix). If the binding is missing, verify the successful
-setup log's config path matches the running host before retrying.
+Check `prefix+?` for the Crossroads bindings, then press `Ctrl+b`, then `f` for
+Select or `a` for Agent (or your configured prefix). If a binding is missing,
+verify the successful setup log's config path matches the running host before retrying.
 
 To open directly from a shell in your running Herdr session, use your platform's
 entrypoint (no launch binding required):
@@ -214,6 +221,14 @@ herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows
 The `crossroads` entrypoint is Linux/macOS-only; on Windows it fails with
 `platform_unsupported`. Use `crossroads-windows` instead.
 
+Source builds also provide direct **Agent** entrypoints: use `crossroads-agent`
+on Linux/macOS or `crossroads-agent-windows` on Windows in the commands above.
+These require a rebuilt binary and updated manifest; published 0.3.1 binaries
+do not implement `--agent`. No argument opens Select; `--agent` opens the existing
+Agent cards immediately, with the same opening-snapshot membership and filtering.
+Both views use a 90%×90% popup. Current source setup binds these entries to
+`prefix+f` and `prefix+a`, respectively.
+
 <details>
 <summary>Manual keybinding setup</summary>
 
@@ -223,11 +238,12 @@ Overrides can change this: `herdr --help` shows the resolved path; see
 [config-path selection](docs/installation.md#keyboard-launch-setup). Follow
 [Herdr's versioned configuration guide][herdr-config].
 
-First check `prefix+?` and your existing config for collisions. `prefix+f` is unused
-in Herdr 0.9.1/0.9.3/0.9.5 defaults and suggests “find panes”; if you already use
-it, choose another free shortcut. Preserve all
+First check `prefix+?` and your existing config for collisions on **both**
+`prefix+f` and `prefix+a`; choose other free shortcuts if occupied. `prefix+f` is
+unused in Herdr 0.9.1/0.9.3/0.9.5 defaults and suggests “find panes”. Preserve all
 custom and default navigation/close bindings, including `prefix+g`, `prefix+t`,
-and `prefix+x` (close pane). Append only the entry for your platform, with a free key:
+and `prefix+x` (close pane). With a rebuilt source binary and updated manifest,
+append only the missing entries for your platform, using free keys:
 
 **Linux/macOS:**
 
@@ -237,6 +253,12 @@ key = "prefix+f"
 type = "shell"
 command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
 description = "Open Herdr Crossroads"
+
+[[keys.command]]
+key = "prefix+a"
+type = "shell"
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent"
+description = "Open Herdr Crossroads — Agent"
 ```
 
 **Windows:**
@@ -247,6 +269,12 @@ key = "prefix+f"
 type = "shell"
 command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows"
 description = "Open Herdr Crossroads"
+
+[[keys.command]]
+key = "prefix+a"
+type = "shell"
+command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent-windows"
+description = "Open Herdr Crossroads — Agent"
 ```
 
 `shell` runs the launch command detached; the plugin manifest opens the popup.
@@ -295,7 +323,8 @@ command = "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossro
 ```
 
 Alternatively, in a trusted local checkout, change `width` and `height` in both
-`[[panes]]` entries (`crossroads` and `crossroads-windows`) of `herdr-plugin.toml`.
+Select and Agent `[[panes]]` entries for your platform in `herdr-plugin.toml`
+(`crossroads`/`crossroads-agent` or `crossroads-windows`/`crossroads-agent-windows`).
 
 Setup writes the default command without size flags. Herdr
 [v0.9.4][herdr-size-cli-094] / [v0.9.5][herdr-size-cli-095] source supports these flags,
@@ -326,7 +355,7 @@ herdr plugin link "$PWD"
 - Use the platform-specific launch command or binding in the
   [Quickstart](#quickstart); the setup action selects the platform's entrypoint.
   See [setup requirements and safeguards](docs/installation.md#keyboard-launch-setup).
-- Both entrypoints default to 90% width × 90% height; see
+- All Select/Agent entrypoints default to 90% width × 90% height; see
   [popup sizing](#optional-customize-the-popup-size) for overrides and content-size limits.
 - Basic Windows source-build/link/live-popup use was user-reported on 2026-10-28;
   the exact clone/build/link command sequence above has not been independently
@@ -344,11 +373,32 @@ herdr plugin link "$PWD"
 | Next / previous tab | `l` / `h`, or Right / Left |
 | Next / previous workspace | Tab / Shift+Tab |
 | Search / reset filter | `f` / `r` |
+| Select → Agent / Agent → Select | `a` / `s` |
 | Keys help / themes | `?` / `t` |
 | Focus selected pane and close | Enter |
 | Close without focus | Esc or `q` |
 
 - Keyboard movement wraps through visible panes/blocks without changing host focus.
+- Agent shows only panes detected as agents when the popup opened, using the same
+  navigation and shared search. Switching views keeps a visible pane ID selected,
+  otherwise selects the first match (none for no matches), without changing host focus.
+  Help and Themes return to the calling view; theme preview uses its filter and
+  renders Agent cards or the unchanged Select table.
+- Agent cards show agent/status and `Workspace › Tab › Pane`; only the selected
+  card adds available repository, branch and `Titel:` details. Long fields clip
+  to one line; hover selects/expands without focusing the host pane.
+- Agent status keys: `a` all, `b` blocked, `d` done, `w` working, `i` idle, `u` unknown.
+  Status intersects text search; `r` resets only text, `a` only status. Each popup
+  starts at all; the Agent mode badge shows the active status. Agent search also
+  matches available repository names, branches and explicit task titles, without
+  extra queries. Status bindings are remappable and executable through Help.
+- Agent membership is fixed by the opening snapshot; live events update statuses,
+  not membership. Agent puts blocked panes first in stable transition order while
+  retaining the selected pane ID; Select keeps topology order. Reconnect refreshes
+  rows without adding newly detected agent panes;
+  reopen to recapture membership. See [mapping and reconnect semantics](docs/keymaps.md#agent--agent-pane-navigation).
+- Table headings are italic where supported. Empty results keep the table frame
+  and show a centered message with effective reset/switch keys.
 - While editing search, printable keys are text; Enter/Esc ends editing but retains
   the filter. Press Enter again to focus; no matches means no focus.
 - Themes: `j`/`k` or arrows to preview, Space for list/table view, Enter to save,

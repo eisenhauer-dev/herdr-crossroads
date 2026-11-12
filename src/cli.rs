@@ -2,9 +2,14 @@ use std::io;
 use std::process::Command;
 
 pub(crate) fn run() -> io::Result<()> {
-    let mut arguments = std::env::args_os().skip(1);
-    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--setup-keybind")) {
-        if arguments.next().is_some() {
+    let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+    let agent = arguments.iter().any(|arg| arg == "--agent");
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--setup-keybind")
+        || (agent && arguments.iter().any(|arg| arg == "--setup-keybind"))
+    {
+        if arguments.len() != 1 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "--setup-keybind takes no arguments",
@@ -19,7 +24,11 @@ pub(crate) fn run() -> io::Result<()> {
         #[cfg(not(unix))]
         std::process::exit(command.status()?.code().unwrap_or(1));
     }
-    crate::runtime::run()
+    crate::runtime::run(if agent {
+        crate::selection::TableView::Agent
+    } else {
+        crate::selection::TableView::Select
+    })
 }
 
 pub(crate) fn setup_command() -> Command {

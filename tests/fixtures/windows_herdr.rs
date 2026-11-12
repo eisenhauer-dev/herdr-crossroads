@@ -12,10 +12,18 @@ fn main() {
             if std::env::var_os("CROSSROADS_TEST_STALL").is_some() {
                 std::thread::sleep(std::time::Duration::from_secs(10));
             }
-            println!("{}", include_str!("topology.json"));
+            let snapshot = std::env::var_os("CROSSROADS_TEST_SNAPSHOT")
+                .map(|path| std::fs::read_to_string(path).unwrap())
+                .unwrap_or_else(|| include_str!("topology.json").to_owned());
+            println!("{snapshot}");
         }
         ["pane", "list"] => println!("{{\"result\":{{\"type\":\"pane_list\",\"panes\":[{{\"pane_id\":\"p-b\"}},{{\"pane_id\":\"p-other\"}}]}}}}"),
-        ["worktree", "list", ..] => println!("{{\"result\":{{\"type\":\"worktree_list\",\"worktrees\":[]}}}}"),
+        ["worktree", "list", ..] => {
+            let worktrees = std::env::var_os("CROSSROADS_TEST_WORKTREES")
+                .map(|path| std::fs::read_to_string(path).unwrap())
+                .unwrap_or_else(|| "{\"result\":{\"type\":\"worktree_list\",\"worktrees\":[]}}".to_owned());
+            println!("{worktrees}");
+        }
         _ => std::process::exit(2),
     }
 }

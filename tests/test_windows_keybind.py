@@ -1,6 +1,6 @@
 """Native Windows host-config safety, confined to temporary directories."""
 import ctypes
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
 import runpy
@@ -730,10 +730,11 @@ class WindowsKeybindTests(unittest.TestCase):
                         mock.patch.dict(os.environ, HERDR_CONFIG_PATH=str(path)), \
                         mock.patch("builtins.print") as printed:
                     setup["setup"]()
-                    self.assertIn("Added prefix+f", printed.call_args.args[0])
+                    self.assertIn("Added missing bindings for prefix+f (Select), prefix+a (Agent)",
+                                  printed.call_args.args[0])
                     after, current, current_security = self.helper["config_snapshot"](path)
-                    self.assertEqual(current, data + setup["BINDING"])
-                    self.assertTrue(setup["has_launch_binding"](current))
+                    self.assertEqual(current, data + b"".join(setup["BINDINGS"].values()))
+                    self.assertEqual(setup["missing_bindings"](current), b"")
                     self.assertEqual((after.st_dev, after.st_ino, after.st_nlink, after.st_mode),
                                      (before.st_dev, before.st_ino, before.st_nlink, before.st_mode))
                     self.assertEqual(current_security.raw, security.raw)
@@ -748,6 +749,44 @@ class WindowsKeybindTests(unittest.TestCase):
                 self.assertEqual(retried, current)
                 self.assertEqual(retry_security.raw, security.raw)
                 self.assertEqual(list(path.parent.glob(".crossroads-keybind-*")), [])
+
+    def test_setup_mixed_bindings_and_conflicts_preserve_native_file_security(self):
+        setup = runpy.run_path(str(ROOT / "scripts/setup-keybind.py"))
+        for case in ("auto-inherited", "legacy-default-unprotected", "protected"):
+            fixture = nullcontext(self.path) if case == "auto-inherited" else self.legacy_fixture(case)
+            with self.subTest(case=case), fixture as path:
+                for letter, other in (("f", "a"), ("a", "f")):
+                    original = b"# retained\r\n" + setup["BINDINGS"][other]
+                    path.write_bytes(original)
+                    before, _, security = self.helper["config_snapshot"](path)
+                    with mock.patch.object(runpy, "run_path", return_value=self.helper), \
+                            mock.patch.dict(os.environ, HERDR_CONFIG_PATH=str(path)), \
+                            mock.patch("builtins.print"):
+                        setup["setup"]()
+                    after, data, current_security = self.helper["config_snapshot"](path)
+                    self.assertEqual(data, original + setup["BINDINGS"][letter])
+                    self.assertEqual(current_security.raw, security.raw)
+                    if case != "auto-inherited":
+                        self.assertEqual((after.st_dev, after.st_ino), (before.st_dev, before.st_ino))
+
+                    conflict = (original + f'\n[[keys.command]]\nkey = "prefix+{letter}"\n'
+                                'command = "other"\n'.encode())
+                    path.write_bytes(conflict)
+                    before, _, security = self.helper["config_snapshot"](path)
+                    with mock.patch.object(runpy, "run_path", return_value=self.helper), \
+                            mock.patch.dict(os.environ, HERDR_CONFIG_PATH=str(path)), \
+                            mock.patch.dict(self.helper["update_config"].__globals__,
+                                            config_staging=mock.Mock(), append_config=mock.Mock()) as guards:
+                        with self.assertRaisesRegex(ValueError, f"prefix\\+{letter} is occupied"):
+                            setup["setup"]()
+                        guards["config_staging"].assert_not_called()
+                        guards["append_config"].assert_not_called()
+                    after, data, current_security = self.helper["config_snapshot"](path)
+                    self.assertEqual(data, conflict)
+                    self.assertEqual(self.helper["config_identity"](after),
+                                     self.helper["config_identity"](before))
+                    self.assertEqual(current_security.raw, security.raw)
+                    self.assertEqual(list(path.parent.glob(".crossroads-keybind-*")), [])
 
     def test_legacy_append_excludes_readers_writers_deleters_and_parent_rename(self):
         with self.legacy_fixture() as path:

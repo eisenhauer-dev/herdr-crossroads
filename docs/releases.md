@@ -565,7 +565,11 @@ build/archive commands; also check `tests/test_macos_workflow.py`.
 
 The helper builds the locked optimized explicit-target binary and runs all four
 full PTYs (latency, render, keymaps, hints) before packaging. Cargo tests' partial
-keymap coverage is not a substitute. Review version agreement, source changes,
+keymap coverage is not a substitute. Current Agent coverage is included in those
+same harnesses; see [the current test contract](keymaps.md#local-verification).
+Published 0.3.1 receipts do not accept the later source-only Agent behavior or
+its new manifest entrypoints; no version or release approval follows from local
+focused checks. Review version agreement, source changes,
 gate results, tar membership/mode/ownership, and both checksums before requesting
 release approval. A file left by an earlier build is not fresh success evidence.
 Run `sha256sum -c herdr-crossroads.sha256` after extraction into a separate empty

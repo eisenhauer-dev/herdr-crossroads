@@ -67,6 +67,104 @@ fn isolated_command(program: &str) -> Command {
 
 #[cfg(unix)]
 #[test]
+fn launch_argument_selects_existing_table_and_reconciles_context_before_first_frame() {
+    let fake = fake_herdr();
+    let log = fake.with_extension("log");
+    for (args, context, mode, selected, names) in [
+        (
+            vec![],
+            "p-a",
+            "SELECT",
+            "Same",
+            vec![
+                "Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2",
+            ],
+        ),
+        (
+            vec!["unexpected"],
+            "p-a",
+            "SELECT",
+            "Same",
+            vec![
+                "Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2",
+            ],
+        ),
+        (
+            vec!["unexpected", "--setup-keybind"],
+            "p-a",
+            "SELECT",
+            "Same",
+            vec![
+                "Claude", "Same", "pane 3", "pane 4", "pane 1", "codex", "pane 2",
+            ],
+        ),
+        (
+            vec!["--agent"],
+            "p-other",
+            "AGENT",
+            "codex",
+            vec!["Claude", "codex"],
+        ),
+        (
+            vec!["--agent"],
+            "p-a",
+            "AGENT",
+            "Claude",
+            vec!["Claude", "codex"],
+        ),
+        (
+            vec!["--agent"],
+            "missing",
+            "AGENT",
+            "Claude",
+            vec!["Claude", "codex"],
+        ),
+    ] {
+        let output = isolated_command(env!("CARGO_BIN_EXE_herdr-crossroads"))
+            .args(&args)
+            .env("HERDR_BIN_PATH", &fake)
+            .env("CROSSROADS_TEST_LOG", &log)
+            .env("HERDR_PANE_ID", "p-self")
+            .env(
+                "HERDR_PLUGIN_CONTEXT_JSON",
+                format!(r#"{{"focused_pane_id":"{context}"}}"#),
+            )
+            .env("COLUMNS", "150")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains(&format!("MODE: {mode}")), "{args:?}: {text}");
+        let rows: Vec<_> = text
+            .lines()
+            .skip(if mode == "AGENT" { 2 } else { 4 })
+            .take_while(|line| !line.starts_with("  ─"))
+            .filter(|line| !line.starts_with("  ┄"))
+            .filter(|line| mode != "AGENT" || line.contains(" | "))
+            .collect();
+        assert_eq!(rows.len(), names.len(), "{text}");
+        for (row, name) in rows.iter().zip(names) {
+            assert!(row.contains(name), "{row}");
+        }
+        assert!(
+            rows.iter()
+                .find(|row| row.starts_with("  >"))
+                .unwrap()
+                .contains(selected),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "api snapshot\n".repeat(6)
+    );
+    std::fs::remove_file(log).unwrap();
+    std::fs::remove_file(fake).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn launch_context_initializes_highlight_without_reordering_or_focus() {
     let fake = fake_herdr();
     let log = fake.with_extension("log");
@@ -1747,7 +1845,7 @@ fn closes_after_q_in_select() {
         "{text}"
     );
     assert!(
-        actions.ends_with("Enter: focus Esc: exit ?: keys"),
+        actions.ends_with("Enter: focus Esc: exit ?: keys a: agent"),
         "{text}"
     );
 }
@@ -1816,7 +1914,7 @@ fn esc_in_select_closes_on_piped_input_eof() {
         "{text}"
     );
     assert!(
-        actions.ends_with("Enter: focus Esc: exit ?: keys"),
+        actions.ends_with("Enter: focus Esc: exit ?: keys a: agent"),
         "{text}"
     );
 }

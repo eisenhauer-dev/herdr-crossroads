@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/setup-keybind.py"
 COMMAND = ("herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads"
            + ("-windows" if os.name == "nt" else ""))
+AGENT_COMMAND = ("herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent"
+                 + ("-windows" if os.name == "nt" else ""))
 
 
 class SetupKeybindTests(unittest.TestCase):
@@ -61,7 +63,7 @@ class SetupKeybindTests(unittest.TestCase):
         manifest = tomllib.loads((ROOT / "herdr-plugin.toml").read_text())
         self.assertEqual(manifest.get("actions", []), [{
             "id": "setup-keybind",
-            "title": "Set up prefix+f launch binding",
+            "title": "Set up prefix+f Select and prefix+a Agent bindings",
             "contexts": ["global"],
             "platforms": ["linux", "macos", "windows"],
             "command": ["./target/release/herdr-crossroads", "--setup-keybind"],
@@ -77,9 +79,12 @@ class SetupKeybindTests(unittest.TestCase):
 
     def test_new_config_is_restrictive_and_contains_exact_binding(self):
         self.invoke()
-        self.assertEqual(tomllib.loads(self.config.read_text())["keys"]["command"], [{
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf-8"))["keys"]["command"], [{
             "key": "prefix+f", "type": "shell", "command": COMMAND,
             "description": "Open Herdr Crossroads",
+        }, {
+            "key": "prefix+a", "type": "shell", "command": AGENT_COMMAND,
+            "description": "Open Herdr Crossroads — Agent",
         }])
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
@@ -120,7 +125,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.invoke()
                 data = self.config.read_bytes()
                 helper = runpy.run_path(str(SCRIPT))
-                self.assertEqual(data, original + helper["BINDING"])
+                self.assertEqual(data, original + b"".join(helper["BINDINGS"].values()))
                 self.assertEqual(tomllib.loads(data.decode())["keys"]["indexed"],
                                  tomllib.loads(original.decode())["keys"]["indexed"])
                 if os.name != "nt":
@@ -224,25 +229,32 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertEqual(self.config.read_bytes(), data)
 
     def test_exact_target_with_implicit_shell_or_array_is_noop(self):
-        for data in [self.entry(), self.entry().replace(b'type = "shell"\n', b""),
-                     self.entry().replace(b'"prefix+f"', b'["prefix+y", " prefix+ f "]')]:
-            with self.subTest(data=data):
-                self.config.write_bytes(data)
-                before = self.config.stat()
-                self.invoke()
-                self.assertEqual(self.config.read_bytes(), data)
-                self.assert_not_rewritten(before)
+        for key, command, other, other_command in [
+                ("prefix+f", COMMAND, "prefix+a", AGENT_COMMAND),
+                ("prefix+a", AGENT_COMMAND, "prefix+f", COMMAND)]:
+            entry = self.entry(key=key, command=command)
+            for data in [entry, entry.replace(b'type = "shell"\n', b""),
+                         entry.replace(f'"{key}"'.encode(),
+                                       f'["prefix+y", " prefix+ {key[-1]} "]'.encode())]:
+                with self.subTest(data=data):
+                    data += self.entry(key=other, command=other_command)
+                    self.write_config(data)
+                    before = self.config.stat()
+                    self.invoke()
+                    self.assertEqual(self.config.read_bytes(), data)
+                    self.assert_not_rewritten(before)
 
     def test_uppercase_modified_and_direct_keys_do_not_collide(self):
         for key in ["prefix+F", "prefix+shift+f", "prefix+ctrl+f", "prefix+control+f",
-                    "Prefix+f", "f", "ctrl+f"]:
+                    "Prefix+f", "f", "ctrl+f", "prefix+A", "prefix+shift+a",
+                    "prefix+ctrl+a", "prefix+control+a", "Prefix+a", "a", "ctrl+a"]:
             with self.subTest(key=key):
                 original = self.entry(key=key, command="other")
                 self.write_config(original)
                 self.invoke()
                 self.assertTrue(self.config.read_bytes().startswith(original))
-                self.assertEqual(len(tomllib.loads(self.config.read_text())["keys"]["command"]), 2)
-        for prefix in ['"F"', '["ctrl+b", "ctrl+f"]']:
+                self.assertEqual(len(tomllib.loads(self.config.read_text(encoding="utf-8"))["keys"]["command"]), 3)
+        for prefix in ['"F"', '["ctrl+b", "ctrl+f"]', '"A"', '["ctrl+b", "ctrl+a"]']:
             self.write_config(f"[keys]\nprefix = {prefix}\n")
             self.invoke()
 
@@ -260,6 +272,109 @@ class SetupKeybindTests(unittest.TestCase):
                 self.invoke(success=False)
                 self.assertEqual(self.config.read_bytes(), data)
                 self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
+
+    def test_free_and_correct_mixed_states_append_only_missing_bindings(self):
+        bindings = {"prefix+f": COMMAND, "prefix+a": AGENT_COMMAND}
+        for existing in [[], ["prefix+f"], ["prefix+a"], list(bindings)]:
+            with self.subTest(existing=existing):
+                original = b"# retained\r\n" + b"".join(
+                    self.entry(key=key, command=bindings[key]) for key in existing)
+                self.write_config(original)
+                before = self.config.stat()
+                self.invoke()
+                data = self.config.read_bytes()
+                self.assertTrue(data.startswith(original))
+                commands = tomllib.loads(data.decode())["keys"]["command"]
+                self.assertEqual({entry["key"]: entry["command"] for entry in commands}, bindings)
+                self.assertEqual(len(commands), 2)
+                if len(existing) == 2:
+                    self.assert_not_rewritten(before)
+                before = self.config.stat()
+                self.assertIn("Already configured", self.invoke().stdout)
+                self.assertEqual(self.config.read_bytes(), data)
+                self.assert_not_rewritten(before)
+
+    def test_conflicts_on_either_key_prevent_all_appends_even_after_correct_entries(self):
+        bindings = {"prefix+f": COMMAND, "prefix+a": AGENT_COMMAND}
+        for key, command in bindings.items():
+            letter = key[-1]
+            other = "prefix+a" if letter == "f" else "prefix+f"
+            conflicts = [
+                self.entry(key=key, command="other"),
+                self.entry(key=key, command=bindings[other]),
+                self.entry(key=key, kind="pane", command=command),
+                self.entry(key=key, command=command + " --agent"),
+                self.entry(key=key, command=command.removesuffix("-windows")
+                           if os.name == "nt" else command + "-windows"),
+                self.entry(key=f"  prefix+ {letter}  ", command="other"),
+                self.entry(key=key, command="other").replace(
+                    f'"{key}"'.encode(), f'["prefix+y", " prefix+ {letter} "]'.encode()),
+                f'[keys]\nhelp = ["prefix+?", " {key} "]\n'.encode(),
+                f'[keys]\nprefix = ["ctrl+b", " {letter} "]\n'.encode(),
+                f'[keys]\nextra_prefixes = ["{letter}"]\n'.encode(),
+            ]
+            for conflict in conflicts:
+                for correct in [b"", self.entry(key=other, command=bindings[other]),
+                                self.entry(key=key, command=command),
+                                b"".join(self.entry(key=k, command=c)
+                                         for k, c in bindings.items())]:
+                    # Built-ins must precede the array-of-table entries in TOML.
+                    for data in [conflict + correct, correct + conflict
+                                 if not conflict.startswith(b"[keys]\n") else conflict + correct]:
+                        with self.subTest(key=key, data=data):
+                            self.write_config(data)
+                            before = self.config.stat()
+                            result = self.invoke(success=False)
+                            self.assertIn(f"{key} is occupied or reserved", result.stderr)
+                            self.assertEqual(self.config.read_bytes(), data)
+                            self.assert_not_rewritten(before)
+                            self.assertEqual(list(self.root.glob(".crossroads-keybind-*")), [])
+
+    def test_identical_duplicate_and_array_bindings_still_check_other_entries(self):
+        for key, command in [("prefix+f", COMMAND), ("prefix+a", AGENT_COMMAND)]:
+            other = "prefix+a" if key == "prefix+f" else "prefix+f"
+            other_command = AGENT_COMMAND if key == "prefix+f" else COMMAND
+            duplicate = self.entry(key=key, command=command) * 2
+            array = self.entry(key=key, command=command).replace(
+                f'"{key}"'.encode(), f'["{key}", " prefix+ {key[-1]} "]'.encode())
+            for entries in [duplicate, array]:
+                original = entries + self.entry(key=other, command=other_command)
+                self.write_config(original)
+                before = self.config.stat()
+                self.invoke()
+                self.assertEqual(self.config.read_bytes(), original)
+                self.assert_not_rewritten(before)
+                data = original + self.entry(key=key, command="other")
+                self.write_config(data)
+                self.invoke(success=False)
+                self.assertEqual(self.config.read_bytes(), data)
+        # One array cannot launch two different entrypoints correctly.
+        self.write_config(self.entry().replace(b'"prefix+f"', b'["prefix+f", "prefix+a"]'))
+        self.assertIn("prefix+a is occupied or reserved", self.invoke(success=False).stderr)
+
+    @unittest.skipIf(os.name == "nt", "Unix staging boundary; native Windows guards tested separately")
+    def test_conflict_is_detected_before_any_write_open_or_staging(self):
+        helper = runpy.run_path(str(SCRIPT))
+        real_open = os.open
+
+        def read_only_open(path, flags, *args, **kwargs):
+            self.assertFalse(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC),
+                             "conflicts must be checked before a writable file is opened")
+            return real_open(path, flags, *args, **kwargs)
+
+        for key, data in [
+                ("prefix+f", self.entry(command="other")),
+                ("prefix+a", self.entry(key="prefix+a", command="other")),
+                ("prefix+f", self.entry(command="other")
+                 + self.entry(key="prefix+a", command="other"))]:
+            self.write_config(data)
+            with mock.patch.dict(os.environ, self.env, clear=True), \
+                    mock.patch.object(os, "open", side_effect=read_only_open), \
+                    mock.patch.object(helper["secrets"], "token_hex") as staging:
+                with self.assertRaisesRegex(ValueError, re.escape(key) + " is occupied"):
+                    helper["setup"]()
+                staging.assert_not_called()
+            self.assertEqual(self.config.read_bytes(), data)
 
     @unittest.skipIf(os.name == "nt", "Unix link-following policy; Windows rejects reparse points")
     def test_relative_absolute_and_chained_symlinks_preserve_links_and_target_bytes(self):
@@ -281,7 +396,7 @@ class SetupKeybindTests(unittest.TestCase):
                 result = self.invoke()
                 self.assertIn(str(self.config), result.stdout)
                 self.assertIn(str(target), result.stdout)
-                self.assertEqual(target.read_bytes(), original + helper["BINDING"])
+                self.assertEqual(target.read_bytes(), original + b"".join(helper["BINDINGS"].values()))
                 self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
                 before = self.config.stat()
                 result = self.invoke()
@@ -289,7 +404,7 @@ class SetupKeybindTests(unittest.TestCase):
                 self.assertIn(str(self.config), result.stdout)
                 self.assertIn(str(target), result.stdout)
                 self.assert_not_rewritten(before)
-                self.assertEqual(target.read_bytes(), original + helper["BINDING"])
+                self.assertEqual(target.read_bytes(), original + b"".join(helper["BINDINGS"].values()))
                 for link, identity in links.items():
                     self.assertEqual((link.readlink(), link.lstat().st_ino), identity)
                 self.assertEqual(list(target.parent.glob(".crossroads-keybind-*")), [])
@@ -465,9 +580,9 @@ class SetupKeybindTests(unittest.TestCase):
         helper = runpy.run_path(str(SCRIPT))
         self.assertEqual(len(examples), 2)
         for example, suffix in zip(examples, ("", "-windows")):
-            expected = tomllib.loads(helper["BINDING"].decode())
-            expected["keys"]["command"][0]["command"] = (
-                helper["COMMAND"].removesuffix("-windows") + suffix)
+            expected = tomllib.loads(b"".join(helper["BINDINGS"].values()).decode())
+            for entry in expected["keys"]["command"]:
+                entry["command"] = entry["command"].removesuffix("-windows") + suffix
             self.assertEqual(tomllib.loads(example), expected)
         invoke = "herdr plugin action invoke herdr-crossroads.setup-keybind"
         logs = "herdr plugin log list --plugin herdr-crossroads"
@@ -477,6 +592,16 @@ class SetupKeybindTests(unittest.TestCase):
 
 
 class WindowsConfigPathTests(unittest.TestCase):
+    def test_windows_commands_use_both_explicit_windows_entrypoints(self):
+        with mock.patch.object(os, "name", "nt"):
+            helper = runpy.run_path(str(SCRIPT))
+        self.assertEqual(helper["COMMANDS"], {
+            "f": "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-windows",
+            "a": "herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent-windows",
+        })
+        data = b"".join(helper["BINDINGS"].values())
+        self.assertEqual(helper["missing_bindings"](data), b"")
+
     def select(self, env):
         helper = runpy.run_path(str(SCRIPT))
         function = helper["config_path"]

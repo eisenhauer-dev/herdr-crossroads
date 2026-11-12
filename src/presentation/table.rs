@@ -3,13 +3,15 @@ use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Row as TableRow, StatefulWidget, Table, TableState},
+    widgets::{
+        Block, Borders, Paragraph, Row as TableRow, StatefulWidget, Table, TableState, Widget,
+    },
 };
 
 use super::{clipped, columns, marked_color, sgr_bg, sgr_fg};
 use crate::keymap::Context;
 use crate::search::{match_positions, matches_field};
-use crate::selection::{Hit, Mode, Ui};
+use crate::selection::{Hit, Mode, TableView, Ui};
 use crate::theme::Theme;
 
 impl Ui {
@@ -22,7 +24,7 @@ impl Ui {
                 if preview {
                     Context::Themes
                 } else {
-                    Context::Select
+                    self.table_context()
                 },
                 width,
                 height,
@@ -42,7 +44,7 @@ impl Ui {
         let selected = self.selected_index(&visible);
         let mut lines = Vec::new();
         let search = self.search_prompt(
-            Context::Select,
+            self.table_context(),
             &self.query,
             self.mode != Mode::Select,
             width,
@@ -62,7 +64,12 @@ impl Ui {
             self.search_prompt_geometry(width).1,
             Hit::Search,
         );
-        {
+        if self.table_view == TableView::Agent && !visible.is_empty() {
+            let body_height = height.saturating_sub(
+                lines.len() + hint_rows + usize::from(self.theme_notice().is_some()),
+            );
+            lines.extend(self.agent_cards(width, body_height, ansi, lines.len()));
+        } else {
             let table_limit = limit.saturating_sub(3);
             let inner = table_limit.saturating_sub(4);
             let roomy = inner >= 102;
@@ -311,22 +318,76 @@ impl Ui {
                 pane_hits.push((table_rows.len() + if short { 1 } else { 2 }, row.id.clone()));
                 table_rows.push(TableRow::new(cells));
             }
-            if shown.is_empty() {
-                let mut cells = if context {
-                    vec![Line::raw(""), Line::raw("")]
+            let empty = visible.is_empty();
+            let mut text_lines = Vec::new();
+            if empty {
+                let agent = self.table_view == TableView::Agent;
+                let absent = agent && !self.has_agent_panes();
+                let message = if absent {
+                    "No agent panes"
+                } else if agent {
+                    "No matching agent panes"
                 } else {
-                    vec![]
+                    "No matching panes"
                 };
-                cells.push(Line::raw("No matching panes"));
-                if separate_status {
-                    cells.push(Line::raw(""));
+                let context = self.table_context();
+                let switch = format!(
+                    "{}: {}",
+                    self.keymap
+                        .display_labels(context, if agent { "open_select" } else { "open_agent" }),
+                    if agent { "select" } else { "agent" }
+                );
+                let hint = format!(
+                    "{}{}{}{}",
+                    if self.mode == Mode::Search {
+                        "Enter/Esc, then "
+                    } else {
+                        ""
+                    },
+                    if preview || (self.mode == Mode::Search && self.search_return == Mode::Themes)
+                    {
+                        format!(
+                            "{}: table, then ",
+                            self.keymap.footer_labels(Context::Themes, "cancel")
+                        )
+                    } else {
+                        String::new()
+                    },
+                    if absent {
+                        String::new()
+                    } else {
+                        format!(
+                            "{}: reset search · {}",
+                            self.keymap.display_labels(context, "reset_search"),
+                            if agent && self.agent_status_filter.is_some() {
+                                format!(
+                                    "{}: all statuses · ",
+                                    self.keymap.display_labels(context, "filter_all")
+                                )
+                            } else {
+                                String::new()
+                            }
+                        )
+                    },
+                    switch
+                );
+                text_lines = vec![message.to_owned(), String::new()];
+                for word in hint.split_whitespace() {
+                    let line = text_lines.last_mut().unwrap();
+                    if !line.is_empty() && columns(line) + 1 + columns(word) > table_limit {
+                        text_lines.push(word.to_owned());
+                    } else {
+                        if !line.is_empty() {
+                            line.push(' ');
+                        }
+                        line.push_str(word);
+                    }
                 }
-                table_rows.push(TableRow::new(cells));
             }
             let table_height = if ansi {
                 height.saturating_sub(1 + usize::from(preview) + footer_rows)
             } else {
-                table_rows.len() + 3
+                table_rows.len() + 3 + text_lines.len()
             };
             if table_limit >= 8 && table_height >= if short { 2 } else { 3 } {
                 let area = Rect::new(
@@ -364,8 +425,10 @@ impl Ui {
                         theme.selection
                     }))
                     .highlight_symbol("> ");
-                if !short {
-                    table = table.header(TableRow::new(headers));
+                if !short && self.table_view == TableView::Select {
+                    table = table.header(TableRow::new(headers.into_iter().map(|header| {
+                        Span::styled(header, Style::default().add_modifier(Modifier::ITALIC))
+                    })));
                 }
                 let selected_row = shown.iter().position(|&i| Some(i) == selected).map(|at| {
                     at + usize::from(header_rule)
@@ -378,6 +441,19 @@ impl Ui {
                 });
                 let mut state = TableState::default().with_selected(selected_row);
                 StatefulWidget::render(table, area, &mut buffer, &mut state);
+                if empty {
+                    let top = if short { 1 } else { 2 + u16::from(header_rule) };
+                    let body_height = area.height.saturating_sub(top + u16::from(!short));
+                    let y = top + body_height.saturating_sub(text_lines.len() as u16) / 2;
+                    for (offset, text) in text_lines.into_iter().enumerate() {
+                        if offset < body_height as usize {
+                            Paragraph::new(text).centered().render(
+                                Rect::new(0, y + offset as u16, area.width, 1),
+                                &mut buffer,
+                            );
+                        }
+                    }
+                }
                 for (y, id) in pane_hits {
                     if y < area.height as usize - usize::from(!short) {
                         self.hit(2, lines.len() + y, table_limit, Hit::Pane(id));
@@ -392,6 +468,7 @@ impl Ui {
                     let mut foreground = None;
                     let mut dim = false;
                     let mut underlined = false;
+                    let mut italic = false;
                     let last = (0..area.width).rfind(|&x| buffer[(x, y)].symbol() != " ");
                     while x < area.width {
                         let cell = &buffer[(x, y)];
@@ -414,6 +491,10 @@ impl Ui {
                             underlined = !underlined;
                             content.push_str(if underlined { "\x1b[4m" } else { "\x1b[24m" });
                         }
+                        if ansi && cell.modifier.contains(Modifier::ITALIC) != italic {
+                            italic = !italic;
+                            content.push_str(if italic { "\x1b[3m" } else { "\x1b[23m" });
+                        }
                         content.push_str(cell.symbol());
                         x += cell.cell_width().max(1);
                     }
@@ -425,6 +506,9 @@ impl Ui {
                     }
                     if ansi && underlined {
                         content.push_str("\x1b[24m");
+                    }
+                    if ansi && italic {
+                        content.push_str("\x1b[23m");
                     }
                     if selected_line {
                         content.push_str(&" ".repeat(table_limit.saturating_sub(x as usize)));
@@ -482,6 +566,8 @@ impl Ui {
         }
         let footer = if self.search_return == Mode::Themes {
             "Enter/Esc: preview  Backspace: erase"
+        } else if self.table_view == TableView::Agent {
+            "Enter/Esc: agent  Backspace: erase"
         } else {
             "Enter/Esc: select  Backspace: erase"
         };
@@ -496,7 +582,13 @@ impl Ui {
                 if let Some(notice) = self.notice_line(width, ansi) {
                     lines.push(notice);
                 }
-                lines.extend(self.hints_at(Context::Select, width, hint_rows, ansi, lines.len()));
+                lines.extend(self.hints_at(
+                    self.table_context(),
+                    width,
+                    hint_rows,
+                    ansi,
+                    lines.len(),
+                ));
             } else {
                 if let Some(notice) = self.notice_line(width, ansi) {
                     lines.push(notice);

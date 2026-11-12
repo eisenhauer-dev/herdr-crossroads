@@ -25,6 +25,17 @@ DARWIN_PENDIN = 0x20000000
 
 
 class ScreenColorTests(unittest.TestCase):
+    def test_italic_tracks_explicit_and_full_resets_without_color_reset(self):
+        raw = "A\x1b[3mB\x1b[39;49mC\x1b[23mD\x1b[3mE\x1b[0mF"
+        lines, wraps, italics = pty_render.screen(raw, 6, 1, track_italic=True)
+        self.assertEqual((lines, wraps), (["ABCDEF"], 0))
+        self.assertEqual(italics, [[False, True, True, False, True, False]])
+
+    def test_cursor_and_erase_preserve_italic_until_reset(self):
+        raw = "\x1b[3m\x1b[H\x1b[J\x1b[1;2HA\x1b[K\x1b[23m\r\nB"
+        self.assertEqual(pty_render.screen(raw, 4, 2, track_italic=True)[2],
+                         [[True] * 4, [False, True, True, True]])
+
     def test_panel_background_uses_effective_colors_through_reverse_and_reset(self):
         raw = "\x1b[48;2;24;24;37m\x1b[38;2;205;214;244mA\x1b[7mB\x1b[27mC\x1b[7mD\x1b[0mE"
         lines, wraps, backgrounds = pty_render.screen(raw, 5, 1, track_panel_bg=True)
@@ -230,6 +241,10 @@ class ModeColorFrameTests(unittest.TestCase):
             (b"?", "HELP", 0, "f to search", False), (b"f", "HELP", 0, "", True),
             (b"\r", "HELP", 0, "f to search", False), (b"q", "THEMES", 1, "", False),
             (b"q", "SELECT", 0, "f to search", False),
+            (b"a", "AGENT", 0, "f to search", False),
+            (b"f", "AGENT", 0, "", True), (b"x", "AGENT", 0, "x", True),
+            (b"\r", "AGENT", 0, "x", False), (b"s", "SELECT", 0, "x", False),
+            (b"r", "SELECT", 0, "f to search", False),
         )
 
         def paint(popup, mode="SELECT", y=0, query="f to search", searching=False):
@@ -239,6 +254,8 @@ class ModeColorFrameTests(unittest.TestCase):
             else:
                 row = pty_render.expected_search_row(popup.width, query, mode)
                 badge = f"MODE: {mode}"
+                if mode == "AGENT":
+                    badge += " [all]"
                 if y:
                     raw += "  Themes · saved: catppuccin · preview: catppuccin\r\n"
                 raw += row.replace(badge, f"\x1b[7m{badge}\x1b[27m") + "\x1b[K"
@@ -336,6 +353,8 @@ class SearchCursorFrameTests(unittest.TestCase):
     @staticmethod
     def draw(width, mode, text, cursor_x):
         mode = f"MODE: {mode.upper()}"
+        if mode == "MODE: AGENT":
+            mode += " [all]"
         row = "  Search: " + text
         row += " " * (width - 2 - len(mode) - sum(2 if c == "界" else 1 for c in row)) + mode
         return f"\x1b[H\x1b[J{row}\x1b[1;{cursor_x + 1}H\x1b[?25h".encode()
@@ -375,6 +394,8 @@ class SearchCursorFrameTests(unittest.TestCase):
                     self.mode = "Help"
                 elif data == b"t":
                     self.mode = "Themes"
+                elif data == b"a":
+                    self.mode = "Agent"
 
             def finish(self, key):
                 test.assertFalse(emissions, "final query draw was not consumed")
@@ -388,7 +409,8 @@ class SearchCursorFrameTests(unittest.TestCase):
             popup = popups[-1]
             query = "" if data == b"\x7f" else data.decode()
             popup.query = query
-            budget = popup.width - 4 - len(f"MODE: {popup.mode.upper()}") - 1
+            badge = f"MODE: {popup.mode.upper()}" + (" [all]" if popup.mode == "Agent" else "")
+            budget = popup.width - 4 - len(badge) - 1
             query_budget = budget - 9
             if len(query) < 10:
                 text, x = query, 10 + len(query)
@@ -622,6 +644,39 @@ class MouseReadinessTests(unittest.TestCase):
 
 
 class ReaderEofTests(unittest.TestCase):
+    def test_agent_filter_transition_waits_for_status_query_selection_and_cursor(self):
+        def draw(status="idle", query="Other task", selected="codex", searching=False):
+            row = pty_render.expected_search_row(120, query, "Agent", status)
+            return (f"\x1b[H\x1b[J{row}\r\n  > {selected}\x1b[?25" + ("h" if searching else "l")).encode()
+
+        final = draw()
+        stale = [draw(status="all"), draw(query="Other tas"), draw(selected="Claude"), draw(searching=True)]
+        tail = draw(status="working")
+        for fragmented in (False, True):
+            with self.subTest(fragmented=fragmented):
+                reader, writer = socket.socketpair()
+                try:
+                    output = pty_keymaps.DrawReader(reader.fileno())
+                    payload = b"".join(stale) + final + tail
+                    chunks = [bytes([byte]) for byte in payload] if fragmented else [payload]
+                    expected_lines = pty_render.screen(final.decode(), 120, 30, track_cursor=True)
+                    observed = []
+
+                    def expected(raw):
+                        state = pty_render.screen(raw, 120, 30, track_cursor=True)
+                        observed.append(state)
+                        return state == expected_lines
+
+                    with patch.object(pty_keymaps.select, "select", return_value=([reader.fileno()], [], [])), \
+                         patch.object(pty_keymaps.os, "read", side_effect=chunks):
+                        raw = pty_keymaps.read_frame(output, expected=expected)
+                        self.assertTrue(raw.endswith(final.decode()))
+                        self.assertEqual(len(observed), len(stale) + 1)
+                        self.assertEqual(pty_keymaps.read_frame(output, expected=lambda raw: True), tail.decode())
+                finally:
+                    reader.close()
+                    writer.close()
+
     def check_reader(self, expression, payload=b"", expected=None, error=None):
         code = f"""
 import os

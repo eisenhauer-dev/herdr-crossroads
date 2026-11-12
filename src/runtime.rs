@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::actions::handle_key;
 use crate::input::Keys;
 use crate::keymap;
-use crate::selection::Ui;
+use crate::selection::{TableView, Ui};
 use crate::status_colors::StatusColors;
 use crate::terminal::{draw, terminal_size, Terminal};
 use crate::theme;
@@ -19,7 +19,7 @@ pub(crate) mod live_status;
 #[cfg(any(unix, windows))]
 use live_status::LiveStatus;
 
-pub(crate) fn run() -> io::Result<()> {
+pub(crate) fn run(table_view: TableView) -> io::Result<()> {
     let config_dir = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR").filter(|dir| !dir.is_empty());
     let (keymap, keymap_errors) = keymap::Keymap::load(config_dir.as_deref().map(Path::new));
     let (status_colors, status_errors) =
@@ -113,6 +113,7 @@ pub(crate) fn run() -> io::Result<()> {
     {
         ui.selected = Some(row.id.clone());
     }
+    ui.set_table_view(table_view);
     ui.keymap = keymap;
     ui.keymap_errors = keymap_errors;
     ui.status_colors = status_colors;

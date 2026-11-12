@@ -109,7 +109,7 @@ fn help_category_spacer_counts_toward_scroll_budget_not_selection() {
         assert_eq!(state.help.selected, Some(entry_count - 1));
         assert_eq!(
             state.help.viewport_start.get(),
-            20usize.saturating_sub(height - 4 - budget)
+            21usize.saturating_sub(height - 4 - budget)
         );
         if height == 15 {
             assert!(
@@ -393,7 +393,7 @@ fn assert_help_display_query_filters_and_highlights(query: char, custom: bool, w
     assert_eq!(state.help.selected, expected.last().copied());
     state.key(Key::Char('r'));
     assert!(state.help.query.is_empty());
-    assert_eq!(state.help.visible(), (0..15).collect::<Vec<_>>());
+    assert_eq!(state.help.visible(), (0..16).collect::<Vec<_>>());
     assert_eq!(state.help.selected, expected.last().copied());
 }
 

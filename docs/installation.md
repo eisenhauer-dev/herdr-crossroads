@@ -137,6 +137,34 @@ the matching source after preserving any local edits.
 Setup below covers Linux/macOS/Windows with platform-specific filesystem safeguards;
 dated installation receipts retain their original platform/version scope.
 
+## Source-only Agent starts
+
+The current source manifest provides both Select and Agent entrypoints. Rebuild
+with `cargo build --release --locked` in a trusted source checkout and use the
+matching manifest; published 0.3.1 binaries do **not** implement `--agent`.
+The existing version-pinned installer downloads published bytes, not this new
+source behavior. Updating only helper scripts is insufficient for Agent.
+
+From a shell inside your running Herdr session, after linking the trusted checkout:
+
+```sh
+# Linux/macOS
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent
+```
+
+```powershell
+# Windows
+herdr plugin pane open --plugin herdr-crossroads --entrypoint crossroads-agent-windows
+```
+
+The corresponding binary commands are `./target/release/herdr-crossroads --agent`
+on Linux/macOS and `.\target\release\herdr-crossroads.exe --agent` on Windows;
+they require the same Herdr CLI/socket environment as ordinary startup. Omitting
+`--agent` starts Select. Do not combine it with `--setup-keybind`: that fails
+before either setup or runtime. All four manifest panes retain 90%×90% sizing.
+These commands are source-checked examples, not a new native-platform, true
+installation, or live-Herdr acceptance receipt.
+
 ## Keyboard launch setup
 
 Install with `herdr plugin install eisenhauer-dev/herdr-crossroads`, then explicitly
@@ -164,20 +192,27 @@ source) before using the action. Published 0.3.1 binaries already dispatch the
 helper at runtime. To gain the later Windows ACL append fix, update the actual
 plugin checkout's scripts, including `scripts/windows-files.py`; do not rebuild
 or replace an existing 0.3.1 binary just for this Python-only fix.
-The helper appends the Unix `crossroads` or Windows `crossroads-windows` launch entry.
+Current source setup appends `prefix+f` for Select (`crossroads` on Unix,
+`crossroads-windows` on Windows) and `prefix+a` for Agent (`crossroads-agent` or
+`crossroads-agent-windows`). The Agent entry requires a rebuilt source binary and
+updated manifest; published 0.3.1 binaries lack `--agent`. This is distinct from
+the Python-only Windows ACL fix described above.
 
 **Wait for completion before reloading.** A successful invoke response means the
 action started, not that setup succeeded. Repeat the log command and match the
 invocation's `log_id`; require `status = "succeeded"`, `exit_code = 0`, and stdout
-confirming the added/already-configured binding and target path. On `failed`, read
+confirming the added/already-configured bindings and target path. On `failed`, read
 stderr/error and resolve the problem instead. Only after success choose
 **Reload config** in Herdr's menu. In Herdr v0.9.5 this menu
 action reloads both server and client configuration; `herdr server reload-config`
 alone reloads only the server and can leave the client's keymap stale. If using
 that CLI route, restart the client as well.
 
-Then press `Ctrl+b`, followed by `f` (or your configured prefix). There is no
+Then press `Ctrl+b`, followed by `f` for Select or `a` for Agent (or your configured prefix). There is no
 automatic reload or launch, avoiding a race with asynchronous setup.
+These host launch shortcuts live in Herdr's `config.toml`, not plugin-owned
+`keymaps.jsonc`. Inside the popup, `select.open_agent` and `agent.open_select`
+default to `a` and `s`; remapping them does not change host launch bindings.
 
 The helper selects the config using the **action process's inherited environment**
 (normally the server's), not necessarily the invoking shell's latest environment:
@@ -269,8 +304,9 @@ owner/group/DACL before retrying. No recovery copy is created for in-place appen
 leave a partial binding. Inspect and repair that suffix before retrying; malformed
 TOML is refused. Do not edit or run setup concurrently. Sharing does not exclude
 all metadata/security access and is not a hostile-filesystem sandbox.
-If setup refuses, manually add the [README launch binding](../README.md#add-the-launch-binding-reload-and-open)
-using `--entrypoint crossroads-windows` and a method preserving file identity and
+If setup refuses, manually add the [README launch bindings](../README.md#add-the-launch-binding-reload-and-open)
+using `crossroads-windows` for Select and `crossroads-agent-windows` for Agent,
+with a method preserving file identity and
 ACL. Do not enable inheritance or loosen permissions to make setup work.
 
 For auto-inherited replacement, existing owner/group/DACL information is applied
@@ -332,27 +368,33 @@ The temporary fallback follows [Rust 1.99.1 `temp_dir`](https://doc.rust-lang.or
 Windows action/path contracts were rechecked on 2026-11-09 against Herdr v0.9.5;
 the earlier compatibility evidence below retains its original scope/date.
 
-The action refuses occupied `prefix+f` in built-in configured bindings or custom
+The action checks **both** `prefix+f` and `prefix+a` before any config-content
+write. A conflict on either key aborts the entire update without adding even a
+free binding; the error names the conflicting combination. The action refuses
+occupied keys in built-in configured bindings or custom
 commands, including arrays and whitespace-equivalent spellings, and unmodified
-`f` reserved as a prefix (including `extra_prefixes`). Uppercase `F` and modified
-`ctrl+f` are distinct; setup does not implement a full host key parser. Malformed
+`f` or `a` reserved as a prefix (including `extra_prefixes`). Uppercase and modified
+keys are distinct; setup does not implement a full host key parser. Malformed
 relevant structures fail closed. An existing identical shell command (including
-omitted `type`, which defaults to shell) is a no-op, but other conflicting entries
-are still checked. Defaults for Herdr 0.9.1/0.9.3/0.9.5 leave `prefix+f` free.
+omitted `type`, which defaults to shell) is retained, but all other entries and
+both keys are still checked. If both are correct, setup is a no-op; if one is
+correct and the other free, only the missing binding is appended. Wrong launch
+commands or types conflict even alongside a correct duplicate. Defaults for
+Herdr 0.9.1/0.9.3/0.9.5 leave `prefix+f` free.
 The legacy `[keys.indexed]` table is validated separately: optional `tabs`,
 `workspaces`, and `agents` strings must be empty or modifier combinations. These
-expand only to direct number keys 1–9, so they cannot occupy `prefix+f`; their
+expand only to direct number keys 1–9, so they cannot occupy either launch key; their
 original bytes are preserved. Unsupported fields, non-string values, and invalid
 modifier combinations are refused without rewriting the config.
 No existing binding is removed or overwritten.
 
 **Manual alternative/conflicts:** check both `prefix+?` and your existing config,
-then use the README TOML example with another free key if `prefix+f` is occupied.
+then use the README TOML examples with other free keys if either key is occupied.
 Follow [Herdr's versioned configuration guide](https://github.com/herdrdev/herdr/blob/v0.9.3/docs/versions/0.9.1/website/src/content/docs/configuration.mdx)
 and `herdr --help` for the resolved config path. Preserve custom/default navigation
 and close bindings, including `prefix+g`, `prefix+t`, and `prefix+x` (close pane).
 Reload explicitly after manual changes as well. Uninstall does not remove this
-host entry; remove only your Crossroads entry manually if no longer wanted.
+host entries; remove only your Crossroads entries manually if no longer wanted.
 
 Herdr v0.9.1, v0.9.3, and v0.9.5 have no native install-time launch-binding
 mechanism; Crossroads supplies an opt-in action instead. The host

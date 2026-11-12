@@ -4,6 +4,334 @@ use crate::selection::Ui;
 use crate::topology::{annotate_worktrees, rows};
 use serde_json::Value;
 
+#[test]
+fn snapshot_repository_uses_only_unique_explicit_workspace_worktree_identity() {
+    let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+    for (worktree, expected) in [
+        (
+            serde_json::json!({"repo_key":"key", "repo_name":"Repo\tname"}),
+            Some(("key", "Repo name")),
+        ),
+        (
+            serde_json::json!({"repo_name":"Repo", "repo_root":"/private/repo"}),
+            None,
+        ),
+        (
+            serde_json::json!({"repo_key":"key", "repo_name":" \n"}),
+            None,
+        ),
+        (Value::Null, None),
+    ] {
+        snapshot["result"]["snapshot"]["workspaces"][1]["worktree"] = worktree;
+        let items = rows(&snapshot.to_string(), None, 160).unwrap();
+        let metadata = &items.iter().find(|r| r.id == "p-b").unwrap().agent_metadata;
+        assert_eq!(
+            metadata
+                .repository
+                .as_ref()
+                .map(|(key, name)| (key.as_str(), name.as_str())),
+            expected
+        );
+        assert!(metadata.branch.is_none());
+    }
+    snapshot["result"]["snapshot"]["workspaces"][1]["worktree"] =
+        serde_json::json!({"repo_key":"key", "repo_name":"Repo"});
+    let duplicate = snapshot["result"]["snapshot"]["workspaces"][1].clone();
+    snapshot["result"]["snapshot"]["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .push(duplicate);
+    assert!(rows(&snapshot.to_string(), None, 160)
+        .unwrap()
+        .iter()
+        .find(|r| r.id == "p-b")
+        .unwrap()
+        .agent_metadata
+        .repository
+        .is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn worktree_metadata_is_optional_unique_and_does_not_change_select_or_queries() {
+    use std::os::unix::fs::PermissionsExt;
+    let fake = std::path::Path::new("/tmp/opencode")
+        .join(format!("crossroads-metadata-{}", std::process::id()));
+    let log = fake.with_extension("calls");
+    std::fs::write(&log, "").unwrap();
+    let entry = serde_json::json!({"open_workspace_id":"w1", "branch":"metadata\nbranch", "is_linked_worktree":false,"is_detached":false,"is_prunable":false});
+    let source = serde_json::json!({"repo_key":"key", "repo_name":"Metadata\tRepo", "repo_root":"/private/never-infer"});
+    for (entries, source, repository, branch) in [
+        (
+            vec![entry.clone()],
+            source.clone(),
+            Some(("key", "Metadata Repo")),
+            Some("metadata branch"),
+        ),
+        (
+            vec![entry.clone(), entry.clone()],
+            source.clone(),
+            None,
+            None,
+        ),
+        (
+            vec![serde_json::json!({"open_workspace_id":"w1", "branch":"main","is_detached":true})],
+            source.clone(),
+            Some(("key", "Metadata Repo")),
+            None,
+        ),
+        (
+            vec![serde_json::json!({"open_workspace_id":"w1", "branch":"main","is_prunable":true})],
+            source.clone(),
+            None,
+            None,
+        ),
+        (
+            vec![serde_json::json!({"open_workspace_id":"absent", "branch":"main"})],
+            source.clone(),
+            None,
+            None,
+        ),
+        (
+            vec![entry.clone()],
+            serde_json::json!({"repo_root":"/private/never-infer"}),
+            None,
+            Some("metadata branch"),
+        ),
+        (
+            vec![serde_json::json!({"open_workspace_id":"w1", "branch":" \t"})],
+            source.clone(),
+            Some(("key", "Metadata Repo")),
+            None,
+        ),
+        (vec![], source, None, None),
+    ] {
+        let response = serde_json::json!({"result":{"type":"worktree_list", "source":source, "worktrees":entries}});
+        std::fs::write(
+            &fake,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{}'\n",
+                log.display(),
+                response
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut items = rows(SNAPSHOT, Some("p-self"), 160).unwrap();
+        annotate_worktrees(&mut items, fake.as_os_str(), false);
+        let metadata = &items.iter().find(|r| r.id == "p-b").unwrap().agent_metadata;
+        assert_eq!(
+            metadata
+                .repository
+                .as_ref()
+                .map(|(key, name)| (key.as_str(), name.as_str())),
+            repository
+        );
+        assert_eq!(metadata.branch.as_deref(), branch);
+        let mut state = Ui::with_theme_choice(items, "catppuccin", None);
+        let original = render(SNAPSHOT, Some("p-self"), 160).unwrap();
+        assert_eq!(
+            state.terminal_frame(160, 20),
+            Ui::with_theme_choice(
+                rows(SNAPSHOT, Some("p-self"), 160).unwrap(),
+                "catppuccin",
+                None
+            )
+            .terminal_frame(160, 20)
+        );
+        assert!(!original.contains("Metadata Repo"));
+        for query in ["Metadata Repo", "metadata branch", "never-infer"] {
+            state.query = query.into();
+            assert!(state.visible().is_empty());
+        }
+    }
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 16);
+    std::fs::remove_file(fake).unwrap();
+    std::fs::remove_file(log).unwrap();
+}
+
+#[test]
+fn optional_agent_title_requires_explicit_consistent_uniquely_associated_titles() {
+    let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+    snapshot["result"]["snapshot"]["agents"][0]["title"] = Value::from("Metadata-only task");
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-self"), 160).unwrap(),
+        "catppuccin",
+        None,
+    );
+    assert_eq!(
+        state.terminal_frame(160, 20),
+        Ui::with_theme_choice(
+            rows(SNAPSHOT, Some("p-self"), 160).unwrap(),
+            "catppuccin",
+            None
+        )
+        .terminal_frame(160, 20)
+    );
+    state.query = "Metadata-only task".into();
+    assert!(state.visible().is_empty());
+    for (agent_title, pane_title, expected) in [
+        (Value::Null, Value::Null, None),
+        (Value::from("Task\nname"), Value::Null, Some("Task name")),
+        (Value::Null, Value::from("Task"), Some("Task")),
+        (Value::from("Task"), Value::from("Task"), Some("Task")),
+        (Value::from("Task"), Value::from("Other"), None),
+        (Value::from(" \n"), Value::from(""), None),
+        (Value::from(42), Value::Null, None),
+    ] {
+        snapshot["result"]["snapshot"]["agents"][0]["title"] = agent_title;
+        snapshot["result"]["snapshot"]["panes"][2]["title"] = pane_title;
+        let items = rows(&snapshot.to_string(), Some("p-self"), 160).unwrap();
+        let row = items.iter().find(|r| r.id == "p-b").unwrap();
+        assert_eq!(row.agent_metadata.title.as_deref(), expected);
+        assert!(items
+            .iter()
+            .find(|r| r.id == "p-untitled")
+            .unwrap()
+            .agent_metadata
+            .title
+            .is_none());
+    }
+    snapshot["result"]["snapshot"]["agents"][0]["title"] = Value::from("Task");
+    snapshot["result"]["snapshot"]["agents"][0]["workspace_id"] = Value::from("wrong");
+    assert!(rows(&snapshot.to_string(), None, 160)
+        .unwrap()
+        .iter()
+        .find(|r| r.id == "p-b")
+        .unwrap()
+        .agent_metadata
+        .title
+        .is_none());
+    snapshot["result"]["snapshot"]["agents"][0]["workspace_id"] = Value::from("w1");
+    let duplicate = snapshot["result"]["snapshot"]["agents"][0].clone();
+    snapshot["result"]["snapshot"]["agents"]
+        .as_array_mut()
+        .unwrap()
+        .push(duplicate);
+    assert!(rows(&snapshot.to_string(), None, 160)
+        .unwrap()
+        .iter()
+        .find(|r| r.id == "p-b")
+        .unwrap()
+        .agent_metadata
+        .title
+        .is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn contradictory_repository_identity_and_branch_are_not_first_match_wins() {
+    use std::os::unix::fs::PermissionsExt;
+    let fake = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-metadata-conflict-{}",
+        std::process::id()
+    ));
+    for (other_key, other_branch, expected_repository, expected_branch) in [
+        ("key", "main", Some(("key", "Repo")), Some("main")),
+        ("other-key", "main", None, Some("main")),
+        ("key", "other", Some(("key", "Repo")), None),
+    ] {
+        let response = |key: &str, branch: &str| serde_json::json!({"result":{"type":"worktree_list","source":{"repo_key":key,"repo_name":"Repo"},"worktrees":[{"open_workspace_id":"w1","branch":branch}]}});
+        std::fs::write(&fake, format!("#!/bin/sh\nif [ \"$4\" = w1 ]; then printf '%s\\n' '{}'; else printf '%s\\n' '{}'; fi\n", response("key", "main"), response(other_key, other_branch))).unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+        snapshot["result"]["snapshot"]["workspaces"][1]["worktree"] =
+            serde_json::json!({"repo_key":"key","repo_name":"Repo"});
+        let mut items = rows(&snapshot.to_string(), None, 160).unwrap();
+        annotate_worktrees(&mut items, fake.as_os_str(), false);
+        let metadata = &items.iter().find(|r| r.id == "p-b").unwrap().agent_metadata;
+        assert_eq!(
+            metadata
+                .repository
+                .as_ref()
+                .map(|(key, name)| (key.as_str(), name.as_str())),
+            expected_repository
+        );
+        assert_eq!(metadata.branch.as_deref(), expected_branch);
+    }
+    std::fs::remove_file(fake).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn incomplete_repository_candidates_still_detect_key_conflicts_in_both_directions() {
+    use std::os::unix::fs::PermissionsExt;
+    let fake = std::path::Path::new("/tmp/opencode").join(format!(
+        "crossroads-incomplete-repository-{}",
+        std::process::id()
+    ));
+    let mut actual = Vec::new();
+    let mut expected = Vec::new();
+    for (snapshot_key, source_key, expected_key) in [
+        ("A", "B", None),
+        ("A", "A", Some("A")),
+        ("A", "", Some("A")),
+        ("A", " \t", Some("A")),
+    ] {
+        for incomplete_name in [Value::from(""), Value::from(" \n"), Value::Null] {
+            for incomplete_snapshot in [false, true] {
+                let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+                let mut worktree = serde_json::json!({"repo_key":snapshot_key,"repo_name":"Repo"});
+                let mut source = serde_json::json!({"repo_key":source_key,"repo_name":"Repo"});
+                if incomplete_snapshot {
+                    worktree["repo_name"] = incomplete_name.clone();
+                } else {
+                    source["repo_name"] = incomplete_name.clone();
+                }
+                snapshot["result"]["snapshot"]["workspaces"][1]["worktree"] = worktree;
+                let response = serde_json::json!({"result":{"type":"worktree_list","source":source,"worktrees":[{"open_workspace_id":"w1","branch":"main"}]}});
+                std::fs::write(&fake, format!("#!/bin/sh\nprintf '%s\\n' '{}'\n", response))
+                    .unwrap();
+                std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o700)).unwrap();
+                let mut items = rows(&snapshot.to_string(), None, 160).unwrap();
+                annotate_worktrees(&mut items, fake.as_os_str(), false);
+                let metadata = &mut items
+                    .iter_mut()
+                    .find(|r| r.id == "p-b")
+                    .unwrap()
+                    .agent_metadata;
+                actual.push(metadata.repository.take());
+                expected.push(expected_key.and_then(|key| {
+                    (!incomplete_snapshot || source_key == key)
+                        .then(|| (key.to_owned(), "Repo".to_owned()))
+                }));
+                assert_eq!(metadata.branch.as_deref(), Some("main"));
+            }
+        }
+    }
+    std::fs::remove_file(fake).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn agent_membership_uses_existing_detection_and_excludes_own_pane() {
+    use crate::selection::TableView;
+    let mut snapshot: Value = serde_json::from_str(SNAPSHOT).unwrap();
+    let data = &mut snapshot["result"]["snapshot"];
+    data["panes"][3]["display_agent"] = Value::from("Pane fallback");
+    data["agents"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"pane_id":"p-untitled","name":"Named agent"}));
+    let mut state = Ui::with_theme_choice(
+        rows(&snapshot.to_string(), Some("p-b"), 160).unwrap(),
+        "catppuccin",
+        None,
+    );
+    state.set_table_view(TableView::Agent);
+    assert_eq!(
+        state
+            .visible()
+            .iter()
+            .map(|&i| state.rows[i].id.as_str())
+            .collect::<Vec<_>>(),
+        ["p-a", "p-untitled", "p-other"]
+    );
+    state.query = "PNFLLBCK".into();
+    assert_eq!(state.visible().len(), 1);
+    assert_eq!(state.rows[state.visible()[0]].id, "p-a");
+}
+
 #[cfg(unix)]
 #[test]
 fn linked_workspace_follows_source_without_reordering_other_blocks_or_panes() {
@@ -222,18 +550,22 @@ fn absent_own_pane_id_and_empty_topology() {
     );
     let lines: Vec<_> = empty_output.lines().collect();
     assert_eq!(lines[3], format!("  {}", "─".repeat(36)), "{empty_output}");
-    assert_eq!(lines[4], "  No matching panes", "{empty_output}");
-    assert_eq!(lines[5], lines[3], "{empty_output}");
+    assert_eq!(lines[4], "            No matching panes", "{empty_output}");
+    assert_eq!(
+        lines[5], "       r: reset search · a: agent",
+        "{empty_output}"
+    );
+    assert_eq!(lines[6], lines[3], "{empty_output}");
     let footer = empty_output
         .lines()
-        .skip(6)
+        .skip(7)
         .collect::<Vec<_>>()
         .join(" ")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .replace("/ ", "/");
-    assert_eq!(footer.replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys", "{empty_output}");
+    assert_eq!(footer.replace(" · ", " "), "j/↓: ↓pane k/↑: ↑pane h/←: ↑tab l/→: ↓tab Tab: ↓ws Shift+Tab: ↑ws Enter: focus Esc: exit ?: keys a: agent", "{empty_output}");
 }
 
 #[test]
